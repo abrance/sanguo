@@ -97,6 +97,7 @@ js/main.js          启动与渲染循环
 | [docs/COMMANDS.md](docs/COMMANDS.md) | 19 个命令的参数、校验规则、返回值与错误 |
 | [docs/CONTENT.md](docs/CONTENT.md) | 扩展指南：加建筑/科技/兵种/武将/城池/势力/剧本/上命，以及改平衡的入口 |
 | [docs/TESTING.md](docs/TESTING.md) | 无头测试怎么跑、断言覆盖了什么、盲区在哪 |
+| [docs/DIPLOMACY.md](docs/DIPLOMACY.md) | **P3 外交系统设计稿**（已定稿待实现）：关系与状态机、三层权限、AI 结盟、验收标准 |
 
 ## 自检
 
@@ -113,4 +114,4 @@ node tools/sim.js --months 120          # 被动玩家会怎样
 
 ## 下一步
 
-P3 外交分层（个人外交 / 势力外交、结盟宣战、外交 AI）→ P4 剧本扩充与平衡 → P5 视觉润色。
+**P3 外交**（设计见 [docs/DIPLOMACY.md](docs/DIPLOMACY.md)，分 D1–D4 四步）→ P4 剧本扩充与平衡 → P5 视觉润色。
