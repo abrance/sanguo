@@ -80,6 +80,7 @@ const GameMap = {
     const cols = GameMap.cols, rows = GameMap.rows, CELL = GameMap.CELL;
     const grid = [];
     const ox = (seed % 1000) * 0.37;
+    GameMap._ox = ox;   // prerender 用同一套噪声偏移
 
     for (let r = 0; r < rows; r++) {
       const row = [];
@@ -121,85 +122,214 @@ const GameMap = {
     return grid[r][c];
   },
 
-  /** 预渲染地形到底图 canvas */
+  /** 预渲染地形：低分辨率平滑色床 + 全分辨率手绘细节（无方格感） */
   prerender(grid) {
+    const W = GameMap.W, H = GameMap.H, CELL = GameMap.CELL;
+    const ox = GameMap._ox || 0;
     const cv = document.createElement('canvas');
-    cv.width = GameMap.W; cv.height = GameMap.H;
+    cv.width = W; cv.height = H;
     const g = cv.getContext('2d');
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'high';
 
-    // 底色
-    g.fillStyle = '#2a2b22';
-    g.fillRect(0, 0, GameMap.W, GameMap.H);
+    // ── 1. 色床：0.4 倍分辨率逐像素上色（双线性取噪声，避开方块边） ──
+    const S = 0.4;
+    const LW = Math.round(W * S), LH = Math.round(H * S);
+    const low = document.createElement('canvas');
+    low.width = LW; low.height = LH;
+    const lg = low.getContext('2d');
+    const img = lg.createImageData(LW, LH);
 
-    const CELL = GameMap.CELL;
-    for (let r = 0; r < grid.length; r++) {
-      for (let c = 0; c < grid[r].length; c++) {
+    // 噪声格：低分辨率每 4 像素一格（= 世界 10 像素），足够平滑
+    const STEP = 4;
+    const NW = Math.ceil(LW / STEP) + 2, NH = Math.ceil(LH / STEP) + 2;
+    const hf = new Float32Array(NW * NH);
+    const wf = new Float32Array(NW * NH);
+    for (let j = 0; j < NH; j++) {
+      for (let i = 0; i < NW; i++) {
+        const wx = (i * STEP) / S, wy = (j * STEP) / S;
+        hf[j * NW + i] = GameMap._fbm(wx / 300 + ox, wy / 300 + ox);
+        wf[j * NW + i] = GameMap._fbm(wx / 430 + 57 + ox, wy / 430 + 91 + ox);
+      }
+    }
+    const field = (f, fx, fy) => {
+      const i = Math.floor(fx), j = Math.floor(fy);
+      const tx = fx - i, ty = fy - j;
+      const a = f[j * NW + i], b = f[j * NW + i + 1];
+      const c2 = f[(j + 1) * NW + i], d2 = f[(j + 1) * NW + i + 1];
+      return (a + (b - a) * tx) * (1 - ty) + (c2 + (d2 - c2) * tx) * ty;
+    };
+
+    const C = {
+      water: [28, 44, 56], waterHi: [48, 76, 94],
+      marsh: [46, 60, 52],
+      plain: [78, 88, 58], plainHi: [96, 104, 68],
+      forest: [42, 58, 38], forestHi: [60, 78, 46],
+      hill: [90, 82, 60],
+      rock: [104, 98, 82], snow: [172, 166, 150],
+      desert: [108, 94, 66], desertHi: [130, 116, 86],
+    };
+    const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+
+    const data = img.data;
+    const rows = grid.length, cols = grid[0].length;
+    for (let y = 0; y < LH; y++) {
+      const wy = y / S;
+      const gy = Math.min(rows - 1, Math.floor(wy / CELL));
+      for (let x = 0; x < LW; x++) {
+        const wx = x / S;
+        const key = grid[gy][Math.min(cols - 1, Math.floor(wx / CELL))];
+
+        const fx = x / STEP, fy = y / STEP;
+        const h = field(hf, fx, fy);
+        const wet = field(wf, fx, fy);
+
+        let col;
+        if (key === 'water') col = mix(C.water, C.waterHi, U.clamp((h - 0.28) * 2.4, 0, 1));
+        else if (key === 'marsh') col = mix(C.marsh, C.water, U.clamp(wet * 0.55, 0, 0.4));
+        else if (key === 'forest') col = mix(C.forest, C.forestHi, wet);
+        else if (key === 'hill') col = mix(C.hill, C.plain, U.clamp((0.56 - h) * 2.2, 0, 1));
+        else if (key === 'mountain') col = mix(C.rock, C.snow, U.clamp((h - 0.6) * 3.2, 0, 0.8));
+        else if (key === 'desert') col = mix(C.desert, C.desertHi, U.clamp(h * 1.7, 0, 1));
+        else col = mix(C.plain, C.plainHi, U.clamp((wet - 0.34) * 2, 0, 1));
+
+        // 西北来光的山体侧影
+        const dhx = field(hf, fx + 1, fy) - field(hf, fx - 1, fy);
+        const dhy = field(hf, fx, fy + 1) - field(hf, fx, fy - 1);
+        const shade = U.clamp(0.5 + (dhx + dhy) * 2.6, 0.15, 1);
+        const k = 0.86 + shade * 0.30;
+
+        const n = (GameMap._hash(x * 3 + 7, y * 5 + 11) - 0.5) * 9;
+        const o = (y * LW + x) * 4;
+        data[o] = U.clamp(col[0] * k + n, 0, 255);
+        data[o + 1] = U.clamp(col[1] * k + n, 0, 255);
+        data[o + 2] = U.clamp(col[2] * k + n * 0.8, 0, 255);
+        data[o + 3] = 255;
+      }
+    }
+
+    lg.putImageData(img, 0, 0);
+    g.drawImage(low, 0, 0, W, H);
+
+    // ── 2. 河川：岸 / 水体 / 高光三叠 ──
+    const pass = (pts, style, width, alpha) => {
+      g.beginPath();
+      g.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i][0] + pts[i + 1][0]) / 2;
+        const my = (pts[i][1] + pts[i + 1][1]) / 2;
+        g.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
+      }
+      const last = pts[pts.length - 1];
+      g.lineTo(last[0], last[1]);
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      g.strokeStyle = style;
+      g.globalAlpha = alpha;
+      g.lineWidth = width;
+      g.stroke();
+      g.globalAlpha = 1;
+    };
+    for (const p of GameMap.RIVERS) {
+      pass(p, '#2c4148', 30, 0.5);
+      pass(p, '#3d6a7e', 16, 0.75);
+      pass(p, '#7fb3c9', 3, 0.28);
+    }
+
+    // ── 3. 山形 / 树丛 / 沙丘：老地图式符号 ──
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
         const t = grid[r][c];
-        const base = TERRAIN[t].color;
-        g.fillStyle = base;
-        g.fillRect(c * CELL, r * CELL, CELL + 1, CELL + 1);
-
-        // 细碎纹理
-        const n = GameMap._hash(c * 7 + 1, r * 13 + 3);
-        g.fillStyle = `rgba(255,255,255,${(n * 0.045).toFixed(3)})`;
-        g.fillRect(c * CELL, r * CELL, CELL + 1, CELL + 1);
+        const n1 = GameMap._hash(c * 11 + 5, r * 17 + 2);
+        const bx = c * CELL, by = r * CELL;
 
         if (t === 'mountain') {
-          g.fillStyle = 'rgba(0,0,0,0.28)';
-          g.beginPath();
-          g.moveTo(c * CELL + CELL * 0.5, r * CELL + CELL * 0.18);
-          g.lineTo(c * CELL + CELL * 0.86, r * CELL + CELL * 0.86);
-          g.lineTo(c * CELL + CELL * 0.14, r * CELL + CELL * 0.86);
-          g.closePath();
-          g.fill();
+          if (n1 > 0.5) continue;
+          const px = bx + CELL * (0.2 + GameMap._hash(c, r) * 0.6);
+          const py = by + CELL * (0.34 + GameMap._hash(c + 3, r + 7) * 0.46);
+          GameMap._peak(g, px, py, 9 + GameMap._hash(c + 9, r + 1) * 13);
         } else if (t === 'forest') {
-          g.fillStyle = 'rgba(10,25,10,0.22)';
-          const n2 = GameMap._hash(c * 3, r * 5);
+          if (n1 > 0.55) continue;
           for (let k = 0; k < 3; k++) {
-            const px = c * CELL + 6 + ((n2 * (k + 1) * 97) % (CELL - 12));
-            const py = r * CELL + 8 + ((n2 * (k + 2) * 61) % (CELL - 14));
-            g.beginPath();
-            g.arc(px, py, 3.2, 0, Math.PI * 2);
-            g.fill();
+            const px = bx + 6 + GameMap._hash(c * 3 + k, r * 5 + k) * (CELL - 12);
+            const py = by + 6 + GameMap._hash(c * 7 + k, r * 3 + k + 9) * (CELL - 12);
+            GameMap._tree(g, px, py, 2.4 + GameMap._hash(c + k, r + k) * 1.6);
           }
-        } else if (t === 'water') {
-          g.fillStyle = 'rgba(120,180,220,0.10)';
-          g.fillRect(c * CELL, r * CELL + CELL * 0.4, CELL, 2);
+        } else if (t === 'desert') {
+          if (n1 > 0.35) continue;
+          g.beginPath();
+          const px = bx + CELL * 0.2, py = by + CELL * (0.3 + n1);
+          g.moveTo(px, py);
+          g.quadraticCurveTo(px + CELL * 0.3, py - 5, px + CELL * 0.62, py + 1);
+          g.strokeStyle = 'rgba(190,170,130,0.16)';
+          g.lineWidth = 1.4;
+          g.stroke();
         }
       }
     }
 
-    // 河流高光
-    g.strokeStyle = 'rgba(120,175,215,0.42)';
-    g.lineWidth = 9;
-    g.lineCap = 'round';
-    g.lineJoin = 'round';
-    for (const p of GameMap.RIVERS) {
+    // ── 4. 纸纹与纤维 ──
+    for (let i = 0; i < 5200; i++) {
+      const n1 = GameMap._hash(i * 7 + 3, 101), n2 = GameMap._hash(i * 13 + 5, 211);
+      const n3 = GameMap._hash(i * 17 + 9, 307);
+      g.fillStyle = `rgba(242,234,212,${(0.010 + n3 * 0.022).toFixed(3)})`;
+      g.fillRect(n1 * W, n2 * H, 1 + n3 * 1.6, 1);
+    }
+    for (let i = 0; i < 420; i++) {
+      const n1 = GameMap._hash(i * 23 + 1, 401), n2 = GameMap._hash(i * 29 + 3, 503);
+      g.strokeStyle = `rgba(30,26,20,${(0.010 + n1 * 0.02).toFixed(3)})`;
+      g.lineWidth = 1;
       g.beginPath();
-      g.moveTo(p[0][0], p[0][1]);
-      for (let i = 1; i < p.length; i++) g.lineTo(p[i][0], p[i][1]);
+      g.moveTo(n2 * W, n1 * H);
+      g.lineTo(n2 * W + 8 + n1 * 26, n1 * H + 1);
       g.stroke();
     }
 
-    // 山脉描边
-    g.strokeStyle = 'rgba(20,18,14,0.35)';
-    g.lineWidth = 26;
-    for (const p of GameMap.RIDGES) {
-      g.beginPath();
-      g.moveTo(p[0][0], p[0][1]);
-      for (let i = 1; i < p.length; i++) g.lineTo(p[i][0], p[i][1]);
-      g.stroke();
-    }
-
-    // 四周暗角
-    const grad = g.createRadialGradient(
-      GameMap.W / 2, GameMap.H / 2, GameMap.H * 0.35,
-      GameMap.W / 2, GameMap.H / 2, GameMap.H * 0.9);
+    // ── 5. 四周暗角 ──
+    const grad = g.createRadialGradient(W / 2, H / 2, H * 0.34, W / 2, H / 2, H * 0.92);
     grad.addColorStop(0, 'rgba(0,0,0,0)');
-    grad.addColorStop(1, 'rgba(0,0,0,0.55)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.58)');
     g.fillStyle = grad;
-    g.fillRect(0, 0, GameMap.W, GameMap.H);
+    g.fillRect(0, 0, W, H);
 
     return cv;
+  },
+
+  /** 山峰符号：受光面 + 背光面 + 脊线 */
+  _peak(g, x, y, s) {
+    g.beginPath();
+    g.moveTo(x, y - s);
+    g.lineTo(x + s * 0.82, y + s * 0.46);
+    g.lineTo(x - s * 0.82, y + s * 0.46);
+    g.closePath();
+    g.fillStyle = 'rgba(46,43,35,0.66)';
+    g.fill();
+
+    g.beginPath();
+    g.moveTo(x, y - s);
+    g.lineTo(x - s * 0.82, y + s * 0.46);
+    g.lineTo(x - s * 0.10, y + s * 0.18);
+    g.closePath();
+    g.fillStyle = 'rgba(196,186,162,0.26)';
+    g.fill();
+
+    g.beginPath();
+    g.moveTo(x, y - s);
+    g.lineTo(x + s * 0.1, y + s * 0.22);
+    g.strokeStyle = 'rgba(18,16,12,0.30)';
+    g.lineWidth = 1;
+    g.stroke();
+  },
+
+  /** 树丛符号 */
+  _tree(g, x, y, s) {
+    g.beginPath();
+    g.arc(x, y + s * 0.2, s, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(26,40,26,0.72)';
+    g.fill();
+    g.beginPath();
+    g.arc(x - s * 0.28, y - s * 0.18, s * 0.6, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(74,98,58,0.5)';
+    g.fill();
   },
 };

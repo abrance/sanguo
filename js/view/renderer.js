@@ -9,6 +9,9 @@ const Renderer = {
   targeting: false,
   hoverId: null,
   _t: 0,
+  _terr: null,
+  _terrKey: '',
+  _capitals: null,
 
   init(canvas) {
     Renderer.canvas = canvas;
@@ -102,6 +105,16 @@ const Renderer = {
 
     const playerFid = G.player.factionId;
 
+    // 领地晕染（势力色，缓存在一个半分辨率画布上，易主时才重建）
+    if (Renderer.terrain && G) {
+      ctx.save();
+      ctx.setTransform(dpr * z, 0, 0, dpr * z,
+        dpr * (cw / 2 - Renderer.cam.x * z),
+        dpr * (ch / 2 - Renderer.cam.y * z));
+      ctx.drawImage(Renderer.territoryLayer(G), 0, 0, GameMap.W, GameMap.H);
+      ctx.restore();
+    }
+
     // 军队路线（先画线，压在城市下）
     for (const a of Object.values(G.armies)) {
       const from = G.cities[a.from], to = G.cities[a.to];
@@ -145,27 +158,17 @@ const Renderer = {
         ctx.fill();
       }
 
-      // 外圈
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, r + 2.5, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(10,9,7,0.75)';
-      ctx.fill();
+      // 城池：城墙 + 雉堞 + 城门（矩形读作城，不是色点）
+      Renderer.drawCity(ctx, p.x, p.y, r, color, { demesne: isDemesne, player: isPlayer });
 
-      // 主体
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
-      ctx.lineWidth = isDemesne ? 2 : 1;
-      ctx.strokeStyle = isDemesne ? '#e0b93a' : hexA('#000000', 0.55);
-      ctx.stroke();
+      // 势力旗：旗色即势力色，放大时旗上写势力首字
+      if (f && c.owner !== 'free') {
+        Renderer.drawFlag(ctx, p.x, p.y, r, color, z > 0.72 ? f.name.slice(0, 1) : '');
+      }
 
-      // 我方势力标记
-      if (isPlayer) {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, r * 0.42, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.55)';
-        ctx.fill();
+      // 治所：城头一颗小星
+      if (Renderer._capitals && Renderer._capitals.has(c.id)) {
+        Renderer._star(ctx, p.x, p.y - r * 1.15, Math.max(2.6, r * 0.28), 'rgba(240,223,168,0.9)');
       }
 
       // 关系弧（对我方势力的态度）：红交战 / 黄停战 / 绿同盟
@@ -190,22 +193,31 @@ const Renderer = {
         ctx.strokeStyle = '#fff3d0';
         ctx.lineWidth = 1.6;
         ctx.stroke();
-      } else if (isHover && Renderer.targeting) {
+      } else if (isHover) {
         ctx.beginPath();
         ctx.arc(p.x, p.y, r + 5, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(224,96,80,0.9)';
+        ctx.strokeStyle = Renderer.targeting ? 'rgba(224,96,80,0.9)' : 'rgba(240,223,168,0.55)';
         ctx.lineWidth = 1.6;
         ctx.stroke();
       }
 
-      // 名称
+      // 在建工程：城上一点弱光
+      if (c.buildQueue && c.buildQueue.length) {
+        const pulse = 0.5 + 0.5 * Math.sin(Renderer._t / 420 + c.x);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y - r - 5, 1.8 + pulse * 1.2, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(224,185,58,${0.45 + pulse * 0.4})`;
+        ctx.fill();
+      }
+
+      // 名称（带压暗铭牌，叠在纹理上也看得清）
       const fs = U.clamp(11 * z + 2, 10, 15);
       ctx.font = `${fs}px "Noto Serif SC",serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.lineWidth = 3.4;
-      ctx.strokeStyle = 'rgba(6,5,4,0.92)';
-      ctx.strokeText(c.name, p.x, p.y + r + 3);
+      const tw = ctx.measureText(c.name).width;
+      ctx.fillStyle = 'rgba(8,7,6,0.4)';
+      ctx.fillRect(p.x - tw / 2 - 3, p.y + r + 2, tw + 6, fs + 1);
       ctx.fillStyle = isDemesne ? '#f0dfa8' : (isPlayer ? '#dce9f4' : '#ded6c6');
       ctx.fillText(c.name, p.x, p.y + r + 3);
 
@@ -266,6 +278,189 @@ const Renderer = {
       ctx.textAlign = 'center';
       ctx.fillText('选择进军目标（Esc 取消）', cw / 2, 26);
     }
+
+    Renderer.drawCompass(ctx, cw - 44, ch - 44);
+  },
+
+  /** 领地晕染层：半分辨率，城主人变了才重建 */
+  territoryLayer(G) {
+    const key = Object.values(G.cities).map(c => c.owner + (c.grantedTo ? '*' : '')).join('');
+    if (Renderer._terr && Renderer._terrKey === key) return Renderer._terr;
+
+    const s = 0.5;
+    const cv = document.createElement('canvas');
+    cv.width = GameMap.W * s;
+    cv.height = GameMap.H * s;
+    const g = cv.getContext('2d');
+
+    for (const c of Object.values(G.cities)) {
+      const f = G.factions[c.owner];
+      const col = f ? f.color : '#6b6455';
+      const R = (78 + Math.min(70, c.pop * 0.02)) * s;   // 78–148 世界像素：势力色晕，别糊满全图
+      const rg = g.createRadialGradient(c.x * s, c.y * s, R * 0.4, c.x * s, c.y * s, R);
+      rg.addColorStop(0, hexA(col, 0.30));
+      rg.addColorStop(0.6, hexA(col, 0.12));
+      rg.addColorStop(1, hexA(col, 0));
+      g.fillStyle = rg;
+      g.beginPath();
+      g.arc(c.x * s, c.y * s, R, 0, Math.PI * 2);
+      g.fill();
+    }
+
+    Renderer._terr = cv;
+    Renderer._terrKey = key;
+    Renderer._capitals = Renderer.capitals(G);
+    return cv;
+  },
+
+  /** 每势力最大的城算治所 */
+  capitals(G) {
+    const best = {};
+    for (const c of Object.values(G.cities)) {
+      if (!c.owner || c.owner === 'free') continue;
+      const w = c.pop + c.wall * 60;
+      if (!best[c.owner] || w > best[c.owner].w) best[c.owner] = { w, id: c.id };
+    }
+    return new Set(Object.values(best).map(b => b.id));
+  },
+
+  /** 城池符号：外墙（势力色）+ 雉堞 + 城门 + 院内暗影 */
+  drawCity(ctx, x, y, r, color, opts) {
+    const w = r * 1.92, h = r * 1.44;
+    const top = y - h * 0.62;
+    const left = x - w / 2;
+    const merlon = Math.max(1.6, r * 0.22);
+    const bw = w / 5;
+
+    // 地基阴影
+    ctx.beginPath();
+    ctx.ellipse(x, y + h * 0.56, w * 0.6, h * 0.32, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.32)';
+    ctx.fill();
+
+    // 外墙
+    ctx.fillStyle = color;
+    ctx.fillRect(left, top, w, h);
+    // 院内（压暗，显出墙厚）
+    ctx.fillStyle = 'rgba(12,10,8,0.34)';
+    ctx.fillRect(left + merlon * 0.7, top + merlon * 0.7, w - merlon * 1.4, h - merlon * 1.4);
+
+    // 雉堞
+    ctx.fillStyle = color;
+    for (let i = 0; i < 3; i++) {
+      const mx = left + bw * (0.55 + i * 1.45);
+      ctx.fillRect(mx, top - merlon, bw * 0.9, merlon + 1);
+    }
+
+    // 城门
+    const gw = Math.max(2.2, r * 0.34);
+    ctx.fillStyle = 'rgba(10,9,7,0.9)';
+    ctx.fillRect(x - gw / 2, y + h * 0.06, gw, h * 0.34);
+
+    // 墙线
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(left + 0.5, top + 0.5, w - 1, h - 1);
+
+    // 直辖：金边
+    if (opts.demesne) {
+      ctx.strokeStyle = 'rgba(224,185,58,0.95)';
+      ctx.lineWidth = 1.6;
+      ctx.strokeRect(left - 1, top - 1, w + 2, h + 2);
+    }
+    // 我方势力：城内一点白
+    if (opts.player) {
+      ctx.beginPath();
+      ctx.arc(x, y - h * 0.18, Math.max(1.2, r * 0.16), 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.fill();
+    }
+  },
+
+  /** 势力旗：旗色即势力色；放大时旗面写势力首字 */
+  drawFlag(ctx, x, y, r, color, label) {
+    const px = x + r * 1.35;
+    const y0 = y - r * 1.55;
+    const fw = Math.max(8, r * 1.15);
+    const fh = Math.max(5.5, r * 0.78);
+
+    ctx.strokeStyle = 'rgba(24,20,15,0.85)';
+    ctx.lineWidth = Math.max(1, r * 0.09);
+    ctx.beginPath();
+    ctx.moveTo(px, y + r * 0.2);
+    ctx.lineTo(px, y0);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(px, y0);
+    ctx.lineTo(px + fw, y0 + fh * 0.18);
+    ctx.lineTo(px + fw * 0.74, y0 + fh * 0.5);
+    ctx.lineTo(px + fw, y0 + fh * 0.82);
+    ctx.lineTo(px, y0 + fh);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+
+    if (label) {
+      ctx.fillStyle = 'rgba(252,246,230,0.95)';
+      ctx.font = `${Math.round(fh * 0.74)}px "Noto Serif SC",serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, px + fw * 0.52, y0 + fh * 0.52);
+    }
+  },
+
+  _star(ctx, x, y, r, color) {
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      const rr = i % 2 ? r * 0.45 : r;
+      const px = x + Math.cos(a) * rr;
+      const py = y + Math.sin(a) * rr;
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  },
+
+  /** 右下角罗盘：小幅地图仪器感，画在屏幕坐标系 */
+  drawCompass(ctx, x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.strokeStyle = 'rgba(201,162,39,0.28)';
+    ctx.fillStyle = 'rgba(201,162,39,0.30)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(0, 0, 20, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 15, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 四向针尖（上方为北）
+    for (let i = 0; i < 4; i++) {
+      ctx.save();
+      ctx.rotate(i * Math.PI / 2);
+      ctx.beginPath();
+      ctx.moveTo(0, -18);
+      ctx.lineTo(3.2, -6);
+      ctx.lineTo(-3.2, -6);
+      ctx.closePath();
+      ctx.fillStyle = i === 0 ? 'rgba(224,185,58,0.75)' : 'rgba(201,162,39,0.35)';
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.fillStyle = 'rgba(224,185,58,0.75)';
+    ctx.font = '9px "Noto Serif SC",serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('北', 0, -27);
+    ctx.restore();
   },
 };
 

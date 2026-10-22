@@ -176,6 +176,13 @@ const UI = {
       const prev = Renderer.hoverId;
       Renderer.hoverId = hit ? hit.id : null;
       if (UI.pending && hit && hit.id !== prev) UI.showTargetHint(hit);
+      if (UI.pending) UI.hideCityTip();
+      else UI.showCityTip(hit, e.clientX, e.clientY);
+    });
+
+    cv.addEventListener('mouseleave', () => {
+      Renderer.hoverId = null;
+      UI.hideCityTip();
     });
 
     window.addEventListener('mouseup', e => {
@@ -208,6 +215,7 @@ const UI = {
 
   onCityClick(city) {
     const G = Store.get();
+    UI.hideCityTip();
 
     if (UI.pending && UI.pending.type === 'batchDispatch') {
       const p = UI.pending;
@@ -340,9 +348,70 @@ const UI = {
 
   toast(msg) {
     const G = Store.get();
-    if (!G) return;
-    State.log(G, 'note', msg);
-    UI.render(G);
+    if (G) {
+      State.log(G, 'note', msg);
+      UI.render(G);
+    }
+    UI.flash(msg);
+  },
+
+  /** 地图上方的浮层提示（不写纪事，不打断操作） */
+  flash(msg, kind) {
+    const el = UI.$('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'toast show' + (kind ? ' ' + kind : '');
+    clearTimeout(UI._toastTimer);
+    UI._toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+  },
+
+  /** 悬停城池的速览：兵 / 墙 / 治安 / 守将 / 对我的态度 */
+  showCityTip(city, cx, cy) {
+    const tip = UI.$('cityTip');
+    if (!tip) return;
+    const G = Store.get();
+    if (!G || !city) { tip.classList.add('hidden'); return; }
+
+    const f = G.factions[city.owner];
+    const isMine = city.owner === G.player.factionId;
+    const isDemesne = city.grantedTo === PLAYER_HERO_ID;
+    const gov = city.governor ? G.heroes[city.governor] : null;
+    const st = !isMine && city.owner !== 'free'
+      ? DIPLO_STATUS[Diplo.statusOf(G, G.player.factionId, city.owner)] : null;
+    const cap = State.troopCapOf(G, city);
+    const troops = troopTotal(city.garrison);
+    const building = city.buildQueue && city.buildQueue.length
+      ? BUILDINGS[city.buildQueue[0].key].name : null;
+
+    tip.innerHTML = `
+      <div class="ct-head">
+        <b>${U.esc(city.name)}</b>
+        <span style="color:${f ? f.color : '#888'}">${f ? U.esc(f.name) : '—'}${isDemesne ? ' · 直辖' : ''}</span>
+        ${st ? `<span class="dst" style="color:${st.color}">${st.name}</span>` : ''}
+      </div>
+      <div class="ct-row"><span>守军</span><b>${U.num(troops)}</b><span>/</span>${U.num(cap)}
+        <span>城墙</span><b>${city.wall.toFixed(1)}</b></div>
+      <div class="ct-row"><span>治安</span><b>${Math.round(city.order)}</b>
+        <span>士气</span><b>${Math.round(city.morale)}</b>
+        <span>守将</span><b>${gov ? U.esc(gov.name) : '无'}</b></div>
+      <div class="ct-foot dim">${TERRAIN[city.terrain].name} · ${city.region}
+        ${city.policy ? ' · ' + POLICIES[city.policy].name : ''}
+        ${building ? ' · 兴建' + building : ''}</div>`;
+
+    tip.classList.remove('hidden');
+    const wrap = UI.$('mapwrap').getBoundingClientRect();
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    let x = cx - wrap.left + 16;
+    let y = cy - wrap.top + 18;
+    if (x + w > wrap.width - 8) x = cx - wrap.left - w - 14;
+    if (y + h > wrap.height - 8) y = cy - wrap.top - h - 12;
+    tip.style.left = Math.max(6, x) + 'px';
+    tip.style.top = Math.max(6, y) + 'px';
+  },
+
+  hideCityTip() {
+    const tip = UI.$('cityTip');
+    if (tip) tip.classList.add('hidden');
   },
 
   // ───────── 按钮 ─────────
@@ -351,24 +420,27 @@ const UI = {
       try {
         Store.dispatch('END_TURN');
         Save.save(Store.get());
+        const g = Store.get();
+        const season = SEASON[U.season(g.meta.month)].name;
+        UI.flash(`${g.meta.year}年 ${g.meta.month}月 · ${season}`, 'turn');
       } catch (e) { UI.toast(e.message); }
     };
 
     UI.$('btnSave').onclick = () => {
       const G = Store.get();
       if (!G) return;
-      UI.toast(Save.save(G) ? '已存档。' : '存档失败（存储不可用）');
+      UI.flash(Save.save(G) ? '已存档。' : '存档失败（存储不可用）');
     };
 
     UI.$('btnLoad').onclick = () => {
       let G = Save.load(DEFAULT_SCENARIO);
-      if (!G) { UI.toast('无存档。'); return; }
+      if (!G) { UI.flash('无存档。'); return; }
       G = State.migrate(G);
       Store.replace(G);
       Renderer.attach(G);
       UI.selectedId = G.player.homeCityId;
       Renderer.selectedId = UI.selectedId;
-      UI.toast('已读档。');
+      UI.flash('已读档。');
     };
 
     UI.$('btnNew').onclick = () => {
@@ -1418,13 +1490,15 @@ const UI = {
   renderLog(G) {
     const box = UI.$('logList');
     const items = G.log.slice(-160);
-    const html = items.map(e =>
-      `<div class="l-${e.kind || 'note'}">${U.esc(e.text)}</div>`).join('');
+    const mark = UI._logMark == null ? items.length : Math.max(0, UI._logMark - (G.log.length - items.length));
+    const html = items.map((e, i) =>
+      `<div class="l-${e.kind || 'note'}${i >= mark ? ' fresh' : ''}">${U.esc(e.text)}</div>`).join('');
 
     box.innerHTML = (G.over
       ? `<div class="l-turn" style="font-size:14px">${U.esc(G.over.text)}</div>`
       : '') + html;
 
+    UI._logMark = G.log.length;
     if (UI._logAutoScroll) box.scrollTop = box.scrollHeight;
   },
 };
