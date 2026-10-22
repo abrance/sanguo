@@ -102,6 +102,39 @@ const Army = {
       return;
     }
 
+    // 盟友援军（mission: aid）：并入守军，不作战
+    if (a.mission === 'aid') {
+      for (const k of TROOP_KEYS) target.garrison[k] = (target.garrison[k] || 0) + (a.troops[k] || 0);
+      if (a.heroId && G.heroes[a.heroId] && G.heroes[a.heroId].factionId !== target.owner) {
+        const home = State.factionCities(G, a.factionId)[0];
+        G.heroes[a.heroId].cityId = home ? home.id : null;
+      }
+      if (a.factionId === G.player.factionId || target.grantedTo === PLAYER_HERO_ID) {
+        const af = G.factions[a.factionId];
+        State.log(G, 'note', `${af ? af.name : '友军'}援兵抵${target.name}，并入守军。`);
+      }
+      delete G.armies[a.id];
+      return;
+    }
+
+    // 停战 / 结盟期内的在途攻军：只能班师，不得开战
+    if (!Diplo.canAttack(G, a.factionId, target.owner)) {
+      const home = G.cities[a.from];
+      if (home && home.owner === a.factionId) {
+        const d = U.dist(target.x, target.y, home.x, home.y);
+        a.to = a.from;
+        a.eta = Math.max(1, Math.ceil(d / Army.speedOf(a.troops)));
+        a.totalEta = a.eta;
+        a.mission = 'return';
+        if (a.factionId === G.player.factionId)
+          State.log(G, 'note', `与${(G.factions[target.owner] || {}).name || '守军'}已罢兵，我军自${target.name}城下班师。`);
+        return;
+      }
+      if (a.heroId && G.heroes[a.heroId]) G.heroes[a.heroId].cityId = null;
+      delete G.armies[a.id];
+      return;
+    }
+
     // 敌军城：开战
     const rep = Combat.resolve(G, a, target, stamp);
 

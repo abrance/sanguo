@@ -26,6 +26,8 @@ const Turn = {
     // 8 上级好感 / 上命
     Favor.monthly(G);
     Mission.tick(G);
+    // 8.5 外交：期满 / 关系漂移 / AI 议和宣战结盟
+    Diplo.advance(G);
     // 9 声望与晋升
     Rank.monthly(G);
     // 10 AI 决策

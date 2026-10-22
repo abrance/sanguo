@@ -227,6 +227,8 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
 现有命令：
 `END_TURN` / `RECRUIT` / `DISPATCH` / `BUILD` / `CANCEL_BUILD` / `SET_POLICY` / `CLAN_ACTION` / `RESEARCH`
 `SET_ROUTE` / `DECLARE_INDEPENDENCE` / `FULFILL_MISSION` / `DECLINE_MISSION` / `LEVY_TROOPS` / `SKIM_TAX`
+`SEND_ENVOY` / `SECRET_PACT` / `ASK_AID` / `BUY_GRAIN` / `BRIBE_SUPERIOR` / `DEFECT` / `PETITION`
+`DECLARE_WAR` / `SUE_FOR_PEACE` / `FORM_ALLIANCE` / `BREAK_ALLIANCE` / `CALL_TO_ARMS`
 
 ---
 
@@ -237,7 +239,7 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
 | **P0** | 70 城地图、回合推进、经济、征兵、出兵、多轮战斗、战报、战功分封、官阶晋升、存读档、流亡投靠 | ✅ 已完成 |
 | **P1** | 建筑 16 种、科技树 20 项、士族系统、太守委任 + 方针模板、建材/铁料/科研点 | ✅ 已完成 |
 | **P2** | 官阶台 UI、三路线（忠臣 / 权臣 / 自立）、上级任务与抗命、上级好感与削权 | ✅ 已完成 |
-| P3 | 个人外交 / 势力外交分层、外交 AI、结盟宣战 | 未开始 |
+| P3 | 个人外交 / 势力外交分层、外交 AI、结盟宣战 | ✅ 已完成 |
 | P4 | 剧本扩充（汉末 / 官渡 / 赤壁…）、武将扩到 120+、事件链、数值平衡 | 未开始 |
 | P5 | 视觉润色、音效、战报动画、地图图标 | 未开始 |
 

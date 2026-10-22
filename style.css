@@ -460,3 +460,15 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:14px}
   display:inline-block;margin-left:4px;font-size:9px;
   color:#e0b93a;border:1px solid #7a6a3a;border-radius:2px;padding:0 3px;
 }
+
+/* 外交面板 */
+.diplo-row{padding:5px 4px;border-bottom:1px solid #241f18}
+.drow1{display:flex;align-items:center;gap:5px;font-size:11px}
+.drow1 b{flex:1 1 auto;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.csw{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto}
+.dst{font-size:10px;white-space:nowrap}
+.drel{font-size:10px;color:var(--ink-dim);min-width:26px;text-align:right}
+.dbar{height:3px;background:#221d16;margin:3px 0;border-radius:2px;overflow:hidden}
+.dbar i{display:block;height:100%}
+.drow2{font-size:9px;line-height:1.5}
+.dacts{display:flex;flex-wrap:wrap;gap:3px;margin-top:3px}

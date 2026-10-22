@@ -16,6 +16,7 @@ const Mission = {
     }
 
     if (p.mission) {
+      if (this._checkDiplo(G)) return;
       if (G.meta.turn > p.mission.expireTurn) this._fail(G);
       return;
     }
@@ -56,12 +57,34 @@ const Mission = {
     return Math.max(0, m.expireTurn - G.meta.turn);
   },
 
+  /** 出使 / 离间：看关系值是否达标，达标即复命 */
+  _checkDiplo(G) {
+    const p = G.player;
+    const m = p.mission;
+    if (!m) return false;
+    if (m.typeKey === 'envoy') {
+      if (Diplo.relationOf(G, p.factionId, m.targetFid) >= m.targetRel) {
+        this._complete(G, '使者复命');
+        return true;
+      }
+    } else if (m.typeKey === 'intrigue') {
+      if (Diplo.relationOf(G, m.aFid, m.bFid) <= m.targetRel) {
+        this._complete(G, '流言得售');
+        return true;
+      }
+    }
+    return false;
+  },
+
   /** 玩家主动上缴（tribute / levy） */
   fulfil(G) {
     const p = G.player;
     const m = p.mission;
     if (!m) throw new Error('当前无上命');
     if (m.typeKey === 'expedition') throw new Error('此命需攻取目标城池，不能以财物了事');
+    if (m.typeKey === 'envoy' || m.typeKey === 'intrigue') {
+      throw new Error('此命需以结果复命，不能以财物了事');
+    }
 
     if (m.typeKey === 'tribute') {
       this._deductRes(G, m.res, m.amount);

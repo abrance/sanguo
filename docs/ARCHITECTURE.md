@@ -26,6 +26,7 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 │    heroes-190.js  134 名武将、特技表
 │    factions-190.js  21 势力与初始领城
 │    scenarios.js   剧本注册表（多剧本平行）
+│    diplo.js       外交状态文案、行动与提案定义
 │
 ├─ js/state/        状态的唯一来源
 │    state.js       状态树形状、构造、只读查询、胜负判定、旧档迁移
@@ -40,6 +41,7 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 │    clans.js       士族情绪漂移与叛乱
 │    viceroy.js     太守按方针自动营造 + 征兵
 │    rally.js       持续调兵（补给线）
+│    diplo.js       关系漂移 / 状态机 / canAttack 闸门 / AI 议和宣战结盟
 │    favor.js       上级好感、赏赐、削权、权臣权柄
 │    mission.js     上命派发与结算
 │    combat.js      多轮攻城结算、战力公式、胜率预估
@@ -154,7 +156,8 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
  6  Viceroy.run       太守按方针自动营造 + 征兵
  7  Rally.run         持续调兵
  8  Favor.monthly     好感漂移 / 赏赐 / 削权
- 9  Mission.tick      上命派发与逾期
+ 9  Mission.tick      上命派发与逾期（含量外交类结果）
+ 9.5 Diplo.advance   停战到期 / 每 6 回合重算边界 / 关系漂移 / AI 外交
 10  Rank.monthly      声望自然增长 + 晋升检查
 11  AI.run            各势力决策（玩家势力的非直辖城也走这里）
 12  _playerFate       直辖城全失 → 流失投奔
@@ -197,6 +200,12 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
 
 6. **`predict()` 与 `resolve()` 用同一套战力公式** —— `Combat.power`。
    `predict` 只是把随机项去掉，别让它和真实结算分叉。
+
+7. **能不能开战只问 `Diplo.canAttack(G, a, b)`** —— AI 选目标、`guardAttack()`、`Army.arrive` 都只认它。
+   不要在别处另写 `status === 'war'` 判断；在野（`'free'`）之城永远可攻。
+
+8. **外交关系是成对的** —— `G.diplo` 的 key 由 `Diplo.key(a,b)` 规范化（字典序拼接），
+   任何地方都不要自己拼 `a + '|' + b`，否则 A→B 与 B→A 会变成两份数据。
 
 7. **随机只走 `RNG`** —— 不用 `Math.random()`，否则同种子不可复现，平衡测试失效。
 

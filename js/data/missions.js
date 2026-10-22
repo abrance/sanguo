@@ -69,15 +69,62 @@ const MISSION_TYPES = {
       return `攻取${c ? c.name : '敌城'}（${c && G.factions[c.owner] ? G.factions[c.owner].name : ''}）`;
     },
   },
+  envoy: {
+    id: 'envoy',
+    weight: 12,
+    title: '奉命出使',
+    make(G) {
+      const target = Diplo.envoyTarget(G);
+      if (!target) return null;
+      const x = Diplo.pair(G, G.player.factionId, target);
+      return {
+        type: 'envoy',
+        targetFid: target,
+        targetRel: Math.min(60, Math.round(x.rel + 20)),
+        expireTurn: G.meta.turn + 8,
+        rewardMerit: 20,
+        rewardFavor: 8,
+      };
+    },
+    desc(m, G) {
+      const f = G.factions[m.targetFid];
+      return `使${f ? f.name : '邻邦'}与我方和好（关系提至 ${m.targetRel}）`;
+    },
+  },
+
+  intrigue: {
+    id: 'intrigue',
+    weight: 10,
+    title: '奉命离间',
+    make(G) {
+      const pick = Diplo.intrigueTarget(G);
+      if (!pick) return null;
+      const x = Diplo.pair(G, pick.a, pick.b);
+      return {
+        type: 'intrigue',
+        aFid: pick.a,
+        bFid: pick.b,
+        targetRel: Math.round(x.rel) - 15,
+        expireTurn: G.meta.turn + 8,
+        rewardMerit: 24,
+        rewardFavor: 10,
+      };
+    },
+    desc(m, G) {
+      const a = G.factions[m.aFid], b = G.factions[m.bFid];
+      return `离间${a ? a.name : '?'}与${b ? b.name : '?'}（关系压至 ${m.targetRel} 以下）`;
+    },
+  },
 };
 
-/** 选征讨目标：与直辖城相邻的敌方城中最弱的一座 */
+/** 选征讨目标：与直辖城相邻、且正在交战的最弱敌城 */
 function pickExpeditionTarget(G) {
   const seen = new Set();
   let best = null;
   for (const c of State.demesne(G)) {
     for (const nb of State.neighbors(G, c.id, 235)) {
       if (nb.owner === G.player.factionId) continue;
+      if (!Diplo.canAttack(G, G.player.factionId, nb.owner)) continue;
       if (seen.has(nb.id)) continue;
       seen.add(nb.id);
       const score = Combat.defenseScore(G, nb) / Math.max(1, nb.pop);
@@ -87,7 +134,7 @@ function pickExpeditionTarget(G) {
   return best ? best.id : null;
 }
 
-const MISSION_LIST = ['tribute', 'levy', 'expedition'];
+const MISSION_LIST = ['tribute', 'levy', 'expedition', 'envoy', 'intrigue'];
 
 /** 按权重抽一个类型 */
 function pickMissionType() {

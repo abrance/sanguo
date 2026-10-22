@@ -182,6 +182,8 @@ const AI = {
       let picked = null;
       for (const nb of State.neighbors(G, from.id, 235)) {
         if (nb.owner === f.id) continue;
+        if (!Diplo.canAttack(G, f.id, nb.owner)) continue;
+        if (nb.grantedTo === PLAYER_HERO_ID && Diplo.hasPact(G, f.id)) continue;
         if (nb.owner === G.player.factionId && G.meta.turn < 36) continue;
         if (nb.grantedTo === PLAYER_HERO_ID && G.meta.turn < 54) continue;
 

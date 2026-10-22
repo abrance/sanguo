@@ -36,11 +36,15 @@ const State = {
         domActionTurn: 0,
         demesne: [],
         homeCityId: opts.cityId,
+        diploCooldown: {},
+        pacts: [],
+        usurp: 0,
       },
       factions: {},
       cities: {},
       heroes: {},
       armies: {},
+      diplo: {},
       log: [],
       stats: { won: 0, lost: 0, citiesTaken: 0, citiesLost: 0, battles: 0 },
       over: null,
@@ -164,6 +168,7 @@ const State = {
     G.player.homeCityId = opts.cityId;
 
     TechSys.refresh(G);
+    Diplo.init(G);
 
     const startCap = Math.round(State.troopCapOf(G, startCity) * 0.60);
     const curTroops = troopTotal(startCity.garrison);
@@ -437,6 +442,8 @@ const State = {
     if (p.missionCooldown == null) p.missionCooldown = 0;
     if (p.domActionTurn == null) p.domActionTurn = 0;
     if (p.route == null) p.route = 'loyal';
+    if (!G.diplo) Diplo.init(G);
+    Diplo.ensure(G);
     TechSys.refresh(G);
     return G;
   },

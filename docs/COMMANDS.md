@@ -167,6 +167,50 @@ Store.dispatch('BUILD', { cityId: 'chenliu', key: 'farm' })
 
 ---
 
+## 外交
+
+分层由 `Diplo.layer(G)` 决定：县长–刺史 `personal`、州牧–将军 `petition`、三公 / 自立 `direct`。
+所有外交命令都受「同一目标国 3 回合冷却」与「花直辖城的钱」两条约束。
+
+### `SEND_ENVOY` `{ fid }`
+遣使修好：300 钱，两国关系 +6，好感 −2。
+
+### `SECRET_PACT` `{ fid }`
+私通密约：800 钱，12 月内该势力不攻你直辖城；30% 被告发（好感 −15、关系 −10）。
+存于 `player.pacts = [{ fid, until }]`，`Diplo.hasPact` 是 AI 出兵的唯二闸门之一。
+
+### `ASK_AID` `{ fid, cityId? }`
+求援：1000 钱 + 关系 ≥20，对方从最强城抽 40% 兵走 `mission: 'aid'` 赴你首城（抵达并入守军）。好感 −5。
+
+### `BUY_GRAIN` `{ fid, cityId? }`
+借粮：600 钱 + 关系 ≥10，入粮 `300 + 60 × 对方城数`（不超过目标城粮仓上限）。好感 −3。
+
+### `BRIBE_SUPERIOR`
+行贿上级：500 钱 → 好感 +12；15% 被检举（好感 −6、声望 −5）。自立后不可用。
+
+### `DEFECT` `{ fid }`
+带直辖城投靠（不可撤销）：直辖城 `owner` 改、城内武将转籍、官阶重置 1 级、战功清零、`route` 回 `loyal`、
+清空密约与冷却，原势力与新主即刻开战。交战中的势力无从投靠。
+
+### `PETITION` `{ fid, action }`
+action ∈ `war | peace | ally | intrigue`。州牧起的「上表言事」：花提议的钱与好感，
+再由 `Diplo.respond()` 按好感 / 实力对比 / 共同敌人 / 君主侵略性算采纳率（0.05–0.95）。
+被拒好感再 −4。`direct` 层用同一命令时直接办成。
+
+### `DECLARE_WAR` / `SUE_FOR_PEACE` / `FORM_ALLIANCE` / `BREAK_ALLIANCE` / `CALL_TO_ARMS` `{ fid }`
+三公或自立之主的「代君行令」。前置：`Diplo.layer(G) === 'direct'`、目标国存在且未覆灭、冷却已过、钱够。
+- 花费：宣战 500 / 求和 300 / 结盟 1000 / 解盟 0 / 请盟出兵 500
+- 代价：好感 −5，`player.usurp +1`；满 5 次触发猜忌（好感 −25，计数清零）
+- 结盟硬条件：关系 ≥40、无 `grudge`、双方盟友都 <2
+- `CALL_TO_ARMS` 要求 `status === 'ally'`，盟友抽 40% 兵以 `mission: 'aid'` 赴你最危急的直辖城
+
+### 无命令的自动行为
+
+- `DISPATCH` / `BATCH_DISPATCH` 打非交战势力 → `guardAttack()` 直接判为背刺：自动 `declareWar({backstab:true})`，好感 −20、声望 −15
+- 停战 / 结盟期内的在途攻军抵达时自动班师（`Army.arrive`），不触发 `Combat.resolve`
+
+---
+
 ## 新增命令的步骤
 
 1. 在 `js/state/store.js` 的 `COMMANDS` 里加一个 `NAME(G, payload) {}`

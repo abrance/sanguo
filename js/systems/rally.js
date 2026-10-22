@@ -34,6 +34,13 @@ const Rally = {
       const room = Rally.roomFor(G, c, to);
       if (room < 40) continue;
 
+      // 目标城已非交战势力：停发，不替玩家白送背刺
+      if (to.owner !== G.player.factionId && !Diplo.canAttack(G, G.player.factionId, to.owner)) {
+        c.rallyTo = null;
+        State.log(G, 'note', `${c.name}罢持续调兵：${to.name}已非可攻之城。`);
+        continue;
+      }
+
       const total = troopTotal(c.garrison);
       const floor = Rally.floorOf(G, c);
       if (total <= floor + 40) continue;

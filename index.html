@@ -47,6 +47,7 @@
       <button data-tab="city" class="on">城池</button>
       <button data-tab="army">军务</button>
       <button data-tab="tech">科技</button>
+      <button data-tab="diplo">外交</button>
       <button data-tab="log">纪事</button>
     </nav>
 
@@ -110,6 +111,21 @@
           <span class="tag" id="techCurrent">无</span>
         </div>
         <div id="techBody" class="pane"></div>
+      </section>
+    </div>
+
+    <!-- 外交 -->
+    <div id="tabDiplo" class="tabpane hidden">
+      <section class="card" style="flex:0 0 auto">
+        <div class="card-head">
+          <span>外交</span>
+          <span class="tag" id="diploLayer">个人外交</span>
+        </div>
+        <div class="card-sub dim" id="diploHint">—</div>
+        <div class="dacts" id="diploTop"></div>
+      </section>
+      <section class="card grow">
+        <div id="diploList" class="list"></div>
       </section>
     </div>
 
@@ -207,6 +223,7 @@
 <script src="js/data/heroes-190.js"></script>
 <script src="js/data/factions-190.js"></script>
 <script src="js/data/scenarios.js"></script>
+<script src="js/data/diplo.js"></script>
 <script src="js/state/state.js"></script>
 <script src="js/systems/economy.js"></script>
 <script src="js/systems/recruit.js"></script>
@@ -215,6 +232,7 @@
 <script src="js/systems/clans.js"></script>
 <script src="js/systems/viceroy.js"></script>
 <script src="js/systems/rally.js"></script>
+<script src="js/systems/diplo.js"></script>
 <script src="js/systems/favor.js"></script>
 <script src="js/systems/mission.js"></script>
 <script src="js/systems/combat.js"></script>

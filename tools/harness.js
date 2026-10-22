@@ -33,9 +33,10 @@ function boot(opts) {
     'BUILDINGS', 'BUILDING_KEYS', 'buildCost', 'buildTurns', 'bldValue',
     'TECHS', 'TECH_KEYS', 'TECH_BRANCHES', 'techMultipliers', 'branchTotalCost',
     'POLICIES', 'POLICY_KEYS', 'CLAN_NAMES', 'clanBaseline',
+    'DIPLO_STATUS', 'PERSONAL_ACTIONS', 'DIPLO_PROPOSALS', 'DIPLO_LAYERS',
     'MISSION_TYPES', 'MISSION_LIST',
     'Economy', 'Recruit', 'Build', 'TechSys', 'Clans', 'Viceroy', 'Rally',
-    'Favor', 'Mission', 'Combat', 'Army', 'Rank', 'AI', 'Turn',
+    'Favor', 'Mission', 'Combat', 'Army', 'Rank', 'AI', 'Turn', 'Diplo',
     'SEASON', 'TERRAIN', 'PLAYER_HERO_ID', 'DEFAULT_SCENARIO',
   ];
 

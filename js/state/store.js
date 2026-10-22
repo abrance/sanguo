@@ -32,6 +32,8 @@ const COMMANDS = {
     const total = troopTotal(troops);
     if (total < 20) throw new Error('兵力不足 20，无法出征');
 
+    guardAttack(G, to);
+
     const heroId = pickHeroForCity(G, fromId);
 
     const a = Army.create(G, {
@@ -111,6 +113,7 @@ const COMMANDS = {
         for (const k of TROOP_KEYS) from.garrison[k] += troops[k] || 0;
         continue;
       }
+      guardAttack(G, to);
       Army.create(G, {
         factionId: G.player.factionId, heroId: pickHeroForCity(G, id),
         from: id, to: toId, troops, mission: 'attack',
@@ -272,6 +275,14 @@ const COMMANDS = {
     TechSys.refresh(G);
     Turn._cleanupFactions(G);
 
+    // 自立：旧势力的盟约作废，与原势力即刻开战
+    for (const other of Object.keys(G.factions)) {
+      if (other === 'free' || other === oldFid) continue;
+      const x = Diplo.pair(G, oldFid, other);
+      if (x && x.status === Diplo.ALLY) Diplo.breakAlliance(G, oldFid, other);
+    }
+    Diplo.declareWar(G, newFid, oldFid);
+
     State.log(G, 'good',
       `【自立】${p.name}不受${oldFaction.name}节制，据 ${p.demesne.length} 城举兵，号「${G.factions[newFid].name}」。`);
     if (State.factionCities(G, oldFid).length > 0) {
@@ -303,6 +314,174 @@ const COMMANDS = {
     return Favor.skimTax(G, cityId);
   },
 
+  // ───────── 外交：个人（任何官阶） ─────────
+  SEND_ENVOY(G, { fid }) {
+    if (G.over) throw new Error('战局已终');
+    const f = Diplo.open(G, fid);
+    Diplo.spendGold(G, PERSONAL_ACTIONS.envoy.cost);
+    const x = Diplo.pair(G, G.player.factionId, fid);
+    x.rel = U.clamp(x.rel + 6, -100, 100);
+    G.player.favor = U.clamp(G.player.favor - 2, 0, 100);
+    Diplo.touch(G, fid);
+    State.log(G, 'note', `遣使入${f.name}修好，两国关系稍缓。（上意 -2）`);
+    return { rel: Math.round(x.rel) };
+  },
+
+  SECRET_PACT(G, { fid }) {
+    if (G.over) throw new Error('战局已终');
+    const f = Diplo.open(G, fid);
+    Diplo.spendGold(G, PERSONAL_ACTIONS.pact.cost);
+    const until = G.meta.turn + Diplo.PACT_MONTHS;
+    G.player.pacts = (G.player.pacts || []).filter(p => p.fid !== fid)
+      .concat([{ fid, until }]);
+    Diplo.touch(G, fid);
+
+    if (RNG.chance(0.30)) {
+      G.player.favor = U.clamp(G.player.favor - 15, 0, 100);
+      const x = Diplo.pair(G, G.player.factionId, fid);
+      x.rel = U.clamp(x.rel - 10, -100, 100);
+      State.log(G, 'bad', `私通${f.name}之事败露，上级震怒。（上意 -15，关系 -10）`);
+      return { ok: false };
+    }
+    State.log(G, 'note', `与${f.name}私通密约：${Diplo.PACT_MONTHS} 月内不犯我直辖城。`);
+    return { ok: true };
+  },
+
+  ASK_AID(G, { fid, cityId }) {
+    if (G.over) throw new Error('战局已终');
+    const f = Diplo.open(G, fid);
+    const rel = Diplo.relationOf(G, G.player.factionId, fid);
+    if (rel < PERSONAL_ACTIONS.aid.need) {
+      throw new Error(`与${f.name}关系不足（需 ${PERSONAL_ACTIONS.aid.need}，现 ${Math.round(rel)}）`);
+    }
+    const c = G.cities[cityId || G.player.homeCityId];
+    if (!c || c.grantedTo !== PLAYER_HERO_ID) throw new Error('须指定你的直辖城');
+
+    Diplo.spendGold(G, PERSONAL_ACTIONS.aid.cost);
+    const sent = Diplo.sendAid(G, fid, c.id, 0.40);
+    if (!sent) throw new Error(`${f.name}兵力空虚，无兵可派`);
+    Diplo.touch(G, fid);
+    G.player.favor = U.clamp(G.player.favor - 5, 0, 100);
+    State.log(G, 'good', `${f.name}应你所请，遣兵 ${U.num(sent)} 来援${c.name}。（上意 -5）`);
+    return { sent };
+  },
+
+  BUY_GRAIN(G, { fid, cityId }) {
+    if (G.over) throw new Error('战局已终');
+    const f = Diplo.open(G, fid);
+    const rel = Diplo.relationOf(G, G.player.factionId, fid);
+    if (rel < PERSONAL_ACTIONS.grain.need) {
+      throw new Error(`与${f.name}关系不足（需 ${PERSONAL_ACTIONS.grain.need}，现 ${Math.round(rel)}）`);
+    }
+    const c = G.cities[cityId || G.player.homeCityId];
+    if (!c || c.grantedTo !== PLAYER_HERO_ID) throw new Error('须指定你的直辖城');
+
+    Diplo.spendGold(G, PERSONAL_ACTIONS.grain.cost);
+    const gift = Math.round(300 + State.factionCities(G, fid).length * 60);
+    c.food = Math.min(State.foodCapOf(G, c), c.food + gift);
+    Diplo.touch(G, fid);
+    G.player.favor = U.clamp(G.player.favor - 3, 0, 100);
+    State.log(G, 'good', `${f.name}借粮 ${U.num(gift)} 入${c.name}。（上意 -3）`);
+    return { gift };
+  },
+
+  BRIBE_SUPERIOR(G) {
+    if (G.over) throw new Error('战局已终');
+    if (G.player.route === 'independent') throw new Error('你已是君主，无人可贿');
+    Diplo.spendGold(G, PERSONAL_ACTIONS.bribe.cost);
+
+    if (RNG.chance(0.15)) {
+      G.player.favor = U.clamp(G.player.favor - 6, 0, 100);
+      G.player.reputation = Math.max(0, G.player.reputation - 5);
+      State.log(G, 'bad', '行贿之举为同僚检举，上级生疑。（上意 -6，声望 -5）');
+      return { ok: false };
+    }
+    G.player.favor = U.clamp(G.player.favor + 12, 0, 100);
+    State.log(G, 'good', '厚礼已达上听，上级对你另眼相看。（上意 +12）');
+    return { ok: true };
+  },
+
+  DEFECT(G, { fid }) {
+    const p = G.player;
+    if (G.over) throw new Error('战局已终');
+    const f = Diplo.target(G, fid);
+    if (Diplo.statusOf(G, p.factionId, fid) === Diplo.WAR) {
+      throw new Error(`正与${f.name}交战，无从投靠`);
+    }
+    if (!p.demesne.length) throw new Error('无直辖城可带，投靠无人肯纳');
+
+    const oldFid = p.factionId;
+    const old = G.factions[oldFid];
+
+    for (const id of p.demesne) {
+      const c = G.cities[id];
+      if (c) c.owner = fid;
+    }
+    for (const h of Object.values(G.heroes)) {
+      if (h.factionId === oldFid && h.cityId && p.demesne.indexOf(h.cityId) >= 0) h.factionId = fid;
+    }
+    G.heroes[PLAYER_HERO_ID].factionId = fid;
+
+    p.factionId = fid;
+    p.rank = 1;
+    p.merit = 0;
+    p.route = 'loyal';
+    p.favor = 55;
+    p.mission = null;
+    p.missionCooldown = 0;
+    p.pacts = [];
+    p.diploCooldown = {};
+    p.usurp = 0;
+
+    // 原势力即刻敌对
+    Diplo.declareWar(G, oldFid, fid);
+
+    State.log(G, 'bad',
+      `【投靠】${p.name}携 ${p.demesne.length} 城归${f.name}，官阶重置为县长。${old ? old.name : '原势力'}视你为叛臣。`);
+    return { factionId: fid };
+  },
+
+  // ───────── 外交：上表 / 代君行令 ─────────
+  PETITION(G, { fid, action }) {
+    if (G.over) throw new Error('战局已终');
+    if (Diplo.layer(G) === 'personal') throw new Error('官未至州牧，无由上表');
+    const prop = DIPLO_PROPOSALS[action];
+    if (!prop) throw new Error('无此提案');
+    const f = Diplo.open(G, fid);
+    const p = G.player;
+    if (p.favor < prop.favor) throw new Error(`上级好感不足（需 ${prop.favor}，现 ${Math.round(p.favor)}）`);
+
+    Diplo.spendGold(G, prop.cost);
+    p.favor = U.clamp(p.favor - prop.favor, 0, 100);
+    Diplo.touch(G, fid);
+
+    // 代君行令：不必请准
+    if (Diplo.layer(G) === 'direct') {
+      const r = Diplo.apply(G, action, fid);
+      if (!r.ok) throw new Error(r.why);
+      return { accepted: true, direct: true };
+    }
+
+    if (!Diplo.respond(G, fid, action)) {
+      p.favor = U.clamp(p.favor - 4, 0, 100);
+      State.log(G, 'bad', `上表言事：${prop.name}${f.name}之议为君主所拒。（上意 -4）`);
+      return { accepted: false };
+    }
+
+    const r = Diplo.apply(G, action, fid);
+    if (!r.ok) {
+      State.log(G, 'note', `上表${prop.name}之议已准，然${r.why}。`);
+      return { accepted: true, applied: false, why: r.why };
+    }
+    return { accepted: true };
+  },
+
+  DECLARE_WAR(G, { fid }) { return Diplo.playerDirect(G, 'war', fid); },
+  SUE_FOR_PEACE(G, { fid }) { return Diplo.playerDirect(G, 'peace', fid); },
+  FORM_ALLIANCE(G, { fid }) { return Diplo.playerDirect(G, 'ally', fid); },
+  BREAK_ALLIANCE(G, { fid }) { return Diplo.playerDirect(G, 'break', fid); },
+  CALL_TO_ARMS(G, { fid }) { return Diplo.playerDirect(G, 'call', fid); },
+
   // ───────── 科技 ─────────
   RESEARCH(G, { key }) {
     if (!TECHS[key]) throw new Error('无此科技');
@@ -315,6 +494,20 @@ const COMMANDS = {
     TechSys.cancelQueued(G, G.player.factionId, key);
   },
 };
+
+/** 出兵前的开战检查：打非交战势力的城即为背刺（UI 负责二次确认） */
+function guardAttack(G, city) {
+  const owner = city.owner;
+  if (!owner || owner === G.player.factionId || owner === 'free') return null;
+  if (Diplo.canAttack(G, G.player.factionId, owner)) return null;
+
+  Diplo.declareWar(G, G.player.factionId, owner, { backstab: true });
+  G.player.favor = U.clamp(G.player.favor - 20, 0, 100);
+  G.player.reputation = Math.max(0, G.player.reputation - 15);
+  State.log(G, 'bad',
+    `【背刺】不宣而战，径攻${G.factions[owner].name}之${city.name}。天下侧目：上意 -20，声望 -15。`);
+  return owner;
+}
 
 /** 为本城挑一名尚未在外带兵的武将；无则将则返回 null */
 function pickHeroForCity(G, cityId) {

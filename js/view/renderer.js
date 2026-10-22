@@ -168,6 +168,21 @@ const Renderer = {
         ctx.fill();
       }
 
+      // 关系弧（对我方势力的态度）：红交战 / 黄停战 / 绿同盟
+      if (!isPlayer && c.owner !== 'free') {
+        const st = Diplo.statusOf(G, playerFid, c.owner);
+        const col = st === 'war' ? 'rgba(200,90,74,0.95)'
+          : st === 'ally' ? 'rgba(95,154,106,0.95)'
+            : st === 'truce' ? 'rgba(201,162,39,0.95)' : null;
+        if (col) {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r + 4.5, Math.PI * 0.15, Math.PI * 0.85);
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
       // 选中/悬停
       if (isSel) {
         ctx.beginPath();
