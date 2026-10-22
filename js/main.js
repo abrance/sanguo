@@ -86,8 +86,8 @@
     const shot = shotQuery();
     if (shot) { bootShot(shot); return; }
 
-    // 有存档则直接续档
-    const saved = Save.load(DEFAULT_SCENARIO);
+    // 有存档则直接续最近一局
+    const saved = Save.latest(DEFAULT_SCENARIO);
     if (saved && saved.meta && saved.cities) {
       Store.init(saved);
       Renderer.attach(saved);

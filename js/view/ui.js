@@ -400,6 +400,92 @@ const UI = {
     if (tip) tip.classList.add('hidden');
   },
 
+  // ───────── 存档槽 ─────────
+  _slotMode: 'load',
+
+  openSlots(mode) {
+    UI._slotMode = mode;
+    UI.$('saveTitle').textContent = mode === 'save' ? '存 档' : '读 档';
+    UI.$('saveHint').textContent = mode === 'save'
+      ? '点已有存档 = 覆盖它；或新建一个。每次结束回合另存一份自动档。'
+      : '选一个存档继续。载入后结束回合只会写自动档，不会改原档。';
+    UI.$('btnSlotNew').style.display = mode === 'save' ? '' : 'none';
+    UI.$('saveOverlay').classList.remove('hidden');
+    UI.renderSlots();
+  },
+
+  renderSlots() {
+    const box = UI.$('slotList');
+    const list = Save.list(DEFAULT_SCENARIO);
+    const mode = UI._slotMode;
+    box.innerHTML = '';
+    if (!list.length) {
+      box.innerHTML = '<div class="slotempty">尚无存档。</div>';
+      return;
+    }
+    for (const s of list) {
+      const row = document.createElement('div');
+      row.className = 'slotrow';
+
+      const btn = document.createElement('button');
+      btn.className = 'slotmain';
+      const tag = s.slot === Save.AUTO ? '<em>自动</em>' : (s.slot === Save.LEGACY ? '<em>旧档</em>' : '');
+      btn.innerHTML = `<span class="slothead">${s.year}年 ${s.month}月 · 第 ${s.turn} 回合${tag}</span>`
+        + `<span class="slotmeta">${U.esc(s.player)}（${U.esc(s.faction)}）· ${U.esc(s.home)} · 直辖 ${s.cities} 城 · ${UI._slotTime(s.at)}</span>`;
+      btn.onclick = () => (mode === 'save' ? UI.overwriteSlot(s) : UI.loadSlot(s));
+      row.appendChild(btn);
+
+      const del = document.createElement('button');
+      del.className = 'slotdel';
+      del.textContent = '删';
+      del.title = '删除此存档';
+      del.onclick = () => {
+        if (!confirm(`删除 ${s.year}年${s.month}月（第 ${s.turn} 回合）的存档？不可恢复。`)) return;
+        Save.remove(s.scenarioId, s.slot);
+        UI.renderSlots();
+        UI.flash('已删除存档。');
+      };
+      row.appendChild(del);
+      box.appendChild(row);
+    }
+  },
+
+  /** 存到指定槽？覆盖前让玩家知道那槽里是什么 */
+  overwriteSlot(s) {
+    const G = Store.get();
+    if (!G) return;
+    if (s.slot !== Save.AUTO && !confirm(`覆盖 ${s.year}年${s.month}月（第 ${s.turn} 回合）的存档？`)) return;
+    if (!Save.save(G, s.slot)) { UI.flash('存档失败（存储不可用）'); return; }
+    UI.renderSlots();
+    UI.flash(`已存档（${G.meta.year}年 ${G.meta.month}月）。`);
+  },
+
+  loadSlot(s) {
+    const G = Save.load(s.scenarioId, s.slot);
+    if (!G) { UI.flash('此存档不可读。'); return; }
+    UI.applySave(G);
+    UI.$('saveOverlay').classList.add('hidden');
+    UI.flash(`已读档：${s.year}年 ${s.month}月 · 第 ${s.turn} 回合。`);
+  },
+
+  /** 把读进来的局面接上：状态、渲染、选中、趋势采样一起重置 */
+  applySave(G) {
+    Store.replace(G);
+    Renderer.attach(G);
+    UI.selectedId = G.player.homeCityId;
+    Renderer.selectedId = UI.selectedId;
+    UI._hist = [];
+    UI._histTurn = null;
+    UI.syncTabs();
+  },
+
+  _slotTime(at) {
+    if (!at) return '时间未详';
+    const d = new Date(at);
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  },
+
   // ───────── 按钮 ─────────
   bindButtons() {
     UI.$('btnEndTurn').onclick = () => {
@@ -408,27 +494,21 @@ const UI = {
       setTimeout(() => { UI._turnLock = false; }, 450);
       try {
         Store.dispatch('END_TURN');
-        Save.save(Store.get());
+        Save.save(Store.get(), Save.AUTO);      // 自动存档槽，不占玩家的命名槽
         const g = Store.get();
         const season = SEASON[U.season(g.meta.month)].name;
         UI.flash(`${g.meta.year}年 ${g.meta.month}月 · ${season}`, 'turn');
       } catch (e) { UI.toast(e.message); }
     };
 
-    UI.$('btnSave').onclick = () => {
+    UI.$('btnSave').onclick = () => UI.openSlots('save');
+    UI.$('btnLoad').onclick = () => UI.openSlots('load');
+    UI.$('btnSlotClose').onclick = () => UI.$('saveOverlay').classList.add('hidden');
+    UI.$('btnSlotNew').onclick = () => {
       const G = Store.get();
       if (!G) return;
-      UI.flash(Save.save(G) ? '已存档。' : '存档失败（存储不可用）');
-    };
-
-    UI.$('btnLoad').onclick = () => {
-      const G = Save.load(DEFAULT_SCENARIO);
-      if (!G) { UI.flash('无存档。'); return; }
-      Store.replace(G);
-      Renderer.attach(G);
-      UI.selectedId = G.player.homeCityId;
-      Renderer.selectedId = UI.selectedId;
-      UI.flash('已读档。');
+      if (Save.save(G)) { UI.renderSlots(); UI.flash('已新建存档。'); }
+      else UI.flash('存档失败（存储不可用）');
     };
 
     // 导出/导入：存档就是一份 JSON 文件，谁拿到谁能读
@@ -454,13 +534,9 @@ const UI = {
         e.target.value = '';                       // 允许重复选同一个文件
         const G = Save.decode(String(r.result));
         if (!G) { UI.flash('存档文件不可读（损坏或版本过新）。'); return; }
-        Save.save(G);                              // 入本地槽位，刷新后仍在
-        Store.replace(G);
-        Renderer.attach(G);
-        UI.selectedId = G.player.homeCityId;
-        Renderer.selectedId = UI.selectedId;
-        UI._hist = [];
-        UI._histTurn = null;
+        Save.save(G, Save.AUTO);                   // 入自动槽，刷新后仍在
+        UI.applySave(G);
+        UI.$('saveOverlay').classList.add('hidden');
         UI.flash('已导入存档。');
       };
       r.readAsText(f);

@@ -405,15 +405,36 @@ section('存档往返');
 
   // 存档版本守护：未来版本拒读，旧版本必迁移
   const { api: svApi, ctx: svCtx } = h.boot({ seed: 14 });
-  svApi.Save.save(svApi.Store.get());
-  const key = svApi.Save.key(svApi.DEFAULT_SCENARIO);
+  const autoSlot = svApi.Save.save(svApi.Store.get(), svApi.Save.AUTO);
+  const key = svApi.Save.key(svApi.DEFAULT_SCENARIO, autoSlot);
   const rawSave = JSON.parse(svCtx.localStorage.getItem(key));
-  const roundTrip = svApi.Save.load(svApi.DEFAULT_SCENARIO);
+  const roundTrip = svApi.Save.load(svApi.DEFAULT_SCENARIO, autoSlot);
   svCtx.localStorage.setItem(key, JSON.stringify(Object.assign({}, rawSave, { v: 999 })));
-  const future = svApi.Save.load(svApi.DEFAULT_SCENARIO);
+  const future = svApi.Save.load(svApi.DEFAULT_SCENARIO, autoSlot);
   ok('读档版本校验（旧档迁移、未来档拒读）',
     !!roundTrip && roundTrip.meta && future === null,
     `schema v${rawSave.v}`);
+
+  // 多槽位：新档不互相覆盖，列表按时间倒排，删一个不影响其他
+  const slotB = svApi.Save.save(svApi.Store.get());
+  svApi.Save.save(svApi.Store.get(), 'auto');
+  const slots = svApi.Save.list(svApi.DEFAULT_SCENARIO);
+  ok('多槽并存且列表可见',
+    slotB && slotB !== 'auto' && slots.some(s => s.slot === slotB) && slots.some(s => s.slot === 'auto'),
+    slots.map(s => s.slot).join(','));
+  ok('槽头信息可读出（不迁移整棵树）',
+    slots.every(s => s.year > 0 && s.month >= 1 && s.month <= 12 && s.turn >= 0 && typeof s.player === 'string'));
+  svApi.Save.remove(svApi.DEFAULT_SCENARIO, slotB);
+  ok('删槽只删自己',
+    !svApi.Save.list(svApi.DEFAULT_SCENARIO).some(s => s.slot === slotB)
+    && !!svApi.Save.load(svApi.DEFAULT_SCENARIO, 'auto'));
+  ok('旧版单槽存档仍可读',
+    (() => {
+      svCtx.localStorage.setItem(svApi.Save.key(svApi.DEFAULT_SCENARIO, ''), svApi.Save.encode(svApi.Store.get()));
+      return svApi.Save.list(svApi.DEFAULT_SCENARIO).some(s => s.slot === '')
+        && !!svApi.Save.load(svApi.DEFAULT_SCENARIO, '');
+    })());
+  ok('续档取最近一局', !!svApi.Save.latest(svApi.DEFAULT_SCENARIO));
 
   // 导出/导入：给别人发的就是这一串，必须与本地存档同源
   const realErr2 = console.error;

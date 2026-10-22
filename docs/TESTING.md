@@ -4,7 +4,7 @@
 `tools/` 下三个工具都不需要安装任何依赖。
 
 ```bash
-node tools/verify.js        # 一键自检（134 条断言），失败退出码非 0
+node tools/verify.js        # 一键自检（142 条断言），失败退出码非 0
 node tools/verify.js -v     # 附明细
 node tools/sim.js           # 被动玩家长跑 200 回合（自动裁决求和报价：有人请和就许）
 node tools/sim.js --bot     # 主动玩家长跑

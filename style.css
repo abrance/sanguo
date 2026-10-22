@@ -484,6 +484,45 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
 }
 #playerName:focus{outline:none;border-color:var(--gold)}
 
+/* ---------- 存档槽 ---------- */
+.save-box{width:620px}
+.slotlist{
+  display:flex;flex-direction:column;gap:6px;
+  max-height:46vh;overflow-y:auto;margin:4px 0 16px;
+}
+.slotrow{display:flex;gap:6px}
+.slotmain{
+  flex:1 1 auto;min-width:0;text-align:left;padding:7px 10px;
+  background:var(--surface-2);color:var(--ink);
+  border:1px solid var(--line);border-radius:var(--r-sm);
+  font-family:inherit;font-size:var(--fs-body);cursor:pointer;
+}
+.slotmain:hover{border-color:var(--gold)}
+.slotmain .slothead{color:var(--gold-pale)}
+.slotmain .slothead em{
+  font-style:normal;margin-left:6px;padding:0 5px;border-radius:var(--r-sm);
+  background:var(--tag-bg);color:var(--ink-dim);font-size:var(--fs-tiny);
+}
+.slotmain .slotmeta{display:block;margin-top:3px;font-size:var(--fs-tiny);color:var(--ink-dim)}
+.slotdel{
+  flex:0 0 auto;width:36px;background:var(--surface-2);color:var(--ink-mute);
+  border:1px solid var(--line);border-radius:var(--r-sm);
+  font-family:inherit;font-size:var(--fs-body);cursor:pointer;
+}
+.slotdel:hover{border-color:var(--war);color:var(--war)}
+.slotempty{padding:14px;text-align:center;color:var(--ink-dim);font-size:var(--fs-body)}
+.slotfoot{display:flex;gap:8px}
+.slotfoot button{
+  flex:1 1 auto;padding:8px;font-family:inherit;font-size:var(--fs-title);
+  background:var(--btn-bg);color:var(--ink);border:1px solid var(--btn-line);
+  border-radius:var(--r-sm);cursor:pointer;
+}
+.slotfoot button:hover{background:var(--btn-bg-hover)}
+.slotfoot button.primary{
+  background:linear-gradient(180deg,var(--primary-1),var(--primary-2));
+  border-color:var(--primary-line);color:var(--primary-ink);
+}
+
 /* ---------- 机制说明 ---------- */
 .help-box{width:720px}
 .help-sec{

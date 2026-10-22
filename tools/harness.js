@@ -45,6 +45,8 @@ function boot(opts) {
   ctx.window = ctx;
   ctx.localStorage = {
     _d: {},
+    get length() { return Object.keys(this._d).length; },
+    key(i) { const ks = Object.keys(this._d); return i < ks.length ? ks[i] : null; },
     getItem(k) { return k in this._d ? this._d[k] : null; },
     setItem(k, v) { this._d[k] = String(v); },
     removeItem(k) { delete this._d[k]; },

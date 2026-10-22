@@ -32,7 +32,7 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 ├─ js/state/        状态的唯一来源
 │    state.js       状态树形状、构造、只读查询、胜负判定、旧档迁移
 │    store.js       命令层：dispatch(type, payload) → reducer(draft) → 替换 G
-│    save.js        localStorage 存档（每剧本一个槽位）
+│    save.js        localStorage 多槽位存档 + 导出/导入
 │
 ├─ js/systems/      规则实现。只接收 G（草稿），不碰 DOM
 │    economy.js     每月产出/消耗/饥荒/治安/人口
@@ -292,11 +292,22 @@ G.player.legions = [{ id, heroId, cityIds[], policy, stance, targetFid, stats:{a
 
 ## 7. 存档与迁移
 
-`Save.save(G)` 直接 `JSON.stringify({v, at, G})`，key 为 `sanguo.save.<scenarioId>`。
-因为 G 是纯数据（无函数、无循环引用），序列化天然安全。
+存档是多槽位的，键名 `sanguo.save.<scenarioId>.<slot>`：
+
+| 槽 | 谁写 |
+|---|---|
+| `auto` | 每次结束回合、新开局、导入别人的档 |
+| `s1<时间戳>` | 手动「存档 → 新建存档」 |
+| 空串 | 旧版单槽存档（仍可读，界面标「旧档」） |
+
+**槽列表不另存索引**：`Save.list()` 直接扫 `localStorage` 的键推出来。没有索引就没有索引与存档不同步的 bug。
+每行只读存档头（`Save.head`），不为了看一眼年月把整棵树迁移一遍。
+
+`Save.encode(G)` 直接 `JSON.stringify({v, at, G})`。因为 G 是纯数据（无函数、无循环引用），序列化天然安全。
+同一个文本格式喂两条路：写 localStorage，和导出成 `.json` 文件发给别人（`Save.decode` 读回来）。
 
 `Save.VERSION` 是**状态形状版本**（改字段语义才 +1，纯加字段不用动）。
-`Save.load` 会：拒绝高于当前版本的存档（未来档不猜）、其余一律交给 `State.migrate(G, 旧版本号)`。
+`Save.decode` 会：拒绝高于当前版本的存档（未来档不猜）、其余一律交给 `State.migrate(G, 旧版本号)`。
 
 `State.migrate` 负责旧档兼容：旧字段转换（`popMax` → `basePop`）、重建 `buildings` / `clans` / `tech.queue`，
 其余缺字段一律由四张默认值表兜底：

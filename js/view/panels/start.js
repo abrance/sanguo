@@ -97,7 +97,6 @@ const UI_START = {
 
   doStart() {
     const name = (UI.$('playerName').value || '无名').trim().slice(0, 8) || '无名';
-    localStorage.removeItem(Save.key(DEFAULT_SCENARIO));
     const G = State.create({
       scenarioId: DEFAULT_SCENARIO,
       factionId: UI._startFaction,
@@ -118,6 +117,6 @@ const UI_START = {
     UI._histTurn = null;
     UI.syncTabs();
     UI.render(G);
-    Save.save(G);
+    Save.save(G, Save.AUTO);     // 新局只覆盖自动档，别人存的命名档不动
   },
 };
