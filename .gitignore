@@ -1,0 +1,13 @@
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# 日志与临时文件
+*.log
+*.tmp
+
+# 本地存档快照（游戏存档走浏览器 localStorage，不落盘）
+saves/

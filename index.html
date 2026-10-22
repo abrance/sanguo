@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>三国·讨董 190</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <aside id="sidebar">
+    <header id="topbar">
+      <div id="dateLine"><span id="dateText">190年 1月</span><span id="turnText">第 1 回合</span></div>
+      <div id="resLine">
+        <span class="res" title="粮草"><i class="dot food"></i><b id="resFood">0</b></span>
+        <span class="res" title="钱币"><i class="dot gold"></i><b id="resGold">0</b></span>
+        <span class="res" title="总兵力"><i class="dot troop"></i><b id="resTroop">0</b></span>
+      </div>
+      <div id="resLine2">
+        <span class="res" title="建材"><i class="dot mat"></i><b id="resMat">0</b></span>
+        <span class="res" title="铁料"><i class="dot iron"></i><b id="resIron">0</b></span>
+        <span class="res" title="科研点"><i class="dot rp"></i><b id="resRP">0</b></span>
+      </div>
+    </header>
+
+    <section id="rankCard" class="card">
+      <div class="card-head">
+        <span id="rankName" class="rank-name">县长</span>
+        <span id="rankRoute" class="tag">忠臣</span>
+      </div>
+      <div class="merit-bar"><div id="meritFill"></div></div>
+      <div class="card-sub">
+        战功 <b id="meritVal">0</b> / <span id="meritNext">60</span>
+        · 声望 <b id="repVal">0</b>
+      </div>
+      <div class="card-sub dim">
+        <span id="factionLine">曹操军</span> · 直辖 <b id="demesneVal">1</b>/<span id="demesneCap">2</span> 城
+        · 上意 <b id="favorVal">62</b>
+      </div>
+      <div id="missionLine" class="mission-line">—</div>
+      <button id="btnRankHall" class="mini wide-mini">官阶台 · 仕途 / 上命</button>
+    </section>
+
+    <nav id="sideTabs">
+      <button data-tab="city" class="on">城池</button>
+      <button data-tab="army">军务</button>
+      <button data-tab="tech">科技</button>
+      <button data-tab="log">纪事</button>
+    </nav>
+
+    <!-- 城池 -->
+    <div id="tabCity" class="tabpane">
+      <section id="selPanel" class="card grow hidden">
+        <div class="card-head">
+          <span id="selName">—</span>
+          <span class="tag" id="selOwner">—</span>
+        </div>
+        <div class="card-sub dim" id="selSub">—</div>
+        <nav id="cityTabs" class="subtabs">
+          <button data-ctab="overview" class="on">概览</button>
+          <button data-ctab="build">营造</button>
+          <button data-ctab="clans">士族</button>
+          <button data-ctab="policy">施政</button>
+        </nav>
+        <div id="cityPane" class="pane"></div>
+        <div id="selHint" class="hint hidden"></div>
+      </section>
+      <section id="noSel" class="card grow empty">点击地图上的城池查看</section>
+    </div>
+
+    <!-- 军务 -->
+    <div id="tabArmy" class="tabpane hidden">
+      <section class="card" style="flex:0 0 auto;max-height:150px">
+        <div class="card-head"><span>在外军队</span><span class="tag dim" id="armyCount">0</span></div>
+        <div id="armyList" class="list"></div>
+      </section>
+
+      <section class="card grow">
+        <div class="card-head">
+          <span>批量操兵</span>
+          <span class="tag dim" id="batchCount">未选</span>
+        </div>
+        <div class="batchbar">
+          <button class="mini" id="batchAll">全选</button>
+          <button class="mini" id="batchNone">清空</button>
+          <select id="batchRatio" class="mini">
+            <option value="0.3">抽 30%</option>
+            <option value="0.5">抽 50%</option>
+            <option value="0.7" selected>抽 70%</option>
+            <option value="0.85">抽 85%</option>
+            <option value="1">倾巢</option>
+          </select>
+        </div>
+        <div id="cityPickList" class="list"></div>
+        <div class="batchacts">
+          <button id="batchFill">补齐所选</button>
+          <button id="batchDispatch">所选调兵 → 点地图</button>
+        </div>
+      </section>
+      <div id="batchHint" class="hint hidden"></div>
+    </div>
+
+    <!-- 科技 -->
+    <div id="tabTech" class="tabpane hidden">
+      <section class="card grow">
+        <div class="card-head">
+          <span>研习</span>
+          <span class="tag" id="techCurrent">无</span>
+        </div>
+        <div id="techBody" class="pane"></div>
+      </section>
+    </div>
+
+    <!-- 纪事 -->
+    <div id="tabLog" class="tabpane hidden">
+      <section class="card grow">
+        <div class="card-head">
+          <span>战报 / 纪事</span>
+          <button id="logClear" class="mini">清空</button>
+        </div>
+        <div id="logList" class="log"></div>
+      </section>
+    </div>
+
+    <footer id="bottombar">
+      <button id="btnEndTurn" class="primary">结束回合</button>
+      <button id="btnSave">存档</button>
+      <button id="btnLoad">读档</button>
+      <button id="btnNew">新局</button>
+    </footer>
+  </aside>
+
+  <main id="mapwrap">
+    <canvas id="map"></canvas>
+    <div id="mapHud">
+      <button id="zoomIn" class="mini">＋</button>
+      <button id="zoomOut" class="mini">－</button>
+      <button id="zoomReset" class="mini">◎</button>
+      <span id="hudTip" class="dim">拖拽平移 · 滚轮缩放 · 点击城池</span>
+    </div>
+    <div id="legend">
+      <span><i class="sw" style="background:#b8860b"></i>势力</span>
+      <span><i class="sw" style="background:#1f5f8b"></i>我方</span>
+      <span><i class="sw" style="background:#c8b58a"></i>在野</span>
+      <span><i class="sw ring"></i>直辖</span>
+    </div>
+  </main>
+
+</div>
+
+<div id="rankOverlay" class="overlay hidden">
+  <div class="start-box rank-box">
+    <h1>官 阶 台</h1>
+    <div id="rankSummary" class="rank-summary"></div>
+    <div class="start-step">
+      <label>仕途</label>
+      <div id="rankLadder" class="ladder"></div>
+    </div>
+    <div class="start-step">
+      <label>路线</label>
+      <div id="routeCards" class="routecards"></div>
+    </div>
+    <div class="start-step">
+      <label>上命</label>
+      <div id="missionBox" class="missionbox"></div>
+    </div>
+    <div class="start-step" id="powerStep">
+      <label>权柄</label>
+      <div id="powerBox" class="powerbox"></div>
+    </div>
+    <button id="btnRankClose" class="primary wide">退 出</button>
+  </div>
+</div>
+
+<div id="startOverlay" class="overlay">
+  <div class="start-box">
+    <h1>讨 董 卓</h1>
+    <p class="dim">初平元年（190）· 关东诸侯起兵 · 你是乱世中的一城之主</p>
+    <div class="start-step">
+      <label>选择效忠势力</label>
+      <div id="factionPick" class="picklist"></div>
+    </div>
+    <div class="start-step">
+      <label>选择起始城池</label>
+      <div id="cityPick" class="picklist"><span class="dim">先选势力</span></div>
+    </div>
+    <div class="start-step">
+      <label>城主姓名</label>
+      <input id="playerName" maxlength="8" value="无名" />
+    </div>
+    <button id="btnStart" class="primary wide" disabled>开 局</button>
+  </div>
+</div>
+
+<script src="js/core/rng.js"></script>
+<script src="js/core/util.js"></script>
+<script src="js/core/bus.js"></script>
+<script src="js/data/troops.js"></script>
+<script src="js/data/ranks.js"></script>
+<script src="js/data/buildings.js"></script>
+<script src="js/data/techs.js"></script>
+<script src="js/data/policies.js"></script>
+<script src="js/data/missions.js"></script>
+<script src="js/data/cities-190.js"></script>
+<script src="js/data/heroes-190.js"></script>
+<script src="js/data/factions-190.js"></script>
+<script src="js/data/scenarios.js"></script>
+<script src="js/state/state.js"></script>
+<script src="js/systems/economy.js"></script>
+<script src="js/systems/recruit.js"></script>
+<script src="js/systems/build.js"></script>
+<script src="js/systems/tech-system.js"></script>
+<script src="js/systems/clans.js"></script>
+<script src="js/systems/viceroy.js"></script>
+<script src="js/systems/rally.js"></script>
+<script src="js/systems/favor.js"></script>
+<script src="js/systems/mission.js"></script>
+<script src="js/systems/combat.js"></script>
+<script src="js/systems/army.js"></script>
+<script src="js/systems/rank.js"></script>
+<script src="js/systems/ai.js"></script>
+<script src="js/systems/turn.js"></script>
+<script src="js/state/store.js"></script>
+<script src="js/state/save.js"></script>
+<script src="js/view/map.js"></script>
+<script src="js/view/renderer.js"></script>
+<script src="js/view/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
