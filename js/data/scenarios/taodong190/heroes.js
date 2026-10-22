@@ -1,7 +1,7 @@
 // 讨董剧本武将（134 人）
 // 行格式: [id, 名, 武, 统, 智, 政, 魅, 特技, 所属势力]
 //   势力 'free' = 在野
-const HERO_ROWS = [
+const TAODONG190_HERO_ROWS = [
   // ── 董卓军 ──
   ['dongzhuo', '董卓',  82, 78, 62, 20, 35, 'jianxiong', 'dongzhuo'],
   ['lvbu',     '吕布', 100, 72, 26, 13, 60, 'wushuang',  'dongzhuo'],
@@ -183,7 +183,7 @@ const HERO_ROWS = [
 ];
 
 // 特技效果表 —— 在战斗 / 内政中读取
-const HERO_SKILLS = {
+const TAODONG190_HERO_SKILLS = {
   jianxiong: { name: '奸雄', desc: '全军攻防 +8%', atk: 1.08, def: 1.08 },
   wushuang:  { name: '无双', desc: '全军攻击 +20%，自身受伤概率提高', atk: 1.20, def: 0.95 },
   tuji:      { name: '突击', desc: '骑兵攻击 +15%', cavalry: 1.15 },
@@ -197,6 +197,3 @@ const HERO_SKILLS = {
   shuijun:   { name: '水战', desc: '水军攻击 +25%', navy: 1.25 },
 };
 
-function skillOf(hero) {
-  return HERO_SKILLS[hero && hero.skill] || {};
-}

@@ -33,6 +33,14 @@ const GameMap = {
     [[478, 1142], [622, 1132], [762, 1162], [902, 1182], [1042, 1152], [1162, 1122], [1302, 1152], [1442, 1172], [1562, 1202], [1662, 1242]],
   ],
 
+  // ── 支流（只作视觉，不参与地形分类）──
+  TRIBUTARIES: [
+    [[700, 762], [792, 736], [880, 700], [966, 644]],     // 渭水
+    [[742, 1002], [822, 1078], [902, 1150], [966, 1182]], // 汉水
+    [[1120, 902], [1204, 964], [1292, 1012], [1386, 1058]], // 淮水
+    [[1176, 722], [1232, 822], [1264, 902]],              // 泗水
+  ],
+
   // 点到折线的最近距离
   _distToPath(x, y, pts) {
     let best = Infinity;
@@ -123,7 +131,7 @@ const GameMap = {
   },
 
   /** 预渲染地形：低分辨率平滑色床 + 全分辨率手绘细节（无方格感） */
-  prerender(grid) {
+  prerender(grid, cities) {
     const W = GameMap.W, H = GameMap.H, CELL = GameMap.CELL;
     const ox = GameMap._ox || 0;
     const cv = document.createElement('canvas');
@@ -171,18 +179,33 @@ const GameMap = {
     };
     const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 
+    // 先把噪声格双线性展开到整张低分辨率画布，主循环里就只剩数组读取
+    const HF = new Float32Array(LW * LH);
+    const WF = new Float32Array(LW * LH);
+    for (let y = 0; y < LH; y++) {
+      const fy = y / STEP;
+      for (let x = 0; x < LW; x++) {
+        const i = y * LW + x;
+        HF[i] = field(hf, x / STEP, fy);
+        WF[i] = field(wf, x / STEP, fy);
+      }
+    }
+
     const data = img.data;
     const rows = grid.length, cols = grid[0].length;
     for (let y = 0; y < LH; y++) {
       const wy = y / S;
       const gy = Math.min(rows - 1, Math.floor(wy / CELL));
+      const rowBase = y * LW;
+      const up = y > 0 ? -LW : 0;
+      const dn = y < LH - 1 ? LW : 0;
       for (let x = 0; x < LW; x++) {
         const wx = x / S;
         const key = grid[gy][Math.min(cols - 1, Math.floor(wx / CELL))];
 
-        const fx = x / STEP, fy = y / STEP;
-        const h = field(hf, fx, fy);
-        const wet = field(wf, fx, fy);
+        const i = rowBase + x;
+        const h = HF[i];
+        const wet = WF[i];
 
         let col;
         if (key === 'water') col = mix(C.water, C.waterHi, U.clamp((h - 0.28) * 2.4, 0, 1));
@@ -193,14 +216,14 @@ const GameMap = {
         else if (key === 'desert') col = mix(C.desert, C.desertHi, U.clamp(h * 1.7, 0, 1));
         else col = mix(C.plain, C.plainHi, U.clamp((wet - 0.34) * 2, 0, 1));
 
-        // 西北来光的山体侧影
-        const dhx = field(hf, fx + 1, fy) - field(hf, fx - 1, fy);
-        const dhy = field(hf, fx, fy + 1) - field(hf, fx, fy - 1);
+        // 西北来光的山体侧影（差分步长必须仍是噪声格 STEP，否则光照强度会变）
+        const dhx = (x + STEP < LW ? HF[i + STEP] : h) - (x >= STEP ? HF[i - STEP] : h);
+        const dhy = (y + STEP < LH ? HF[i + STEP * LW] : h) - (y >= STEP ? HF[i - STEP * LW] : h);
         const shade = U.clamp(0.5 + (dhx + dhy) * 2.6, 0.15, 1);
         const k = 0.86 + shade * 0.30;
 
         const n = (GameMap._hash(x * 3 + 7, y * 5 + 11) - 0.5) * 9;
-        const o = (y * LW + x) * 4;
+        const o = i * 4;
         data[o] = U.clamp(col[0] * k + n, 0, 255);
         data[o + 1] = U.clamp(col[1] * k + n, 0, 255);
         data[o + 2] = U.clamp(col[2] * k + n * 0.8, 0, 255);
@@ -230,10 +253,18 @@ const GameMap = {
       g.stroke();
       g.globalAlpha = 1;
     };
+    // 主干：滩涂 → 湿岸 → 水体 → 高光（宽到窄四叠，才有水岸过渡）
     for (const p of GameMap.RIVERS) {
-      pass(p, '#2c4148', 30, 0.5);
-      pass(p, '#3d6a7e', 16, 0.75);
-      pass(p, '#7fb3c9', 3, 0.28);
+      pass(p, 'rgba(112,100,72,0.34)', 42, 1);
+      pass(p, 'rgba(58,74,70,0.65)', 24, 1);
+      pass(p, '#3d6a7e', 15, 0.92);
+      pass(p, 'rgba(127,179,201,0.30)', 3, 1);
+    }
+    // 支流：细一档，只有湿岸 + 水体
+    for (const p of GameMap.TRIBUTARIES) {
+      pass(p, 'rgba(112,100,72,0.20)', 20, 1);
+      pass(p, 'rgba(58,74,70,0.48)', 11, 1);
+      pass(p, '#3d6a7e', 6, 0.85);
     }
 
     // ── 3. 山形 / 树丛 / 沙丘：老地图式符号 ──
@@ -268,7 +299,10 @@ const GameMap = {
       }
     }
 
-    // ── 4. 纸纹与纤维 ──
+    // ── 4. 州界与州名印章 ──
+    GameMap.drawRegions(g, cities);
+
+    // ── 5. 纸纹与纤维 ──
     for (let i = 0; i < 5200; i++) {
       const n1 = GameMap._hash(i * 7 + 3, 101), n2 = GameMap._hash(i * 13 + 5, 211);
       const n3 = GameMap._hash(i * 17 + 9, 307);
@@ -285,7 +319,7 @@ const GameMap = {
       g.stroke();
     }
 
-    // ── 5. 四周暗角 ──
+    // ── 6. 四周暗角 ──
     const grad = g.createRadialGradient(W / 2, H / 2, H * 0.34, W / 2, H / 2, H * 0.92);
     grad.addColorStop(0, 'rgba(0,0,0,0)');
     grad.addColorStop(1, 'rgba(0,0,0,0.58)');
@@ -293,6 +327,146 @@ const GameMap = {
     g.fillRect(0, 0, W, H);
 
     return cv;
+  },
+
+  /**
+   * 州界与州名印章：按「最近城池所属州」铺一张 24px 的州属场，
+   * 相邻格州不同处画一段带抖动的手绘虚线；每州质心盖一枚方印。
+   * 只依赖城池坐标与固定州属，与势力易主无关，预渲染一次即可。
+   */
+  drawRegions(g, cities) {
+    if (!cities || !cities.length) return;
+
+    const STEP = 24;
+    const cols = Math.ceil(GameMap.W / STEP);
+    const rows = Math.ceil(GameMap.H / STEP);
+
+    const names = [];
+    const idxOf = new Map();      // 州名 → 序号
+    const riOf = new Map();       // cityId → 州序号
+    for (const c of cities) {
+      if (!idxOf.has(c.region)) { idxOf.set(c.region, names.length); names.push(c.region); }
+      riOf.set(c.id, idxOf.get(c.region));
+    }
+
+    // 州属场：每格取最近城池的州。用 200px 空间桶把 70 城 × 7500 格降到常数级
+    const BUCKET = 200;
+    const bw = Math.ceil(GameMap.W / BUCKET);
+    const bh = Math.ceil(GameMap.H / BUCKET);
+    const buckets = new Array(bw * bh);
+    for (const c of cities) {
+      const bi = Math.floor(c.y / BUCKET) * bw + Math.floor(c.x / BUCKET);
+      (buckets[bi] || (buckets[bi] = [])).push(c);
+    }
+    const nearest = (wx, wy) => {
+      const bx = Math.floor(wx / BUCKET), by = Math.floor(wy / BUCKET);
+      let best = Infinity, ri = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = bx + dx, y = by + dy;
+          if (x < 0 || y < 0 || x >= bw || y >= bh) continue;
+          const list = buckets[y * bw + x];
+          if (!list) continue;
+          for (const c of list) {
+            const ddx = c.x - wx, ddy = c.y - wy;
+            const d = ddx * ddx + ddy * ddy;
+            if (d < best) { best = d; ri = riOf.get(c.id); }
+          }
+        }
+      }
+      return ri;
+    };
+
+    const field = new Int16Array(cols * rows);
+    for (let r = 0; r < rows; r++) {
+      const wy = r * STEP + STEP / 2;
+      for (let c = 0; c < cols; c++) {
+        field[r * cols + c] = nearest(c * STEP + STEP / 2, wy);
+      }
+    }
+
+    // 边界：格边中点连线，位置带 ±1.5px 抖动 → 手绘感而不是台阶
+    g.save();
+    g.strokeStyle = 'rgba(52,40,28,0.30)';
+    g.lineWidth = 1.1;
+    g.setLineDash([7, 6]);
+    g.lineCap = 'round';
+    g.beginPath();
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const i = r * cols + c;
+        const cx = c * STEP + STEP / 2;
+        const cy = r * STEP + STEP / 2;
+        if (c + 1 < cols && field[i] !== field[i + 1]) {
+          const j = (GameMap._hash(c, r) - 0.5) * 3;
+          g.moveTo(cx + STEP / 2 + j, cy - STEP / 2);
+          g.lineTo(cx + STEP / 2 + j, cy + STEP / 2);
+        }
+        if (r + 1 < rows && field[i] !== field[i + cols]) {
+          const j = (GameMap._hash(c + 7, r + 3) - 0.5) * 3;
+          g.moveTo(cx - STEP / 2, cy + STEP / 2 + j);
+          g.lineTo(cx + STEP / 2, cy + STEP / 2 + j);
+        }
+      }
+    }
+    g.stroke();
+    g.restore();
+
+    // 州名印章：质心盖一枚朱印
+    const acc = names.map(() => ({ x: 0, y: 0, n: 0 }));
+    for (const c of cities) {
+      const a = acc[riOf.get(c.id)];
+      a.x += c.x; a.y += c.y; a.n++;
+    }
+    for (let i = 0; i < names.length; i++) {
+      const a = acc[i];
+      if (!a.n) continue;
+      let x = a.x / a.n, y = a.y / a.n;
+
+      // 质心离城太近就绕着一圈找空位，别压住城池标记
+      const minDist = (px, py) => {
+        let m = Infinity;
+        for (const c of cities) {
+          const d = U.dist(c.x, c.y, px, py);
+          if (d < m) m = d;
+        }
+        return m;
+      };
+      let bestD = minDist(x, y);
+      if (bestD < 46) {
+        let bx = x, by = y;
+        for (let k = 0; k < 12; k++) {
+          const a = (k / 12) * Math.PI * 2;
+          for (const rad of [58, 78, 96]) {
+            const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad;
+            if (px < 40 || py < 40 || px > GameMap.W - 40 || py > GameMap.H - 40) continue;
+            const d = minDist(px, py);
+            if (d > bestD) { bestD = d; bx = px; by = py; }
+          }
+        }
+        x = bx; y = by;
+      }
+      GameMap._seal(g, x, y, names[i]);
+    }
+  },
+
+  /** 朱印：方框 + 州名（去掉「州」字），略微倾斜 */
+  _seal(g, x, y, name) {
+    const w = 34, h = 34;
+    g.save();
+    g.translate(x, y);
+    g.rotate(-0.05);
+    g.fillStyle = 'rgba(150,74,58,0.07)';
+    g.fillRect(-w / 2, -h / 2, w, h);
+    g.strokeStyle = 'rgba(150,74,58,0.32)';
+    g.lineWidth = 1.8;
+    g.strokeRect(-w / 2, -h / 2, w, h);
+    g.fillStyle = 'rgba(158,92,72,0.5)';
+    g.font = '15px "Noto Serif SC", serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(String(name).replace('州', ''), 0, 1);
+    g.restore();
   },
 
   /** 山峰符号：受光面 + 背光面 + 脊线 */

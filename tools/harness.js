@@ -26,24 +26,15 @@ function boot(opts) {
   const missing = files.filter(f => !fs.existsSync(path.join(ROOT, f)));
   if (missing.length) throw new Error('index.html 声明的脚本不存在: ' + missing.join(', '));
 
-  const EXPORTS = [
-    'State', 'Store', 'Save', 'Bus', 'U', 'RNG',
-    'TROOPS', 'TROOP_KEYS', 'counterMul', 'troopTotal', 'troopFood', 'emptyTroops',
-    'RANKS', 'ROUTES', 'INDEPENDENCE', 'rankOf', 'nextRank', 'meritThreshold', 'cityCap',
-    'BUILDINGS', 'BUILDING_KEYS', 'buildCost', 'buildTurns', 'bldValue',
-    'TECHS', 'TECH_KEYS', 'TECH_BRANCHES', 'techMultipliers', 'branchTotalCost',
-    'POLICIES', 'POLICY_KEYS', 'CLAN_NAMES', 'clanBaseline',
-    'DIPLO_STATUS', 'PERSONAL_ACTIONS', 'DIPLO_PROPOSALS', 'DIPLO_LAYERS',
-    'MISSION_TYPES', 'MISSION_LIST',
-    'Economy', 'Recruit', 'Build', 'TechSys', 'Clans', 'Viceroy', 'Rally',
-    'Favor', 'Mission', 'Combat', 'Army', 'Rank', 'AI', 'Turn', 'Diplo',
-    'SEASON', 'TERRAIN', 'PLAYER_HERO_ID', 'DEFAULT_SCENARIO',
-  ];
-
-  const src = files
+  const bundle = files
     .map(f => `// ==== ${f} ====\n` + fs.readFileSync(path.join(ROOT, f), 'utf8'))
-    .join('\n;\n')
-    + `\n;globalThis.__API = { ${EXPORTS.join(', ')} };`;
+    .join('\n;\n');
+
+  // 导出清单不手抄：vm 里 const/let 不会变成 context 属性，只能靠拼接这段代码导出。
+  // 名字直接从源码收（与 verify 的静态重名检查同一套规则），新增全局自动可测。
+  const names = new Set();
+  for (const m of bundle.matchAll(/^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm)) names.add(m[1]);
+  const src = bundle + `\n;globalThis.__API = { ${[...names].join(', ')} };`;
 
   const ctx = {
     console, Math, Date, JSON, parseInt, parseFloat, isFinite, isNaN,
@@ -138,4 +129,4 @@ function scanNaN(api) {
   return bad;
 }
 
-module.exports = { boot, grantCities, runTurns, scanNaN, scriptList, ROOT };
+module.exports = { boot, grantCities, runTurns, scanNaN, scriptList, ROOT, DOM_FREE_SKIP };

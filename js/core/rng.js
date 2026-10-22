@@ -3,6 +3,9 @@ const RNG = (() => {
   let s = 1;
 
   function seed(v) { s = (v >>> 0) || 1; }
+  // 序列游标也可存取：存档要能从中断处续上，不能只存初始种子
+  function getState() { return s; }
+  function setState(v) { s = (v >>> 0) || 1; }
 
   function next() {
     s = (s + 0x6D2B79F5) >>> 0;
@@ -20,5 +23,5 @@ const RNG = (() => {
   const between = (a, b) => a + int(b - a + 1);
   const jitter = (v, pct) => v * (1 + (next() * 2 - 1) * pct);
 
-  return { seed, next, int, range, pick, chance, between, jitter };
+  return { seed, getState, setState, next, int, range, pick, chance, between, jitter };
 })();

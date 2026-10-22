@@ -1,6 +1,6 @@
 // 讨董剧本势力表
 // 行格式: [id, 名称, 颜色, 君主武将id, 侵略性, [城池id...]]
-const FACTION_ROWS = [
+const TAODONG190_FACTION_ROWS = [
   ['dongzhuo',  '董卓军',   '#8b2f2f', 'dongzhuo', 0.55,
     ['luoyang', 'changan', 'hongnong', 'hedong', 'fengyi', 'anding']],
   ['yuanshao',  '袁绍军',   '#b8860b', 'yuanshao', 0.50,
@@ -44,8 +44,3 @@ const FACTION_ROWS = [
   ['kongzhou',  '孔伷军',   '#6f5f8f', 'kongzhou', 0.30,
     ['xuchang', 'liangguo', 'chenguo', 'peiguo']],
 ];
-
-const FREE_FACTION = {
-  id: 'free', name: '在野', color: '#c8b58a', rulerId: null, aggression: 0,
-  cities: [],
-};

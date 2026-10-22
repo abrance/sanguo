@@ -15,9 +15,14 @@ const Bus = (() => {
     if (i >= 0) arr.splice(i, 1);
   }
 
+  /** 一个订阅者抛错不影响其余订阅者，也不让 dispatch 半途卡住 */
   function emit(evt, payload) {
     const arr = handlers.get(evt);
-    if (arr) for (const fn of arr.slice()) fn(payload);
+    if (!arr) return;
+    for (const fn of arr.slice()) {
+      try { fn(payload); }
+      catch (e) { console.error(`[bus] ${evt} 订阅者出错:`, e); }
+    }
   }
 
   return { on, off, emit };

@@ -2,11 +2,17 @@ const U = {
   clamp(v, a, b) { return v < a ? a : v > b ? b : v; },
   lerp(a, b, t) { return a + (b - a) * t; },
   dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); },
-  sum(obj) { let t = 0; for (const k in obj) t += obj[k] || 0; return t; },
   num(n) {
     n = Math.round(n);
     if (Math.abs(n) >= 10000) return (n / 10000).toFixed(1) + '万';
     return String(n);
+  },
+  /** 带正负号的差值展示：+12 / −45 / 0 */
+  signed(n, unit) {
+    const v = Math.round(n);
+    if (v > 0) return '+' + U.num(v) + (unit || '');
+    if (v < 0) return '−' + U.num(-v) + (unit || '');
+    return '0' + (unit || '');
   },
   pct(a, b) { return b ? Math.round((a / b) * 100) : 0; },
   clone(o) { return JSON.parse(JSON.stringify(o)); },
@@ -26,7 +32,6 @@ const U = {
     if (month >= 9 && month <= 11) return 'autumn';
     return 'winter';
   },
-  monthName(m) { return m + '月'; },
 };
 
 // 季节系数表：影响粮产、税入、征兵、建设、士气

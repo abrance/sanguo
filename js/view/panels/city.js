@@ -1,0 +1,638 @@
+// 视图层 · 城池面板（概览 / 营造 / 士族 / 施政）
+// 定义后由 ui.js 末尾装配进 UI 命名空间，调用点仍是 UI.xxx
+const UI_CITY = {
+
+  // ───────── 城池面板 ─────────
+  // ───────── 直辖城切换条：一眼看全城状态，点即切换，不用回地图 ─────────
+  renderRail(G) {
+    const rail = UI.$('cityRail');
+    if (!rail) return;
+    const cities = State.demesne(G);
+    if (cities.length < 2 || G.over) { rail.classList.add('hidden'); return; }
+    rail.classList.remove('hidden');
+
+    const slots = c => State.buildSlots(c) - c.buildQueue.length;
+    rail.innerHTML = cities.map(c => {
+      const bd = [];
+      if (slots(c) > 0) bd.push(['营', '']);
+      const fill = troopTotal(c.garrison) / Math.max(1, State.troopCapOf(G, c));
+      if (fill < 0.95) bd.push(['兵', fill < 0.6 ? 'bad' : 'warn']);
+      if (State.clanSat(c) < 45) bd.push(['族', 'warn']);
+      if (c.unrest > 0) bd.push(['安', 'warn']);
+      if (c.food < State.foodCapOf(G, c) * 0.3) bd.push(['粮', 'bad']);
+      const on = c.id === UI.selectedId;
+      const tags = bd.map(([k, cls]) => `<span class="bdg ${cls}">${k}</span>`).join('');
+      return `<span class="chip ${on ? 'on' : ''}" data-city="${c.id}" title="${U.esc(c.name)} · 兵 ${U.num(troopTotal(c.garrison))}/${U.num(State.troopCapOf(G, c))} · 士族 ${Math.round(State.clanSat(c))}${c.policy ? ' · ' + POLICIES[c.policy].name : ''}">${U.esc(c.name)}${tags}</span>`;
+    }).join('');
+
+    rail.onclick = e => {
+      const el = e.target.closest('.chip[data-city]');
+      if (el) UI.selectCity(el.dataset.city);
+    };
+  },
+
+  /** 切城：只换选中与高亮，不挪镜头（避免地图乱跳） */
+  selectCity(cityId) {
+    const G = Store.get();
+    if (!G || !G.cities[cityId]) return;
+    UI.selectedId = cityId;
+    Renderer.selectedId = cityId;
+    UI.hideCityTip();
+    UI.render(G);
+  },
+
+  /** 切换条上的上一个 / 下一个直辖城（键盘 ← →） */
+  cycleCity(step) {
+    const G = Store.get();
+    if (!G) return false;
+    const ids = State.demesne(G).map(c => c.id);
+    if (ids.length < 2) return false;
+    const i = ids.indexOf(UI.selectedId);
+    const next = i < 0 ? 0 : (i + step + ids.length) % ids.length;
+    UI.selectCity(ids[next]);
+    return true;
+  },
+
+  // ───────── 一键理政条（直辖城 > 1 时显示在城池页顶部） ─────────
+  renderBulk(G) {
+    const bar = UI.$('bulkBar');
+    if (!bar) return;
+    const cities = State.demesne(G);
+    if (cities.length < 2 || G.over) { bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+
+    const cur = cities[0].policy;
+    const sameParty = cities.every(c => c.policy === cur) ? cur : '__mixed';
+    const polBtns = Object.keys(POLICIES).map(k =>
+      `<button data-pol="${k}" class="${sameParty === k ? 'on' : ''}" title="${U.esc(POLICIES[k].desc)}">${POLICIES[k].name}</button>`).join('');
+    const lowClan = cities.filter(c => State.clanSat(c) < 45).length;
+    const short = cities.filter(c => troopTotal(c.garrison) < State.troopCapOf(G, c) * 0.95).length;
+
+    bar.innerHTML =
+      `<div class="bk-head">一键理政 · 全体 ${cities.length} 城</div>
+       <div class="bk-row"><span class="bk-lab">方针</span>${polBtns}
+         <button data-pol="__none" class="${sameParty === null ? 'on' : ''}">亲理</button></div>
+       <div class="bk-row"><span class="bk-lab">省事</span>
+         <button data-bulk="fill">一键补兵${short ? `（${short}）` : ''}</button>
+         <button data-bulk="clan">安抚士族${lowClan ? `（${lowClan}）` : ''}</button></div>
+       <div class="bk-row"><span class="bk-lab">同造</span>
+         ${['farm', 'lumber', 'barracks', 'wall', 'market', 'granary'].map(k => {
+           const n = cities.filter(c => Build.canBuild(G, c, k).ok).length;
+           return `<button data-buildall="${k}" title="${U.esc(BUILDINGS[k].name)}：${n} 城可开工">${BUILDINGS[k].name}${n ? `（${n}）` : ''}</button>`;
+         }).join('')}</div>`;
+
+    bar.onclick = e => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      const G2 = Store.get();
+      try {
+        if (b.dataset.pol) {
+          const p = b.dataset.pol === '__none' ? null : b.dataset.pol;
+          const r = Store.dispatch('SET_POLICY_ALL', { policy: p });
+          UI.flash(p ? `${r.total} 城行「${POLICIES[p].name}」之政，每月自动营建征兵。` : '诸城收归亲理。');
+        } else if (b.dataset.bulk === 'fill') {
+          const r = Store.dispatch('BATCH_FILL', { cityIds: State.demesne(G2).map(c => c.id) });
+          UI.flash(`一键补兵：${r.cities} 城共募 ${U.num(r.total)}。`);
+        } else if (b.dataset.buildall) {
+          const r = Store.dispatch('BATCH_BUILD', { key: b.dataset.buildall });
+          UI.flash(`同造${BUILDINGS[b.dataset.buildall].name}：${r.done} 城开工${r.skip ? `，${r.skip} 城未动` : ''}。`);
+        } else if (b.dataset.bulk === 'clan') {
+          const r = Store.dispatch('BATCH_PACIFY', {});
+          UI.flash(`安抚 ${r.done} 城士族${r.held ? `（${r.held} 城未动）` : ''}。`);
+        }
+      } catch (err) { UI.flash(err.message, 'bad'); }
+    };
+  },
+
+  renderSel(G) {
+    const panel = UI.$('selPanel');
+    const noSel = UI.$('noSel');
+    const c = UI.selectedId ? G.cities[UI.selectedId] : null;
+
+    if (!c) {
+      panel.classList.add('hidden');
+      noSel.classList.remove('hidden');
+      return;
+    }
+    panel.classList.remove('hidden');
+    noSel.classList.add('hidden');
+
+    const f = G.factions[c.owner];
+    const isDemesne = c.grantedTo === PLAYER_HERO_ID;
+    const gov = c.governor ? G.heroes[c.governor] : null;
+
+    UI.$('selName').textContent = c.name;
+    const ownerEl = UI.$('selOwner');
+    ownerEl.textContent = (f ? f.name : '—') + (isDemesne ? ' · 直辖' : '');
+    ownerEl.style.color = f ? f.color : '';
+
+    UI.$('selSub').textContent =
+      `${c.region} · ${TERRAIN[c.terrain].name}`
+      + (gov ? ` · 守将 ${gov.name}` : ' · 无守将')
+      + (c.policy ? ` · ${POLICIES[c.policy].name}` : '')
+      + (() => {
+          if (!c.rallyTo || !G.cities[c.rallyTo]) return '';
+          const st = Rally.status(G, c);
+          const tag = st.code === 'moving' ? '（送）' : st.code === 'full' ? '（满）'
+            : st.code === 'low' ? '（兵少）' : st.code === 'ready' ? '（待发）' : '';
+          return ` · 补给→${G.cities[c.rallyTo].name}${tag}`;
+        })();
+
+    const hint = UI.$('selHint');
+    if (UI.pending && UI.pending.type === 'dispatch') {
+      hint.classList.remove('hidden');
+      hint.style.color = '';
+      hint.textContent = `已选 ${G.cities[UI.pending.fromId].name}，抽兵 ${Math.round(UI.pending.ratio * 100)}%。点地图上目标城池进军（悬停看胜算）。`;
+    } else {
+      hint.classList.add('hidden');
+    }
+
+    const pane = UI.$('cityPane');
+    const scroll = pane.scrollTop;
+    if (UI.cityTab === 'build') UI.paneBuild(G, c);
+    else if (UI.cityTab === 'clans') UI.paneClans(G, c);
+    else if (UI.cityTab === 'policy') UI.panePolicy(G, c);
+    else UI.paneOverview(G, c);
+    pane.scrollTop = scroll;
+  },
+
+  /** 本方非直辖城的说明 + 「收归直辖」入口（满员时列出要交出的城） */
+  fillNonDemesne(box, G, c) {
+    box.innerHTML = '';
+    const own = c.owner === G.player.factionId;
+    if (!own) {
+      const total = troopTotal(c.garrison);
+      box.innerHTML = `<span class="dim">${total > 0 ? '敌军城池' : '空城'}</span>`;
+      return;
+    }
+
+    const cap = cityCap(G.player);
+    const full = G.player.demesne.length >= cap;
+    const info = document.createElement('div');
+    info.className = 'dim';
+    info.style.cssText = 'line-height:1.7';
+    info.innerHTML = `本方势力城池 · 非你直辖，不可营造 / 征兵 / 调兵<br>`
+      + `直辖 <b>${G.player.demesne.length}/${cap}</b>`
+      + `${full ? ' 已满 · 收归须先交出一座' : ''}`;
+    box.appendChild(info);
+    if (G.over) return;
+
+    const act = document.createElement('div');
+    act.className = 'actions';
+    act.appendChild(UI._btn(full ? '收归直辖（须交出一座）' : '收归直辖', '', () => {
+      if (!full) {
+        try { Store.dispatch('SET_DEMESNE', { cityId: c.id }); }
+        catch (e) { UI.toast(e.message); }
+        return;
+      }
+      UI._swapFor = UI._swapFor === c.id ? null : c.id;
+      UI.render(G);
+    }));
+    box.appendChild(act);
+
+    if (UI._swapFor === c.id && full) {
+      const pick = document.createElement('div');
+      pick.className = 'actions';
+      pick.style.flexWrap = 'wrap';
+      for (const id of G.player.demesne) {
+        const dc = G.cities[id];
+        if (!dc) continue;
+        pick.appendChild(UI._btn(`交出 ${dc.name}`, '', () => {
+          UI._swapFor = null;
+          try { Store.dispatch('SET_DEMESNE', { cityId: c.id, releaseId: id }); }
+          catch (e) { UI.toast(e.message); }
+        }));
+      }
+      box.appendChild(pick);
+    }
+  },
+
+  _statGrid(rows) {
+    return rows.map(([k, v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join('');
+  },
+
+  _btn(label, sub, onclick, reason) {
+    const b = document.createElement('button');
+    b.innerHTML = sub ? `${label}<span class="dim" style="font-size:9px"> ${sub}</span>` : label;
+    if (reason) { b.disabled = true; b.title = reason; }
+    b.onclick = onclick;
+    return b;
+  },
+
+  paneOverview(G, c) {
+    const pane = UI.$('cityPane');
+    const isDemesne = c.grantedTo === PLAYER_HERO_ID;
+    const caps = State.troopCapByType(G, c);
+    const capTotal = State.troopCapOf(G, c);
+    const total = troopTotal(c.garrison);
+    const season = SEASON[U.season(G.meta.month)];
+    const clanSat = Math.round(State.clanSat(c));
+
+    const rows = [
+      ['丁口 / 户籍', `${Math.round(c.pop)} / ${State.popMaxOf(G, c)}`],
+      ['治安', `${Math.round(c.order)}`],
+      ['城墙', `${c.wall.toFixed(1)} / ${State.wallMaxOf(c)}`],
+      ['士族', `${clanSat}`],
+      ['城库钱', U.num(c.gold)],
+      ['存粮', `${U.num(c.food)} / ${U.num(State.foodCapOf(G, c))}`],
+      ['建材', U.num(c.mat)],
+      ['铁料', U.num(c.iron)],
+      ['驻军', `${U.num(total)} / ${U.num(capTotal)}`],
+      ['月产粮', U.num(State.bld(c, 'farm') * 50 * season.food)],
+      ['月产钱', U.num(State.bld(c, 'market') * 20 * season.tax)],
+    ];
+
+    let html = `<div class="statgrid">${UI._statGrid(rows)}</div>`;
+
+    html += `<div class="seclabel">驻军 / 兵种兵额</div>`;
+    html += `<div class="statgrid">${TROOP_KEYS.map(k =>
+      `<span class="k">${TROOPS[k].short}</span><span class="v">${U.num(c.garrison[k] || 0)}<span class="dim"> / ${U.num(caps[k])}</span></span>`
+    ).join('')}</div>`;
+
+    // 兵额推导（与校验同一份公式）
+    const bd = State.troopCapBreakdown(G, c);
+    html += `<div class="seclabel">兵额上限从哪来</div>`;
+    html += `<div class="capformula">`
+      + `户籍 ${U.num(bd.hukou)} × (1.9 + 农田 ${bd.farm} × 0.9) = <b>${U.num(Math.round(bd.popBase))}</b><br>`
+      + `× 治安 ${bd.orderMul.toFixed(2)}　× 兵营(${bd.barracks}) ${bd.barracksMul.toFixed(2)}<br>`
+      + `× 校场(${bd.drill}) ${bd.drillMul.toFixed(2)}　× 士族(心${Math.round(bd.clanSat)}) ${bd.clanMul.toFixed(2)}<br>`
+      + `× 科技 ${bd.techMul.toFixed(2)}　= <b style="color:#e0b93a">${U.num(bd.total)}</b>`
+      + `</div>`;
+    html += `<div class="capnote">兵额 = <b>户籍 × 农田</b> 打底，再乘治安、兵营、校场、士族满意度、军制科技。`
+      + `户籍靠建造<b>府衙</b>与农政科技提升。<br>`
+      + `征兵只消耗<b>丁口</b>（影响钱粮产出，每月回升），<b>不动户籍</b>，所以不会越征上限越低。<br>`
+      + `骑兵另需<b>马场</b>（每级 +12% 骑兵额），水军另需<b>船坞</b>，器械受<b>冶铁坊</b>加成。</div>`;
+
+    if (c.buildQueue.length) {
+      html += `<div style="margin-top:6px;font-size:10px;color:var(--ink-dim)">在建</div>`;
+      for (const j of c.buildQueue) {
+        const pct = Math.round((1 - j.left / j.total) * 100);
+        html += `<div class="qrow"><span>${BUILDINGS[j.key].name}→${j.to}</span>
+          <div class="qbar"><div style="width:${pct}%"></div></div>
+          <span class="dim">${j.left}月</span></div>`;
+      }
+    }
+
+    pane.innerHTML = html;
+
+    const box = document.createElement('div');
+    box.className = 'actions';
+
+    if (!isDemesne) {
+      UI.fillNonDemesne(box, G, c);
+      pane.appendChild(box);
+      return;
+    }
+    if (G.over) {
+      box.innerHTML = `<span class="dim">战局已终</span>`;
+      pane.appendChild(box);
+      return;
+    }
+
+    // 一键补兵
+    if (total < capTotal) {
+      box.appendChild(UI._btn('一键补兵', `缺口 ${U.num(capTotal - total)}`, () => {
+        try { Store.dispatch('FILL_TROOPS', { cityId: c.id, ratio: 1 }); }
+        catch (e) { UI.toast(e.message); }
+      }, null));
+    }
+
+    // 征兵（按钮上直接标出 钱 / 人口 双成本）
+    const defs = [['inf', 300], ['inf', 800], ['arc', 300], ['cav', 300]];
+    if (State.bld(c, 'shipyard') > 0) defs.push(['nvy', 300]);
+    if (State.bld(c, 'ironworks') > 0) defs.push(['siege', 150]);
+
+    for (const [troop, amt] of defs) {
+      let reason = null;
+      try { Recruit.check(G, c, troop, amt); } catch (e) { reason = e.message; }
+      const cost = Economy.recruitCost(amt, troop);
+      box.appendChild(UI._btn(`募${TROOPS[troop].short}${amt}`,
+        reason ? reason : `${cost.gold}钱 ${cost.pop}口`, () => {
+        try { Store.dispatch('RECRUIT', { cityId: c.id, troop, amount: amt }); }
+        catch (e) { UI.toast(e.message); }
+      }, reason));
+    }
+
+    const sep = document.createElement('div');
+    sep.style.cssText = 'flex-basis:100%;height:0';
+    box.appendChild(sep);
+
+    if (total >= 20) {
+      for (const r of [0.3, 0.5, 0.7, 0.9]) {
+        box.appendChild(UI._btn(`出兵 ${Math.round(r * 100)}%`, null, () => {
+          UI.pending = { type: 'dispatch', fromId: c.id, ratio: r };
+          Renderer.targeting = true;
+          UI.$('map').classList.add('targeting');
+          UI.render(G);
+        }));
+      }
+    } else {
+      box.innerHTML += `<span class="dim">兵力不足，无法出征</span>`;
+    }
+
+    if (!isDemesne) {
+      const extra = document.createElement('div');
+      extra.className = 'actions';
+      UI.fillNonDemesne(extra, G, c);
+      box.appendChild(extra);
+    }
+
+    pane.appendChild(box);
+  },
+
+  paneBuild(G, c) {
+    const pane = UI.$('cityPane');
+    const isDemesne = c.grantedTo === PLAYER_HERO_ID;
+    const free = Build.queueFree(c);
+    const slots = State.buildSlots(c);
+
+    let html = `<div class="dim" style="margin-bottom:4px">工程位 ${c.buildQueue.length}/${slots}`
+      + `${slots > 1 ? '（府衙 3 级）' : '（府衙 3 级可并行 2 项）'}</div>`;
+
+    if (c.buildQueue.length) {
+      c.buildQueue.forEach((j, i) => {
+        const pct = Math.round((1 - j.left / j.total) * 100);
+        html += `<div class="qrow">
+          <span style="min-width:74px">${BUILDINGS[j.key].name}→${j.to}</span>
+          <div class="qbar"><div style="width:${pct}%"></div></div>
+          <span class="dim">${j.left}月</span>
+          ${isDemesne ? `<button class="mini" data-cancel="${i}">撤</button>` : ''}
+        </div>`;
+      });
+    }
+
+    // 能建的排前面（造价低的优先），被卡住的沉底并直接写出原因
+    const rows = BUILDING_KEYS.map(key => {
+      const d = BUILDINGS[key];
+      const lv = State.bld(c, key);
+      const maxed = lv >= d.max;
+      let reason = null;
+      if (!isDemesne) reason = '非你直辖之城';
+      else if (G.over) reason = '战局已终';
+      else {
+        const chk = Build.canBuild(G, c, key);
+        if (!chk.ok) reason = chk.why;
+      }
+      const cost = Build.costOf(G, c, key);
+      return {
+        key, d, lv, maxed, reason, cost,
+        turns: Build.turnsOf(G, key, lv, c),
+        rank: maxed ? 2 : (reason ? 1 : 0),
+      };
+    }).sort((a, b) => a.rank - b.rank || a.cost.gold - b.cost.gold);
+
+    const canCount = rows.filter(r => !r.rank).length;
+    html += `<div style="margin:6px 0 3px;font-size:10px;color:var(--ink-dim)">可营造 ${canCount} 项（按造价排序，卡住的沉底）</div>`;
+
+    for (const r of rows) {
+      const costTxt = r.maxed ? '—'
+        : `${r.cost.gold}钱 ${r.cost.mat}料${r.cost.iron ? ' ' + r.cost.iron + '铁' : ''}`;
+      html += `<div class="brow ${r.maxed ? 'maxed' : (r.reason ? 'locked' : '')}"
+        title="${U.esc(r.d.desc)}｜${U.esc(r.d.effect(Math.max(1, r.lv)))}">
+        <span class="bname">${r.d.name}${(!r.rank) ? '<span class="bdg">可建</span>' : ''}</span>
+        <span class="blv">${r.lv}/${r.d.max}</span>
+        <span class="bcost">${r.reason && !r.maxed ? U.esc(r.reason) : costTxt}</span>
+        <button data-build="${r.key}" ${(r.maxed || r.reason) ? 'disabled' : ''}
+          title="${U.esc(r.reason || `工期 ${r.turns} 月`)}">${r.maxed ? '满' : `${r.turns}月`}</button>
+      </div>`;
+    }
+
+    pane.innerHTML = html;
+
+    if (!isDemesne) {
+      const box = document.createElement('div');
+      box.className = 'actions';
+      box.style.marginTop = '8px';
+      UI.fillNonDemesne(box, G, c);
+      pane.appendChild(box);
+      return;
+    }
+
+    for (const b of pane.querySelectorAll('button[data-build]')) {
+      b.onclick = () => {
+        try { Store.dispatch('BUILD', { cityId: c.id, key: b.dataset.build }); }
+        catch (e) { UI.toast(e.message); }
+      };
+    }
+    for (const b of pane.querySelectorAll('button[data-cancel]')) {
+      b.onclick = () => {
+        try { Store.dispatch('CANCEL_BUILD', { cityId: c.id, index: Number(b.dataset.cancel) }); }
+        catch (e) { UI.toast(e.message); }
+      };
+    }
+  },
+
+  paneClans(G, c) {
+    const pane = UI.$('cityPane');
+    const isDemesne = c.grantedTo === PLAYER_HERO_ID;
+    const sat = State.clanSat(c);
+
+    if (!c.clans || !c.clans.length) {
+      pane.innerHTML = `<div class="dim">此城无大族。</div>`;
+      return;
+    }
+
+    let html = `<div class="dim" style="margin-bottom:5px">
+      士族均心 <b style="color:${sat > 60 ? '#7fb37f' : sat > 40 ? '#c9a227' : '#d96a6a'}">${Math.round(sat)}</b>
+      · 钱粮产出 ×${State.clanEconMul(c).toFixed(2)}
+      · 兵额战力 ×${State.clanMilMul(c).toFixed(2)}
+    </div>`;
+
+    for (const cl of c.clans) {
+      html += `<div class="clan">
+        <div class="crow">
+          <span class="cname">${U.esc(cl.name)}</span>
+          <span class="dim">心 ${Math.round(cl.sat)} · 势 ${Math.round(cl.inf)}</span>
+        </div>
+        <div class="barbox">
+          <span class="dim" style="font-size:9px">心</span>
+          <div class="bar sat"><div style="width:${Math.round(cl.sat)}%"></div></div>
+          <span class="dim" style="font-size:9px">势</span>
+          <div class="bar inf"><div style="width:${Math.round(cl.inf)}%"></div></div>
+        </div>
+      </div>`;
+    }
+
+    html += `<div class="dim" style="margin-top:6px;line-height:1.6">
+      均心低于 28 且影响力高时，有叛乱之虞（折兵、掠库、治安大跌）。<br>
+      战乱邻近、兵额过载、断粮都会压低士气。
+    </div>`;
+
+    pane.innerHTML = html;
+
+    const box = document.createElement('div');
+    box.className = 'actions';
+
+    if (!isDemesne) {
+      UI.fillNonDemesne(box, G, c);
+      pane.appendChild(box);
+      return;
+    }
+    if (G.over) {
+      box.innerHTML = `<span class="dim">战局已终</span>`;
+      pane.appendChild(box);
+      return;
+    }
+
+    const cool = c.clanActionTurn ? Math.max(0, 3 - (G.meta.turn - c.clanActionTurn)) : 0;
+    const coolMsg = cool > 0 ? `士族新定，尚需 ${cool} 月方可再动` : null;
+
+    const act = (kind, label, sub, checkReason) => {
+      box.appendChild(UI._btn(label, sub, () => {
+        try { Store.dispatch('CLAN_ACTION', { cityId: c.id, action: kind }); }
+        catch (e) { UI.toast(e.message); }
+      }, coolMsg || checkReason));
+    };
+
+    act('pacify', '安抚', '200钱 120粮', c.gold < 200 ? '钱不足' : c.food < 120 ? '粮不足' : null);
+    act('recruit', '征辟', '500钱', c.gold < 500 ? '钱不足' : null);
+    act('suppress', '打压', '免费', null);
+
+    pane.appendChild(box);
+  },
+
+  panePolicy(G, c) {
+    const pane = UI.$('cityPane');
+    const isDemesne = c.grantedTo === PLAYER_HERO_ID;
+    const gov = c.governor ? G.heroes[c.governor] : null;
+    const caps = State.troopCapByType(G, c);
+
+    let html = `<div class="statgrid">${UI._statGrid([
+      ['守将', gov ? `${gov.name}（统 ${gov.tong}）` : '无'],
+      ['当前方针', c.policy ? POLICIES[c.policy].name : '未委任（亲理）'],
+      ['兵额上限', U.num(State.troopCapOf(G, c))],
+      ['工程位', State.buildSlots(c)],
+      ['步/弓', `${U.num(caps.inf)} / ${U.num(caps.arc)}`],
+      ['骑/水/器', `${U.num(caps.cav)} / ${U.num(caps.nvy)} / ${U.num(caps.siege)}`],
+    ])}</div>`;
+
+    html += `<div class="dim" style="margin-top:8px;line-height:1.6">
+      委任太守后，每月自动按方营造、征兵，不必逐一手动。<br>
+      你仍可随时手动操作同一座城，二者叠加。
+    </div>`;
+
+    // 持续调兵（补给线）
+    const rTarget = c.rallyTo ? G.cities[c.rallyTo] : null;
+    html += `<div class="seclabel">持续调兵（补给线）</div>`;
+    if (rTarget) {
+      const st = Rally.status(G, c);
+      const d = Rally.detail(G, c, rTarget.id);
+      const stColor = st.code === 'moving' ? '#9ecf9e'
+        : st.code === 'ready' ? '#e0b93a'
+        : st.code === 'full' ? '#c9a227' : '#d96a6a';
+
+      html += `<div class="capformula" style="border-color:#3f6a3f">
+        补给目标 <b style="color:#9ecf9e">${rTarget.name}</b>
+        ${rTarget.owner === G.player.factionId ? '（同势力，到即并入）' : '（敌方，持续进攻）'}
+        <div class="rallymath">
+          本城 ${U.num(d.total)} 兵 ÷ 兵额 ${U.num(d.cap)}　（保护下限 ${U.num(d.keep)}）<br>
+          · 抽 ${Math.round(d.ratio * 100)}% → 可送 <b>${U.num(d.byRatio)}</b>
+          ${d.bind === 'ratio' ? '<span class="bindtag">← 生效</span>' : ''}<br>
+          · 扣掉保护下限 → 可送 <b>${U.num(d.byKeep)}</b>
+          ${d.bind === 'keep' ? '<span class="bindtag">← 生效</span>' : ''}<br>
+          · 目标剩余容量 → <b>${U.num(Math.round(Math.min(d.room, 99999)))}</b>
+          ${d.bind === 'room' ? '<span class="bindtag">← 生效</span>' : ''}
+        </div>
+        ${d.bind === 'keep' && d.send > 0
+          ? `<div class="dim" style="margin-top:3px;color:#c9a227">本城兵只比保护下限多 ${U.num(d.total - d.keep)}，实际送出受此限制。想多送先募兵。</div>`
+          : ''}
+        <div style="margin-top:5px;color:${stColor};font-size:11px">● ${U.esc(st.text)}</div>
+      </div>`;
+    } else {
+      html += `<div class="capnote">未设定。设定后每月自动把本城兵力送往目标城 —— 后方向前线输送、或持续骚扰敌城。<br>
+        抽得越狠送得越快，但本城会被抽空；后方城建议<strong>同时设「备战」方针</strong>，太守每月募兵回血，才能形成不断的流水。</div>`;
+    }
+
+    html += `<div class="batchbar" style="margin-top:6px">
+      <span class="dim" style="font-size:10px">每月送走本城</span>
+      <select class="mini" id="rallyRatio">
+        ${[0.1, 0.2, 0.35, 0.5, 0.7, 0.9].map(v => `<option value="${v}" ${Math.abs((c.rallyRatio || 0.5) - v) < 0.01 ? 'selected' : ''}>${Math.round(v * 100)}%</option>`).join('')}
+      </select>
+      <span class="dim" style="font-size:10px">补至目标兵额</span>
+      <select class="mini" id="rallyFill">
+        ${[1, 1.2, 1.5, 2].map(v => `<option value="${v}" ${Math.abs((c.rallyFill || 1.2) - v) < 0.01 ? 'selected' : ''}>${Math.round(v * 100)}%</option>`).join('')}
+      </select>
+    </div>`;
+
+    pane.innerHTML = html;
+
+    // 比例即时生效（已设目标时）
+    const bindRallySelects = () => {
+      const rs = UI.$('rallyRatio'), rf = UI.$('rallyFill');
+      if (!rs) return;
+      const push = () => {
+        if (!c.rallyTo) return;
+        try {
+          Store.dispatch('SET_RALLY', {
+            cityId: c.id, toId: c.rallyTo,
+            ratio: Number(rs.value),
+            fill: rf ? Number(rf.value) : undefined,
+          });
+        } catch (e) { UI.toast(e.message); }
+      };
+      rs.onchange = push;
+      if (rf) rf.onchange = push;
+    };
+    bindRallySelects();
+
+    const box = document.createElement('div');
+    box.className = 'actions';
+
+    if (!isDemesne) {
+      UI.fillNonDemesne(box, G, c);
+      pane.appendChild(box);
+      return;
+    }
+
+    for (const key of POLICY_KEYS) {
+      const P = POLICIES[key];
+      const on = c.policy === key;
+      const b = UI._btn(`${P.name}${on ? ' ✓' : ''}`, null, () => {
+        try { Store.dispatch('SET_POLICY', { cityId: c.id, policy: on ? null : key }); }
+        catch (e) { UI.toast(e.message); }
+      });
+      b.title = P.desc;
+      if (on) b.style.borderColor = '#c9a227';
+      box.appendChild(b);
+    }
+
+    const sep = document.createElement('div');
+    sep.style.cssText = 'flex-basis:100%;height:0';
+    box.appendChild(sep);
+
+    if (c.policy) {
+      box.appendChild(UI._btn('罢委任', null, () => {
+        try { Store.dispatch('SET_POLICY', { cityId: c.id, policy: null }); }
+        catch (e) { UI.toast(e.message); }
+      }));
+    }
+
+    const sep2 = document.createElement('div');
+    sep2.style.cssText = 'flex-basis:100%;height:0';
+    box.appendChild(sep2);
+
+    const ratioSel = UI.$('rallyRatio');
+    const fillSel = UI.$('rallyFill');
+
+    box.appendChild(UI._btn(c.rallyTo ? '改调兵目标' : '设持续调兵 → 点地图', null, () => {
+      UI.pending = {
+        type: 'rally',
+        fromId: c.id,
+        ratio: ratioSel ? Number(ratioSel.value) : (c.rallyRatio || 0.5),
+        fill: fillSel ? Number(fillSel.value) : (c.rallyFill || 1.2),
+      };
+      Renderer.targeting = true;
+      UI.$('map').classList.add('targeting');
+      UI.render(G);
+    }));
+
+    if (c.rallyTo) {
+      box.appendChild(UI._btn('罢持续调兵', null, () => {
+        try { Store.dispatch('SET_RALLY', { cityId: c.id, toId: null }); }
+        catch (e) { UI.toast(e.message); }
+      }));
+    }
+
+    pane.appendChild(box);
+  },
+};

@@ -7,9 +7,10 @@ const Build = {
     return buildCost(key, State.bld(c, key), mul);
   },
 
-  turnsOf(G, key, curLevel) {
+  turnsOf(G, key, curLevel, city) {
     const season = SEASON[U.season(G.meta.month)];
-    return buildTurns(key, curLevel, season.build);
+    const tal = city && city.grantedTo === PLAYER_HERO_ID ? talentOf(G) : {};
+    return buildTurns(key, curLevel, season.build * (tal.buildFactor || 1));
   },
 
   /** 前置检查（不含资源） */
@@ -31,6 +32,7 @@ const Build = {
   canBuild(G, c, key) {
     if (G.over) return { ok: false, why: '战局已终' };
     if (!Build.queueFree(c)) return { ok: false, why: '工程已满（府衙 3 级可并行）' };
+    if ((c.buildQueue || []).some(j => j.key === key)) return { ok: false, why: '已在工程队列中' };
     const rq = Build.reqCheck(G, c, key);
     if (!rq.ok) return rq;
     const cost = Build.costOf(G, c, key);
@@ -48,7 +50,7 @@ const Build = {
     c.gold -= cost.gold;
     c.mat -= cost.mat;
     c.iron -= cost.iron;
-    const turns = Build.turnsOf(G, key, State.bld(c, key));
+    const turns = Build.turnsOf(G, key, State.bld(c, key), c);
     c.buildQueue.push({
       key,
       to: State.bld(c, key) + 1,

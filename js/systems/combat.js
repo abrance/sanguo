@@ -43,7 +43,7 @@ const Combat = {
     const h = heroId ? G.heroes[heroId] : null;
     if (h) {
       p *= 1 + h.tong / 200;
-      const sk = skillOf(h);
+      const sk = skillOf(G, h);
       if (sk.atk) p *= sk.atk;
       if (isDef && sk.def) p *= sk.def;
       if (isDef && sk.defenseCity) p *= sk.defenseCity;
@@ -64,6 +64,13 @@ const Combat = {
       if (b.cav) p *= 1 + (b.cav - 1) * share('cav');
       if (b.arc) p *= 1 + (b.arc - 1) * share('arc');
       if (b.siege) p *= 1 + (b.siege - 1) * share('siege');
+    }
+
+    // 玩家天赋（只对玩家势力生效）
+    if (opts.factionId && opts.factionId === G.player.factionId) {
+      const tal = talentOf(G);
+      if (isDef && tal.def) p *= tal.def;
+      if (!isDef && tal.atk) p *= tal.atk;
     }
 
     // 校场操练
@@ -124,8 +131,9 @@ const Combat = {
     const lines = [];
     lines.push(`【${city.name}之战】${atkName}${atkLead}率${Combat.compose(army.troops)}攻${city.name}，${defName}${defLead}以${Combat.compose(city.garrison)}拒守。`);
 
-    if (atkHero && atkHero.skill && HERO_SKILLS[atkHero.skill]) {
-      lines.push(`${atkLead}「${HERO_SKILLS[atkHero.skill].name}」既发，${atkName}士气大振。`);
+    const atkSkill = heroSkill(G, atkHero && atkHero.skill);
+    if (atkSkill.name) {
+      lines.push(`${atkLead}「${atkSkill.name}」既发，${atkName}士气大振。`);
     }
     if (city.terrain !== 'plain') {
       lines.push(`战场${TERRAIN[city.terrain].name}，${
@@ -211,12 +219,28 @@ const Combat = {
     // 只有涉及玩家势力才写完整战报；其余压缩成一行，避免刷屏
     const mine = army.factionId === G.player.factionId || city.owner === G.player.factionId;
     if (mine) {
-      for (const l of lines) State.log(G, 'battle', l);
+      // 一场攻城 = 一条结构化战报（视图层渲染成可展开的卡片）
+      State.log(G, 'battle',
+        `【${city.name}之战】${atkName}攻${defName}，${captured ? '城破' : '不克'}`
+        + `（攻折 ${U.num(atkLoss)}，守折 ${U.num(defLoss)}）`,
+        {
+          battle: {
+            cityId: city.id, cityName: city.name,
+            atkFactionId: army.factionId, defFactionId: city.owner,
+            atkName, defName, atkLead, defLead,
+            captured, rounds,
+            atkStart, defStart, atkLoss, defLoss,
+            atkRemain: troopTotal(army.troops), defRemain: troopTotal(city.garrison),
+          },
+          lines,
+        });
     } else {
       State.log(G, 'note',
         `【${city.name}】${atkName}${atkLead}攻${defName}，${captured ? '城破' : '不克'}（攻折 ${U.num(atkLoss)}，守折 ${U.num(defLoss)}）。`);
     }
     G.stats.battles++;
+    // 纯视觉事件：视图层订阅画交战特效；无头环境无监听者时为 no-op
+    Bus.emit('combat', { cityId: city.id, captured, atkLoss, defLoss });
 
     return { captured, atkLoss, defLoss, atkRemain, defRemain, rounds, lines };
   },
@@ -260,11 +284,13 @@ const Combat = {
   },
 
   defenseScore(G, city) {
-    return Combat.power(G, city.garrison, city.governor, {
+    const lg = State.legionMul(G, city);
+    const base = Combat.power(G, city.garrison, city.governor, {
       terrain: city.terrain, isDefender: true,
       enemyTroops: { inf: 1 }, morale: city.morale || 55, wall: city.wall,
       factionId: city.owner, drill: State.bld(city, 'drill'),
     });
+    return lg ? base * lg.atk : base;
   },
 
   attackScore(G, troops, heroId, terrain, factionId, drill) {

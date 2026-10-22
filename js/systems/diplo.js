@@ -19,6 +19,7 @@ const Diplo = {
     if (!p.diploCooldown) p.diploCooldown = {};
     if (!Array.isArray(p.pacts)) p.pacts = [];
     if (p.usurp == null) p.usurp = 0;
+    if (!Array.isArray(G.peaceOffers)) G.peaceOffers = [];
     return G;
   },
 
@@ -151,6 +152,99 @@ const Diplo = {
     return x;
   },
 
+  /** 挂一条待玩家裁决的求和报价（同一势力同时只有一条） */
+  offerPeace(G, fid) {
+    const f = G.factions[fid];
+    if (!f || f.dead) return false;
+    if (!Array.isArray(G.peaceOffers)) G.peaceOffers = [];
+    if (G.peaceOffers.some(o => o.fid === fid)) return false;
+    G.peaceOffers.push({ fid, turn: G.meta.turn });
+    return true;
+  },
+
+  /** 清掉失效报价：势力已覆灭、已不在交战、或报价过期 */
+  pruneOffers(G) {
+    const list = G.peaceOffers || [];
+    const live = list.filter(o => {
+      const f = G.factions[o.fid];
+      return f && !f.dead && Diplo.statusOf(G, G.player.factionId, o.fid) === Diplo.WAR;
+    });
+    if (live.length !== list.length) G.peaceOffers = live;
+  },
+
+  /** 谈判收口：参数是各项索要的百分比 0–1，返回折算后的"勒索负担分" */
+  demandScore(demands) {
+    const W = { gold: 0.55, mat: 0.15, iron: 0.10, troop: 0.45 };
+    let s = 0;
+    for (const k in W) s += W[k] * U.clamp(demands[k] || 0, 0, 1);
+    return s;
+  },
+
+  /** 对方能咽下多重的条件：越弱、越四面受敌，越肯割肉 */
+  demandTolerance(G, fid) {
+    const mine = Diplo.strength(G, G.player.factionId);
+    const theirs = Diplo.strength(G, fid);
+    let tol = 0.30;
+    if (theirs < mine * 0.7) tol += 0.15;
+    if (Diplo.warCount(G, fid) >= 2) tol += 0.15;
+    if (G.player.route === 'independent' || G.player.rank >= 4) tol += 0.05;
+    return U.clamp(tol, 0.15, 0.70);
+  },
+
+  /** 兑现条件：钱从对方国库出，建材/铁料按各城库存比例抽，兵从对方最强城抽走 */
+  demandCollect(G, fid, demands) {
+    const f = G.factions[fid];
+    const home = G.cities[G.player.homeCityId] || State.demesne(G)[0];
+    if (!home) return { gold: 0, mat: 0, iron: 0, troop: 0 };
+
+    const got = { gold: 0, mat: 0, iron: 0, troop: 0 };
+
+    got.gold = Math.floor(f.treasury * U.clamp(demands.gold || 0, 0, 1));
+    f.treasury -= got.gold;
+    home.gold += got.gold;
+
+    for (const key of ['mat', 'iron']) {
+      const pct = U.clamp(demands[key] || 0, 0, 1);
+      if (!pct) continue;
+      for (const c of State.factionCities(G, fid)) {
+        const take = Math.floor((c[key] || 0) * pct);
+        c[key] -= take;
+        got[key] += take;
+      }
+      home[key] += got[key];
+    }
+
+    const pct = U.clamp(demands.troop || 0, 0, 1);
+    if (pct) {
+      const src = State.factionCities(G, fid)
+        .map(c => ({ c, t: troopTotal(c.garrison) }))
+        .sort((a, b) => b.t - a.t)[0];
+      if (src && src.t >= 100) {
+        const troops = Army.takeFromGarrison(src.c.garrison, pct);
+        const total = troopTotal(troops);
+        if (total >= 50) {
+          Army.create(G, {
+            factionId: fid, heroId: null, from: src.c.id, to: home.id,
+            troops, mission: 'aid',
+          });
+          got.troop = total;
+        } else {
+          for (const k of TROOP_KEYS) src.c.garrison[k] += troops[k] || 0;
+        }
+      }
+    }
+    return got;
+  },
+
+  /** 玩家提条件：对方当场答复。谈不拢就不成交（战事照旧） */
+  counterPeace(G, fid, demands) {
+    const tol = Diplo.demandTolerance(G, fid);
+    if (Diplo.demandScore(demands) > tol) return { accepted: false };
+    const got = Diplo.demandCollect(G, fid, demands);
+    Diplo.makePeace(G, G.player.factionId, fid);
+    return { accepted: true, got };
+  },
+
   makePeace(G, a, b) {
     const x = Diplo.pair(G, a, b);
     if (!x) return null;
@@ -268,6 +362,7 @@ const Diplo = {
   // ───────── 每月推进 ─────────
   advance(G) {
     Diplo.ensure(G);
+    Diplo.pruneOffers(G);
     Diplo.expire(G);
     if (G.meta.turn % 6 === 0) Diplo.borders(G);
     Diplo.drift(G);
@@ -310,6 +405,11 @@ const Diplo = {
         const sa = Diplo.strength(G, a), sb = Diplo.strength(G, b);
         if (sa > sb * 1.5 || sb > sa * 1.5) d += 2;
 
+        // 玩家天赋：纵横家让关系回暖更快（只捧正向漂移）
+        if ((a === G.player.factionId || b === G.player.factionId) && d > 0) {
+          d *= talentOf(G).relUp || 1;
+        }
+
         x.rel = U.clamp(x.rel + U.clamp(d, -10, 10), -100, 100);
       }
     }
@@ -338,6 +438,8 @@ const Diplo = {
   ai(G) {
     for (const f of Object.values(G.factions)) {
       if (f.kind === 'free' || f.dead) continue;
+      // 玩家当家的势力：宣战/结盟/求和都由玩家决断，AI 不得代办
+      if (f.id === G.player.factionId && f.rulerId === PLAYER_HERO_ID) continue;
       if (Diplo._phase(f.id) !== G.meta.turn % 3) continue;
       if (!State.factionCities(G, f.id).length) continue;
 
@@ -352,12 +454,27 @@ const Diplo = {
         const enemies = wars.map(id => ({ id, s: Diplo.strength(G, id) })).sort((a, b) => b.s - a.s);
         const worst = enemies[0];
         const losing = wars.length >= 2 || Diplo.strength(G, f.id) < worst.s * 0.85;
-        if (losing && Diplo.willAcceptPeace(G, worst.id, f.id)) {
+        // 玩家当家的势力不许被 AI 代表去求和（否则会出现"莫名被停战、报价瞬间作废"）。
+        // 臣属时君主仍可自行罢兵——那是"效忠一方"的代价，玩家可上表进言。
+        const playerRules = f.id === G.player.factionId && f.rulerId === PLAYER_HERO_ID;
+        if (losing && !playerRules && Diplo.willAcceptPeace(G, worst.id, f.id)) {
+          // 向玩家求和：不自动成交，挂成待决报价等玩家裁决
+          if (worst.id === G.player.factionId) {
+            if (Diplo.offerPeace(G, f.id)) {
+              State.log(G, 'note', `【求和】${f.name}遣使请和，等你决断。`);
+            }
+            continue;
+          }
           const pay = Math.min(f.treasury, 400);
           f.treasury -= pay;
           Diplo.makePeace(G, f.id, worst.id);
           Diplo._log(G, f, worst.id,
             `【停战】${f.name}遣使向${G.factions[worst.id].name}求和，纳钱 ${U.num(pay)}，罢兵 12 月。`);
+          // 若该势力正在等玩家裁决求和，报价随停战作废——明确告知，不静默消失
+          if ((G.peaceOffers || []).some(o => o.fid === worst.id)) {
+            G.peaceOffers = G.peaceOffers.filter(o => o.fid !== worst.id);
+            State.log(G, 'note', `${G.factions[worst.id].name}的请和已因停战作废。`);
+          }
           continue;
         }
       }
@@ -493,6 +610,8 @@ const Diplo = {
   },
 
   spendGold(G, amount) {
+    const tal = talentOf(G);
+    amount = Math.max(0, Math.round(amount * (tal.diploCost || 1)));
     const cities = State.demesne(G);
     let have = 0;
     for (const c of cities) have += c.gold;

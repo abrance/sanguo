@@ -109,7 +109,7 @@ const AI = {
   },
 
   /** 集中兵力：向好打的前线城市输送，形成局部优势 */
-  _mass(G, f, cities, stamp, exclude) {
+  _mass(G, f, cities, stamp, exclude, filter) {
     if (cities.length < 2) return;
     if (!RNG.chance(0.16 + f.aggression * 0.20 + (f.momentum - 1) * 0.35)) return;
 
@@ -119,6 +119,7 @@ const AI = {
       if (troopTotal(plan) < 150) continue;
       for (const nb of State.neighbors(G, c.id, 235)) {
         if (nb.owner === f.id) continue;
+        if (filter && !filter(nb)) continue;
         const edge = Combat.attackScore(G, plan, c.governor, c.terrain) - Combat.defenseScore(G, nb);
         if (!best || edge > best.edge) best = { edge, staging: c, target: nb };
       }
@@ -156,7 +157,7 @@ const AI = {
     }
   },
 
-  _attack(G, f, cities, stamp, exclude) {
+  _attack(G, f, cities, stamp, exclude, filter) {
     const maxArmies = Math.max(1, Math.ceil(cities.length / 2));
     let outgoing = Object.values(G.armies).filter(a => a.factionId === f.id).length;
     if (outgoing >= maxArmies) return;
@@ -182,6 +183,7 @@ const AI = {
       let picked = null;
       for (const nb of State.neighbors(G, from.id, 235)) {
         if (nb.owner === f.id) continue;
+        if (filter && !filter(nb)) continue;
         if (!Diplo.canAttack(G, f.id, nb.owner)) continue;
         if (nb.grantedTo === PLAYER_HERO_ID && Diplo.hasPact(G, f.id)) continue;
         if (nb.owner === G.player.factionId && G.meta.turn < 36) continue;

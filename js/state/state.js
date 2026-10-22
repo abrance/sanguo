@@ -3,6 +3,24 @@
 
 const PLAYER_HERO_ID = 'PLAYER';
 
+/** 纪事上限：存 500 条，界面只画最近 400 条（多了 DOM 太重） */
+const LOG_MAX = 500;
+const LOG_VIEW = 400;
+
+/** 旧档补齐用的默认值表：新增状态字段只改这里 */
+const META_DEFAULTS = { rngState: null, uidSeq: null };
+const PLAYER_DEFAULTS = {
+  favor: 60, mission: null, missionCooldown: 0, domActionTurn: 0, route: 'loyal',
+  talent: null, pacts: [], diploCooldown: {}, usurp: 0, legions: [],
+};
+const FACTION_DEFAULTS = {};
+const CITY_DEFAULTS = {
+  mat: 100, iron: 40, food: 0, gold: 0,
+  order: 70, morale: 70, unrest: 0,
+  policy: null, rallyTo: null, rallyRatio: 0.5, rallyFill: 1.2,
+  clanActionTurn: 0, buildQueue: [],
+};
+
 const State = {
 
   // ───────── 构造 ─────────
@@ -31,6 +49,7 @@ const State = {
         loyalty: 80,
         route: 'loyal',
         favor: 62,
+        talent: opts.talent || null,
         mission: null,
         missionCooldown: 0,
         domActionTurn: 0,
@@ -39,6 +58,7 @@ const State = {
         diploCooldown: {},
         pacts: [],
         usurp: 0,
+        legions: [],
       },
       factions: {},
       cities: {},
@@ -106,7 +126,6 @@ const State = {
         policy: null,
         rallyTo: null,
         rallyRatio: 0.5,
-        rallyKeep: 0.35,
         rallyFill: 1.2,
         clanActionTurn: 0,
         clans: State._initClans(cityIdx++),
@@ -181,6 +200,10 @@ const State = {
 
     State.log(G, 'turn',
       `【${G.meta.year}年${G.meta.month}月】${G.factions[G.player.factionId].name} · ${startCity.name}城主 ${G.player.name}，开局。`);
+
+    // 构造过程本身消耗了随机数，游标按构造结束时的位置记档
+    G.meta.rngState = RNG.getState();
+    G.meta.uidSeq = U._n || 0;
     return G;
   },
 
@@ -234,7 +257,6 @@ const State = {
     if (c.unrest == null) c.unrest = 0;
     if (c.rallyTo === undefined) c.rallyTo = null;
     if (c.rallyRatio == null) c.rallyRatio = 0.5;
-    if (c.rallyKeep == null) c.rallyKeep = 0.35;
     if (c.rallyFill == null) c.rallyFill = 1.2;
   },
 
@@ -256,7 +278,9 @@ const State = {
   foodCapOf(G, c) {
     const b = G.factions[c.owner] && G.factions[c.owner].bonus;
     const techG = b ? b.granary : 1;
-    return Math.round((800 + State.bld(c, 'farm') * 400 + State.bld(c, 'granary') * 250) * techG);
+    const tal = c.grantedTo === PLAYER_HERO_ID ? talentOf(G) : {};
+    return Math.round((800 + State.bld(c, 'farm') * 400 + State.bld(c, 'granary') * 250)
+      * techG * (tal.granary || 1));
   },
 
   /** 士族平均满意度（0-100） */
@@ -316,10 +340,11 @@ const State = {
     const stable = State.bld(c, 'stable');
     const shipyard = State.bld(c, 'shipyard');
     const iron = State.bld(c, 'ironworks');
+    const tal = c.grantedTo === PLAYER_HERO_ID ? talentOf(G) : {};
     return {
       inf: Math.round(total * 0.62),
       arc: Math.round(total * 0.26),
-      cav: stable > 0 ? Math.round(total * 0.15 * (1 + stable * 0.12)) : 0,
+      cav: stable > 0 ? Math.round(total * 0.15 * (1 + stable * 0.12) * (tal.cav || 1)) : 0,
       nvy: shipyard > 0 ? Math.round(total * 0.20 * (1 + shipyard * 0.15)) : 0,
       siege: Math.round(total * 0.08 * (1 + iron * 0.10)),
     };
@@ -329,9 +354,31 @@ const State = {
   city(G, id) { return G.cities[id]; },
   hero(G, id) { return G.heroes[id]; },
   faction(G, id) { return G.factions[id]; },
-  playerHero(G) { return G.heroes[PLAYER_HERO_ID]; },
-
   isPlayerCity(G, c) { return !!c && c.grantedTo === PLAYER_HERO_ID; },
+
+  // ───────── 军区（一将统辖多城，全托管但听玩家号令） ─────────
+  legions(G) { return G.player.legions || (G.player.legions = []); },
+
+  legionOf(G, cityId) {
+    for (const lg of State.legions(G)) {
+      if (lg.cityIds && lg.cityIds.indexOf(cityId) >= 0) return lg;
+    }
+    return null;
+  },
+
+  /** 军区里的城（顺带滤掉已不再直辖的） */
+  legionCities(G, lg) {
+    return (lg.cityIds || []).map(id => G.cities[id]).filter(c => c && c.grantedTo === PLAYER_HERO_ID);
+  },
+
+  /** 都督加成：统率 → 守城战力，政略 → 产出。同一城只吃一个军区 */
+  legionMul(G, c) {
+    const lg = State.legionOf(G, c.id);
+    if (!lg) return null;
+    const h = G.heroes[lg.heroId];
+    if (!h || !h.alive) return null;
+    return { atk: 1 + h.tong / 400, eco: 1 + h.zheng / 500, hero: h };
+  },
 
   demesne(G) {
     return G.player.demesne.map(id => G.cities[id]).filter(Boolean);
@@ -339,10 +386,6 @@ const State = {
 
   factionCities(G, fid) {
     return Object.values(G.cities).filter(c => c.owner === fid);
-  },
-
-  ownFactionCities(G) {
-    return State.factionCities(G, G.player.factionId);
   },
 
   factionTroops(G, fid) {
@@ -401,18 +444,18 @@ const State = {
     return 1 + Math.max(0, share - 0.15) * 1.1;
   },
 
-  factionCityCount(G, fid) {
-    return State.factionCities(G, fid).length;
-  },
-
-  log(G, kind, text) {
-    G.log.push({ turn: G.meta.turn, year: G.meta.year, month: G.meta.month, kind, text });
-    if (G.log.length > 500) G.log.splice(0, G.log.length - 500);
+  log(G, kind, text, data) {
+    const e = { turn: G.meta.turn, year: G.meta.year, month: G.meta.month, kind, text };
+    if (data) e.data = data;   // 结构化附带信息（如战报详情），视图层可选消费
+    G.log.push(e);
+    if (G.log.length > LOG_MAX) G.log.splice(0, G.log.length - LOG_MAX);
   },
 
   // ───────── 旧存档迁移 ─────────
-  migrate(G) {
+  /** 新增状态字段时只需往这三张表加一行；迁移无需再手写 if */
+  migrate(G, fromVersion) {
     if (!G || !G.cities) return G;
+
     for (const c of Object.values(G.cities)) {
       if (!c.buildings) {
         c.buildings = {
@@ -425,27 +468,33 @@ const State = {
           granary: 1, clinic: 0, beacon: 0, shipyard: 0, customs: 0,
         };
       }
-      if (c.mat == null) c.mat = 100;
-      if (c.iron == null) c.iron = 40;
-      if (c.foodCap != null) delete c.foodCap;
+      delete c.foodCap;                        // 已废弃：粮上限改为函数现算
       if (c.popMax != null && c.basePop == null) c.basePop = c.pop;
+      State._fillDefaults(c, CITY_DEFAULTS);
       if (!c.clans || !c.clans.length) c.clans = State._initClans(0);
       State.syncDerived(c);
     }
+
     for (const f of Object.values(G.factions)) {
       if (!f.tech) f.tech = { rp: 0, done: {}, current: null, queue: [] };
       if (!Array.isArray(f.tech.queue)) f.tech.queue = [];
+      State._fillDefaults(f, FACTION_DEFAULTS);
     }
-    const p = G.player;
-    if (p.favor == null) p.favor = 60;
-    if (p.mission === undefined) p.mission = null;
-    if (p.missionCooldown == null) p.missionCooldown = 0;
-    if (p.domActionTurn == null) p.domActionTurn = 0;
-    if (p.route == null) p.route = 'loyal';
+
+    State._fillDefaults(G.player, PLAYER_DEFAULTS);
+    State._fillDefaults(G.meta, META_DEFAULTS);
+
     if (!G.diplo) Diplo.init(G);
     Diplo.ensure(G);
     TechSys.refresh(G);
     return G;
+  },
+
+  /** 只补 null / undefined，不覆盖已有值（含 false、0） */
+  _fillDefaults(obj, defaults) {
+    for (const k in defaults) {
+      if (obj[k] == null) obj[k] = typeof defaults[k] === 'object' ? U.clone(defaults[k]) : defaults[k];
+    }
   },
 
   // ───────── 胜负判定 ─────────

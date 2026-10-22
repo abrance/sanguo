@@ -7,7 +7,8 @@ const Economy = {
       const f = G.factions[c.owner];
       const bonus = (f && f.bonus) || techMultipliers({});
       const gov = c.governor ? G.heroes[c.governor] : null;
-      const ecoBonus = (gov && skillOf(gov).economy) || 1;
+      const ecoMul = State.legionMul(G, c);
+      const ecoBonus = ((gov && skillOf(G, gov).economy) || 1) * (ecoMul ? ecoMul.eco : 1);
       const clanMul = State.clanEconMul(c);
 
       const popFactor = 0.55 + c.pop / 240;
@@ -15,14 +16,17 @@ const Economy = {
 
       const customs = 1 + State.bld(c, 'customs') * 0.10;
 
+      // 玩家天赋：只作用于直辖城
+      const tal = c.grantedTo === PLAYER_HERO_ID ? talentOf(G) : {};
+
       const foodOut = State.bld(c, 'farm') * 78 * season.food * popFactor * orderFactor
-        * clanMul * ecoBonus * bonus.food;
+        * clanMul * ecoBonus * bonus.food * (tal.food || 1);
       const goldOut = State.bld(c, 'market') * 30 * season.tax * popFactor * orderFactor
-        * clanMul * ecoBonus * bonus.gold * customs;
+        * clanMul * ecoBonus * bonus.gold * customs * (tal.gold || 1);
       const matSeason = 0.70 + season.build * 0.40;
       const matOut = (28 + State.bld(c, 'lumber') * 13 + State.bld(c, 'quarry') * 21)
-        * matSeason * bonus.mat * clanMul;
-      const ironOut = (4 + State.bld(c, 'ironworks') * 7) * bonus.iron * clanMul;
+        * matSeason * bonus.mat * clanMul * (tal.mat || 1);
+      const ironOut = (4 + State.bld(c, 'ironworks') * 7) * bonus.iron * clanMul * (tal.iron || 1);
 
       if (c.mat == null) c.mat = 0;
       if (c.iron == null) c.iron = 0;

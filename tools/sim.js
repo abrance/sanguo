@@ -101,8 +101,23 @@ const header = ['回合', '年月', '势力', '最大', '我方城', '官阶', '
 console.log((BOT ? '主动玩家' : '被动玩家') + ` · 势力 ${FACTION} · 城 ${CITY} · 种子 ${SEED} · ${MONTHS} 回合\n`);
 console.log(header.map((s, i) => i === 0 ? s.padEnd(5) : s.padEnd(i === 1 ? 7 : i === 3 ? 10 : 6)).join(''));
 
+/** 待决求和：推演器替玩家拍板（按当前强弱决定受或却），否则 AI 的求和永远悬着 */
+function resolveOffers() {
+  const G = get();
+  for (const o of (G.peaceOffers || []).slice()) {
+    // 被动玩家求稳：有人请和就许；主动玩家只在打不过时讲和
+    const mine = api.Diplo.strength(G, G.player.factionId);
+    const theirs = api.Diplo.strength(G, o.fid);
+    const accept = !BOT || mine < theirs * 1.1;
+    try {
+      api.Store.dispatch(accept ? 'PEACE_ACCEPT' : 'PEACE_REFUSE', { fid: o.fid });
+    } catch (e) { }
+  }
+}
+
 let result = null;
 for (let t = 1; t <= MONTHS; t++) {
+  resolveOffers();
   if (BOT) botStep();
   try {
     api.Store.dispatch('END_TURN');

@@ -5,7 +5,7 @@
 //   farm  : 农田等级 2-6
 //   market: 市集等级 2-5
 //   wall  : 城墙等级 1-4
-const CITY_ROWS = [
+const TAODONG190_CITY_ROWS = [
   // ── 幽州 ──
   ['zhuojun',    '涿郡',   1350, 300, 'plain',    '幽州', 120, 4, 3, 2],
   ['yuyang',     '渔阳',   1500, 240, 'plain',    '幽州',  95, 3, 2, 2],

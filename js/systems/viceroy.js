@@ -3,19 +3,18 @@ const Viceroy = {
 
   run(G, stamp) {
     for (const c of State.demesne(G)) {
+      if (State.legionOf(G, c.id)) continue;   // 军区城由都督统管
       if (!c.policy) continue;
       const P = POLICIES[c.policy];
       if (!P) continue;
 
-      // 1 建造（留 150 钱周转）
-      if (Build.queueFree(c) && c.gold > 150) {
+      // 1 建造：把工程位全部填满（留 150 钱周转）
+      for (let slot = 0; slot < 3 && Build.queueFree(c); slot++) {
         const key = Build.autoPick(G, c, P.buildOrder);
-        if (key) {
-          const chk = Build.canBuild(G, c, key);
-          if (chk.ok && c.gold - chk.cost.gold >= 150) {
-            try { Build.start(G, c, key, true); } catch (e) { }
-          }
-        }
+        if (!key) break;
+        const chk = Build.canBuild(G, c, key);
+        if (!chk.ok || c.gold - chk.cost.gold < 150) break;
+        try { Build.start(G, c, key, true); } catch (e) { break; }
       }
 
       // 2 征兵到方针比例

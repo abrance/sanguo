@@ -11,17 +11,23 @@ const Army = {
     return ARMY_SPEED_BASE * min;
   },
 
-  /** 预计行军月数 */
-  estimateEta(fromCity, toCity, troops) {
+  /** 预计行军月数（mul：速度倍率，玩家骑兵天赋用） */
+  estimateEta(fromCity, toCity, troops, mul) {
     const d = U.dist(fromCity.x, fromCity.y, toCity.x, toCity.y);
-    return Math.max(1, Math.ceil(d / Army.speedOf(troops)));
+    return Math.max(1, Math.ceil(d / (Army.speedOf(troops) * (mul || 1))));
+  },
+
+  /** 行军速度倍率：只对玩家势力的军队生效 */
+  speedMul(G, factionId) {
+    if (!G || !factionId || factionId !== G.player.factionId) return 1;
+    return talentOf(G).speed || 1;
   },
 
   /** 创建一支军队 */
   create(G, { factionId, heroId, from, to, troops, mission }) {
     const fc = G.cities[from];
     const tc = G.cities[to];
-    const eta = Army.estimateEta(fc, tc, troops);
+    const eta = Army.estimateEta(fc, tc, troops, Army.speedMul(G, factionId));
     const id = U.uid('army');
     const a = {
       id, factionId, heroId,
@@ -29,7 +35,7 @@ const Army = {
       from, to,
       x: fc.x, y: fc.y,
       eta, totalEta: eta,
-      morale: 60,
+      morale: 60 + (factionId === G.player.factionId ? (talentOf(G).armyMorale || 0) : 0),
       mission: mission || 'attack',
     };
     G.armies[id] = a;
@@ -123,7 +129,7 @@ const Army = {
       if (home && home.owner === a.factionId) {
         const d = U.dist(target.x, target.y, home.x, home.y);
         a.to = a.from;
-        a.eta = Math.max(1, Math.ceil(d / Army.speedOf(a.troops)));
+        a.eta = Math.max(1, Math.ceil(d / (Army.speedOf(a.troops) * Army.speedMul(G, a.factionId))));
         a.totalEta = a.eta;
         a.mission = 'return';
         if (a.factionId === G.player.factionId)
@@ -160,7 +166,7 @@ const Army = {
     if (home && home.owner === a.factionId) {
       const d = U.dist(target.x, target.y, home.x, home.y);
       a.to = a.from;
-      a.eta = Math.max(1, Math.ceil(d / Army.speedOf(a.troops)));
+      a.eta = Math.max(1, Math.ceil(d / (Army.speedOf(a.troops) * Army.speedMul(G, a.factionId))));
       a.totalEta = a.eta;
       a.mission = 'return';
     } else {
@@ -219,6 +225,10 @@ const Army = {
       State.log(G, 'good', `我军克${city.name}。战功 +25，声望 +8。`);
       Rank.onCapture(G, city, stamp);
       Mission.onCapture(G, city.id);
+      if (a.legionId) {
+        const lg = (G.player.legions || []).find(x => x.id === a.legionId);
+        if (lg) lg.stats.taken = (lg.stats.taken || 0) + 1;
+      }
     }
 
     if (oldOwner === G.player.factionId) {

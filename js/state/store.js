@@ -1,28 +1,81 @@
 // 命令层：所有状态变更通过 dispatch(type, payload) → reducer(draft) 完成。
 // reducer 在状态草稿上操作，成功后整体替换 —— 便于回放、调试与将来接后端。
 
+/** 取走一条待决求和报价（不存在或已非交战状态就抛错） */
+function takePeaceOffer(G, fid) {
+  const list = G.peaceOffers || [];
+  if (!list.some(o => o.fid === fid)) throw new Error('对方并未请和');
+  if (Diplo.statusOf(G, G.player.factionId, fid) !== Diplo.WAR) throw new Error('并未与其交战');
+  G.peaceOffers = list.filter(o => o.fid !== fid);
+}
+
+function tributeText(got) {
+  const parts = [];
+  if (got.gold) parts.push(`纳钱 ${U.num(got.gold)}`);
+  if (got.mat) parts.push(`建材 ${U.num(got.mat)}`);
+  if (got.iron) parts.push(`铁料 ${U.num(got.iron)}`);
+  if (got.troop) parts.push(`输兵 ${U.num(got.troop)}`);
+  return parts.length ? parts.join('、') : '空手罢兵';
+}
+
+/** 城池存在且由玩家直辖 —— 玩家命令的入口校验都走这里，别再各处手写 grantedTo 判断 */
+function mustOwnCity(G, cityId, verb) {
+  const c = G.cities[cityId];
+  if (!c) throw new Error('城池不存在');
+  if (!State.isPlayerCity(G, c)) throw new Error('非你直辖之城' + (verb ? '，无权' + verb : ''));
+  return c;
+}
+
+/** 自立取色：在色相环上均匀取样（暗调，与原势力配色风格一致），挑离现有势力色最远的一个 */
+const INDEP_CANDIDATES = (() => {
+  const out = [];
+  for (let h = 0; h < 360; h += 10)
+    for (const s of [0.35, 0.45, 0.55])
+      for (const l of [0.38, 0.42, 0.46]) out.push(hslToHex(h, s, l));
+  return out;
+})();
+
+function hslToHex(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const i = Math.floor(h / 60) % 6;
+  const rgb = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][i];
+  return '#' + rgb.map(v => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('');
+}
+
+function pickFactionColor(G) {
+  const used = Object.values(G.factions)
+    .filter(f => !f.dead)
+    .map(f => [1, 3, 5].map(i => parseInt(f.color.slice(i, i + 2), 16)));
+
+  let best = INDEP_CANDIDATES[0], bestGap = -1;
+  for (const hex of INDEP_CANDIDATES) {
+    const rgb = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+    let near = Infinity;
+    for (const u of used) near = Math.min(near, Math.hypot(rgb[0] - u[0], rgb[1] - u[1], rgb[2] - u[2]));
+    if (near > bestGap) { bestGap = near; best = hex; }
+  }
+  return best;
+}
+
 const COMMANDS = {
 
   END_TURN(G) {
-    if (G.over) throw new Error('战局已终');
     Turn.advance(G);
   },
 
   // ───────── 军事 ─────────
   RECRUIT(G, { cityId, troop, amount }) {
-    const c = G.cities[cityId];
-    if (!c) throw new Error('城池不存在');
-    if (c.grantedTo !== PLAYER_HERO_ID) throw new Error('非你直辖之城，无权征兵');
+    const c = mustOwnCity(G, cityId, '征兵');
     const cost = Recruit.add(G, c, troop, amount, false);
     return { amount, cost };
   },
 
   DISPATCH(G, { fromId, toId, ratio }) {
-    if (G.over) throw new Error('战局已终');
-    const from = G.cities[fromId];
+    const from = mustOwnCity(G, fromId, '调兵');
     const to = G.cities[toId];
-    if (!from || !to) throw new Error('城池不存在');
-    if (from.grantedTo !== PLAYER_HERO_ID) throw new Error('非你直辖之城，无权调兵');
+    if (!to) throw new Error('城池不存在');
     if (fromId === toId) throw new Error('目标即出发地');
 
     const mine = Object.values(G.armies).filter(a => a.factionId === G.player.factionId).length;
@@ -49,10 +102,7 @@ const COMMANDS = {
 
   /** 一键补兵至兵额的一定比例 */
   FILL_TROOPS(G, { cityId, ratio }) {
-    if (G.over) throw new Error('战局已终');
-    const c = G.cities[cityId];
-    if (!c) throw new Error('城池不存在');
-    if (c.grantedTo !== PLAYER_HERO_ID) throw new Error('非你直辖之城，无权征兵');
+    const c = mustOwnCity(G, cityId, '征兵');
 
     const cap = State.troopCapOf(G, c);
     const r = U.clamp(ratio == null ? 1 : ratio, 0.2, 1);
@@ -69,12 +119,11 @@ const COMMANDS = {
 
   /** 批量补兵 */
   BATCH_FILL(G, { cityIds }) {
-    if (G.over) throw new Error('战局已终');
     if (!cityIds || !cityIds.length) throw new Error('未选城池');
     const ok = [];
     for (const id of cityIds) {
       const c = G.cities[id];
-      if (!c || c.grantedTo !== PLAYER_HERO_ID) continue;
+      if (!State.isPlayerCity(G, c)) continue;
       const cap = State.troopCapOf(G, c);
       const want = Math.round(cap * 0.98) - troopTotal(c.garrison);
       if (want < 10) continue;
@@ -90,7 +139,6 @@ const COMMANDS = {
 
   /** 批量调兵至同一目标城 */
   BATCH_DISPATCH(G, { cityIds, toId, ratio }) {
-    if (G.over) throw new Error('战局已终');
     const to = G.cities[toId];
     if (!to) throw new Error('目标城池不存在');
     if (!cityIds || !cityIds.length) throw new Error('未选城池');
@@ -102,7 +150,7 @@ const COMMANDS = {
     for (const id of cityIds) {
       if (id === toId) continue;
       const from = G.cities[id];
-      if (!from || from.grantedTo !== PLAYER_HERO_ID) continue;
+      if (!State.isPlayerCity(G, from)) continue;
 
       const airborne = Object.values(G.armies).filter(a => a.factionId === G.player.factionId).length;
       if (airborne >= limit) { skipped++; continue; }
@@ -130,17 +178,13 @@ const COMMANDS = {
 
   // ───────── 内政 ─────────
   BUILD(G, { cityId, key }) {
-    const c = G.cities[cityId];
-    if (!c) throw new Error('城池不存在');
-    if (c.grantedTo !== PLAYER_HERO_ID) throw new Error('非你直辖之城，无权兴建');
+    const c = mustOwnCity(G, cityId, '兴建');
     const turns = Build.start(G, c, key, false);
     return { key, turns };
   },
 
   CANCEL_BUILD(G, { cityId, index }) {
-    const c = G.cities[cityId];
-    if (!c) throw new Error('城池不存在');
-    if (c.grantedTo !== PLAYER_HERO_ID) throw new Error('非你直辖之城');
+    const c = mustOwnCity(G, cityId);
     const job = c.buildQueue[index];
     if (!job) throw new Error('无此项工程');
     // 退还半数已投入资源
@@ -153,21 +197,82 @@ const COMMANDS = {
   },
 
   SET_POLICY(G, { cityId, policy }) {
-    const c = G.cities[cityId];
-    if (!c) throw new Error('城池不存在');
-    if (c.grantedTo !== PLAYER_HERO_ID) throw new Error('非你直辖之城');
+    const c = mustOwnCity(G, cityId);
     if (policy && !POLICIES[policy]) throw new Error('无此方针');
     c.policy = policy || null;
     State.log(G, 'note',
       policy ? `${c.name}委任太守，行「${POLICIES[policy].name}」之政。` : `${c.name}罢太守委任，收归亲理。`);
   },
 
+  // ───────── 一键理政（直辖城多时的省事口） ─────────
+  /** 所有直辖城设同一方针；此后每月由太守自动营建 + 征兵 */
+  SET_POLICY_ALL(G, { policy }) {
+    if (policy && !POLICIES[policy]) throw new Error('无此方针');
+    const cities = State.demesne(G);
+    if (!cities.length) throw new Error('你无直辖城');
+    const p = policy || null;
+    let changed = 0;
+    for (const c of cities) {
+      if (c.policy !== p) { c.policy = p; changed++; }
+    }
+    if (!changed) throw new Error('诸城已是此制');
+    State.log(G, 'note', p
+      ? `${cities.length} 座直辖城皆委太守行「${POLICIES[p].name}」之政，此后自动营建、征兵。`
+      : '诸城罢太守委任，收归亲理。');
+    return { changed, total: cities.length };
+  },
+
+  /** 一键同造：所有能造的直辖城各起同一项建筑（逐城留 150 钱周转） */
+  BATCH_BUILD(G, { key }) {
+    if (!BUILDINGS[key]) throw new Error('无此建筑');
+    const cities = State.demesne(G);
+    if (!cities.length) throw new Error('你无直辖城');
+
+    const done = [], skip = [];
+    for (const c of cities) {
+      const chk = Build.canBuild(G, c, key);
+      if (!chk.ok) { skip.push(c.name); continue; }
+      if (c.gold - chk.cost.gold < 150) { skip.push(c.name); continue; }
+      try {
+        Build.start(G, c, key, true);
+        done.push(c.name);
+      } catch (e) { skip.push(c.name); }
+    }
+    if (!done.length) {
+      throw new Error(`诸城皆无法开工${BUILDINGS[key].name}${skip.length ? `（${skip.length} 城被卡）` : ''}`);
+    }
+    State.log(G, 'good',
+      `同造${BUILDINGS[key].name}：${done.length} 城开工（${done.join('、')}）`
+      + `${skip.length ? `，${skip.length} 城未动` : ''}。`);
+    return { done: done.length, skip: skip.length, key };
+  },
+
+  /** 一键安抚：士族不满且尚可再动的直辖城，一次设宴 */
+  BATCH_PACIFY(G) {
+    const turn = G.meta.turn;
+    const done = [], held = [];
+    for (const c of State.demesne(G)) {
+      if (!c.clans || !c.clans.length) continue;
+      if (State.clanSat(c) >= 45) continue;
+      if (c.clanActionTurn && turn - c.clanActionTurn < 3) { held.push(c.name); continue; }
+      try {
+        Clans.pacify(G, c);
+        c.clanActionTurn = turn;
+        done.push(c.name);
+      } catch (e) { held.push(c.name); }
+    }
+    if (!done.length) {
+      throw new Error(held.length
+        ? `${held.length} 城士族尚在冷却，或钱粮不足`
+        : '诸城士族尚安，无需安抚');
+    }
+    State.log(G, 'good', `设宴安抚 ${done.length} 城士族：${done.join('、')}。`);
+    return { done: done.length, held: held.length };
+  },
+
   // ───────── 补给线 ─────────
   SET_RALLY(G, { cityId, toId, ratio, fill }) {
-    if (G.over) throw new Error('战局已终');
-    const c = G.cities[cityId];
-    if (!c) throw new Error('城池不存在');
-    if (c.grantedTo !== PLAYER_HERO_ID) throw new Error('非你直辖之城');
+    const c = mustOwnCity(G, cityId);
 
     if (!toId) {
       c.rallyTo = null;
@@ -186,11 +291,131 @@ const COMMANDS = {
       `${c.name}设持续调兵：每月送走本城 ${Math.round(c.rallyRatio * 100)}%，补至${to.name}兵额 ${Math.round((c.rallyFill || 1.2) * 100)}%。`);
   },
 
-  // ───────── 士族 ─────────
-  CLAN_ACTION(G, { cityId, action }) {
+  /**
+   * 收归直辖：把本方非直辖城纳入直辖。直辖已满时必须同时交出一座（releaseId）。
+   * 攻占顺序是先来先得的，这里补上"自己挑哪几城亲自管"。
+   */
+  SET_DEMESNE(G, { cityId, releaseId }) {
     const c = G.cities[cityId];
     if (!c) throw new Error('城池不存在');
-    if (c.grantedTo !== PLAYER_HERO_ID) throw new Error('非你直辖之城');
+    if (c.owner !== G.player.factionId) throw new Error('非本方城池，无从收归');
+    if (c.grantedTo === PLAYER_HERO_ID) throw new Error('此城已归你直辖');
+
+    const p = G.player;
+    const cap = cityCap(p);
+
+    if (p.demesne.length >= cap) {
+      if (!releaseId) throw new Error(`直辖已满（${p.demesne.length}/${cap}），须先交出一座`);
+      if (releaseId === cityId) throw new Error('目标即交出之城');
+      const r = G.cities[releaseId];
+      if (!r || r.grantedTo !== PLAYER_HERO_ID) throw new Error('交出的须是你的直辖城');
+
+      r.grantedTo = null;
+      r.policy = null;          // 非直辖城不再由太守自动理政
+      r.rallyTo = null;
+      p.demesne = p.demesne.filter(id => id !== releaseId);
+      State.log(G, 'note', `${r.name}改由属下治理，${c.name}收归直辖。`);
+    } else {
+      State.log(G, 'good', `${c.name}收归直辖。`);
+    }
+
+    c.grantedTo = PLAYER_HERO_ID;
+    if (p.demesne.indexOf(cityId) < 0) p.demesne.push(cityId);
+    if (!G.cities[p.homeCityId] || G.cities[p.homeCityId].grantedTo !== PLAYER_HERO_ID) {
+      p.homeCityId = cityId;
+    }
+    return { cityId, released: releaseId || null, demesne: p.demesne.length, cap };
+  },
+
+  // ───────── 军区（一将统辖多城，全托管但听号令） ─────────
+  LEGION_CREATE(G, { heroId }) {
+    const h = G.heroes[heroId];
+    if (!h || !h.alive) throw new Error('无此将');
+    if (h.factionId !== G.player.factionId) throw new Error('非本方将领');
+    const legions = State.legions(G);
+    if (legions.some(lg => lg.heroId === heroId)) throw new Error(`${h.name}已在统领一处军区`);
+    if (legions.length >= 4) throw new Error('军区过多（上限 4），先撤一处');
+
+    const seat = h.cityId && G.cities[h.cityId];
+    const cityIds = seat && State.isPlayerCity(G, seat) && !State.legionOf(G, seat.id) ? [seat.id] : [];
+    const lg = {
+      id: 'lg_' + (G.meta.turn) + '_' + (legions.length + 1),
+      heroId, cityIds,
+      policy: 'balanced', stance: 'defend', targetFid: null,
+      stats: { attacks: 0, taken: 0 },
+    };
+    legions.push(lg);
+    State.log(G, 'note', `委${h.name}为都督，开府建军区${cityIds.length ? `，驻${seat.name}` : ''}。`);
+    return { id: lg.id, heroId, cityIds };
+  },
+
+  LEGION_ASSIGN(G, { id, cityIds }) {
+    const lg = State.legions(G).find(x => x.id === id);
+    if (!lg) throw new Error('无此军区');
+    if (!Array.isArray(cityIds)) throw new Error('未选城池');
+
+    const ids = [];
+    for (const cid of cityIds) {
+      const c = mustOwnCity(G, cid, '入军区');
+      const other = State.legionOf(G, cid);
+      if (other && other.id !== id) throw new Error(`${c.name}已在${G.heroes[other.heroId].name}军区`);
+      if (ids.indexOf(cid) < 0) ids.push(cid);
+    }
+    lg.cityIds = ids;
+    State.log(G, 'note',
+      ids.length
+        ? `${G.heroes[lg.heroId].name}军区辖 ${ids.length} 城：${ids.map(i => G.cities[i].name).join('、')}。`
+        : `${G.heroes[lg.heroId].name}军区已无城池。`);
+    return { cityIds: ids };
+  },
+
+  /** 玩家号令：姿态（守土 / 拓边 / 征讨某势力）+ 方针 */
+  LEGION_ORDER(G, { id, stance, targetFid, policy }) {
+    const lg = State.legions(G).find(x => x.id === id);
+    if (!lg) throw new Error('无此军区');
+    const h = G.heroes[lg.heroId];
+
+    if (policy !== undefined) {
+      if (policy && !POLICIES[policy]) throw new Error('无此方针');
+      lg.policy = policy || 'balanced';
+    }
+
+    if (stance !== undefined) {
+      const st = Legion.STANCES[stance];
+      if (!st) throw new Error('无此号令');
+      if (stance === 'strike') {
+        const target = Diplo.target(G, targetFid);
+        lg.targetFid = target.id;
+        // 玩家下令征讨 = 授权开战
+        if (Diplo.statusOf(G, G.player.factionId, target.id) !== Diplo.WAR) {
+          Diplo.declareWar(G, G.player.factionId, target.id);
+          State.log(G, 'bad', `【号令】${h.name}受命征讨${target.name}，即日兴兵。`);
+        }
+        lg.stance = 'strike';
+      } else {
+        lg.stance = stance;
+        lg.targetFid = null;
+      }
+    }
+    State.log(G, 'note',
+      `【号令】${h.name}军区：${Legion.STANCES[lg.stance].name}`
+      + `${lg.stance === 'strike' ? `（${G.factions[lg.targetFid].name}）` : ''}`
+      + ` · ${POLICIES[lg.policy].name}`);
+    return { stance: lg.stance, policy: lg.policy, targetFid: lg.targetFid };
+  },
+
+  LEGION_DELETE(G, { id }) {
+    const legions = State.legions(G);
+    const i = legions.findIndex(x => x.id === id);
+    if (i < 0) throw new Error('无此军区');
+    const lg = legions.splice(i, 1)[0];
+    State.log(G, 'note', `罢${G.heroes[lg.heroId].name}都督之任，军区裁撤，诸城收归亲理。`);
+    return { removed: lg.id };
+  },
+
+  // ───────── 士族 ─────────
+  CLAN_ACTION(G, { cityId, action }) {
+    const c = mustOwnCity(G, cityId);
     if (!c.clans || !c.clans.length) throw new Error('此城无大族');
 
     const turn = G.meta.turn;
@@ -209,7 +434,6 @@ const COMMANDS = {
   // ───────── 仕途 ─────────
   SET_ROUTE(G, { route }) {
     const p = G.player;
-    if (G.over) throw new Error('战局已终');
     const r = ROUTES[route];
     if (!r) throw new Error('无此路线');
     if (route === 'independent') throw new Error('自立须行「举兵自立」');
@@ -225,7 +449,6 @@ const COMMANDS = {
 
   DECLARE_INDEPENDENCE(G) {
     const p = G.player;
-    if (G.over) throw new Error('战局已终');
     if (p.route === 'independent') throw new Error('你已自立');
     if (p.rank < INDEPENDENCE.minRank) {
       throw new Error(`官未至${rankOf(INDEPENDENCE.minRank).name}，无人望自立`);
@@ -240,12 +463,11 @@ const COMMANDS = {
     const oldFid = p.factionId;
     const oldFaction = G.factions[oldFid];
     const newFid = 'indep_' + G.meta.turn;
-    const palette = ['#b03a2e', '#7d3c98', '#1f6f5c', '#b9770e', '#2e5f8a', '#7a5a2e'];
 
     G.factions[newFid] = {
       id: newFid,
       name: p.name + '军',
-      color: palette[G.meta.turn % palette.length],
+      color: pickFactionColor(G),
       rulerId: PLAYER_HERO_ID,
       aggression: 0.7,
       kind: 'player',
@@ -273,7 +495,7 @@ const COMMANDS = {
     p.missionCooldown = 0;
 
     TechSys.refresh(G);
-    Turn._cleanupFactions(G);
+    Turn.cleanupFactions(G);
 
     // 自立：旧势力的盟约作废，与原势力即刻开战
     for (const other of Object.keys(G.factions)) {
@@ -294,29 +516,24 @@ const COMMANDS = {
 
   // ───────── 上命 ─────────
   FULFILL_MISSION(G) {
-    if (G.over) throw new Error('战局已终');
     Mission.fulfil(G);
   },
 
   DECLINE_MISSION(G) {
-    if (G.over) throw new Error('战局已终');
     Mission.decline(G);
   },
 
   // ───────── 权臣权柄 ─────────
   LEVY_TROOPS(G, { fromCityId, toCityId }) {
-    if (G.over) throw new Error('战局已终');
     return Favor.levyTroops(G, fromCityId, toCityId);
   },
 
   SKIM_TAX(G, { cityId }) {
-    if (G.over) throw new Error('战局已终');
     return Favor.skimTax(G, cityId);
   },
 
   // ───────── 外交：个人（任何官阶） ─────────
   SEND_ENVOY(G, { fid }) {
-    if (G.over) throw new Error('战局已终');
     const f = Diplo.open(G, fid);
     Diplo.spendGold(G, PERSONAL_ACTIONS.envoy.cost);
     const x = Diplo.pair(G, G.player.factionId, fid);
@@ -328,7 +545,6 @@ const COMMANDS = {
   },
 
   SECRET_PACT(G, { fid }) {
-    if (G.over) throw new Error('战局已终');
     const f = Diplo.open(G, fid);
     Diplo.spendGold(G, PERSONAL_ACTIONS.pact.cost);
     const until = G.meta.turn + Diplo.PACT_MONTHS;
@@ -348,14 +564,12 @@ const COMMANDS = {
   },
 
   ASK_AID(G, { fid, cityId }) {
-    if (G.over) throw new Error('战局已终');
     const f = Diplo.open(G, fid);
     const rel = Diplo.relationOf(G, G.player.factionId, fid);
     if (rel < PERSONAL_ACTIONS.aid.need) {
       throw new Error(`与${f.name}关系不足（需 ${PERSONAL_ACTIONS.aid.need}，现 ${Math.round(rel)}）`);
     }
-    const c = G.cities[cityId || G.player.homeCityId];
-    if (!c || c.grantedTo !== PLAYER_HERO_ID) throw new Error('须指定你的直辖城');
+    const c = mustOwnCity(G, cityId || G.player.homeCityId);
 
     Diplo.spendGold(G, PERSONAL_ACTIONS.aid.cost);
     const sent = Diplo.sendAid(G, fid, c.id, 0.40);
@@ -367,14 +581,12 @@ const COMMANDS = {
   },
 
   BUY_GRAIN(G, { fid, cityId }) {
-    if (G.over) throw new Error('战局已终');
     const f = Diplo.open(G, fid);
     const rel = Diplo.relationOf(G, G.player.factionId, fid);
     if (rel < PERSONAL_ACTIONS.grain.need) {
       throw new Error(`与${f.name}关系不足（需 ${PERSONAL_ACTIONS.grain.need}，现 ${Math.round(rel)}）`);
     }
-    const c = G.cities[cityId || G.player.homeCityId];
-    if (!c || c.grantedTo !== PLAYER_HERO_ID) throw new Error('须指定你的直辖城');
+    const c = mustOwnCity(G, cityId || G.player.homeCityId);
 
     Diplo.spendGold(G, PERSONAL_ACTIONS.grain.cost);
     const gift = Math.round(300 + State.factionCities(G, fid).length * 60);
@@ -386,7 +598,6 @@ const COMMANDS = {
   },
 
   BRIBE_SUPERIOR(G) {
-    if (G.over) throw new Error('战局已终');
     if (G.player.route === 'independent') throw new Error('你已是君主，无人可贿');
     Diplo.spendGold(G, PERSONAL_ACTIONS.bribe.cost);
 
@@ -403,7 +614,6 @@ const COMMANDS = {
 
   DEFECT(G, { fid }) {
     const p = G.player;
-    if (G.over) throw new Error('战局已终');
     const f = Diplo.target(G, fid);
     if (Diplo.statusOf(G, p.factionId, fid) === Diplo.WAR) {
       throw new Error(`正与${f.name}交战，无从投靠`);
@@ -441,9 +651,39 @@ const COMMANDS = {
     return { factionId: fid };
   },
 
+  // ───────── 求和裁决（对方遣使请和，玩家拍板） ─────────
+  PEACE_ACCEPT(G, { fid }) {
+    takePeaceOffer(G, fid);
+    const f = G.factions[fid];
+    const pay = Math.min(f.treasury, 400);
+    f.treasury -= pay;
+    const home = G.cities[G.player.homeCityId] || State.demesne(G)[0];
+    if (home) home.gold += pay;
+    Diplo.makePeace(G, G.player.factionId, fid);
+    State.log(G, 'good', `许${f.name}之和，纳钱 ${U.num(pay)}，罢兵 ${Diplo.TRUCE_MONTHS} 月。`);
+    return { pay };
+  },
+
+  PEACE_COUNTER(G, { fid, demands }) {
+    takePeaceOffer(G, fid);
+    const f = G.factions[fid];
+    const r = Diplo.counterPeace(G, fid, demands || {});
+    if (!r.accepted) {
+      State.log(G, 'bad', `与${f.name}议和不成：所索过重，其使拂袖而去，战事照旧。`);
+      return { accepted: false };
+    }
+    State.log(G, 'good', `与${f.name}议和：${tributeText(r.got)}，罢兵 ${Diplo.TRUCE_MONTHS} 月。`);
+    return r;
+  },
+
+  PEACE_REFUSE(G, { fid }) {
+    takePeaceOffer(G, fid);
+    State.log(G, 'note', `却${G.factions[fid].name}之请，战事不止。`);
+    return { refused: true };
+  },
+
   // ───────── 外交：上表 / 代君行令 ─────────
   PETITION(G, { fid, action }) {
-    if (G.over) throw new Error('战局已终');
     if (Diplo.layer(G) === 'personal') throw new Error('官未至州牧，无由上表');
     const prop = DIPLO_PROPOSALS[action];
     if (!prop) throw new Error('无此提案');
@@ -527,11 +767,38 @@ function ArmyCompose(t) {
 }
 
 // ───────── Store ─────────
+
+/** 战局终了后仍允许的命令。目前没有：终局即锁死一切改动 */
+const OVER_SAFE = {};
+
+/** 相机／动画之外，有两处游标不进 JSON 但决定结果：RNG 序列与 U.uid 计数器。
+ *  每次命令成功后写回 G.meta，存档才真正可续。 */
+function snapshotRuntime(G) {
+  G.meta.rngState = RNG.getState();
+  G.meta.uidSeq = U._n || 0;
+}
+
+/** 旧档没这两个字段时：RNG 退回初始种子，ID 计数器按已有军队 id 推算，避免覆盖 */
+function restoreRuntime(G) {
+  RNG.setState(G.meta.rngState != null ? G.meta.rngState : G.meta.seed);
+  U._n = Math.max(G.meta.uidSeq || 0, maxArmySeq(G));
+}
+
+function maxArmySeq(G) {
+  let m = 0;
+  for (const a of Object.values(G.armies || {})) {
+    const hit = /_([0-9a-z]+)$/.exec(a.id || '');
+    if (hit) m = Math.max(m, parseInt(hit[1], 36) || 0);
+  }
+  return m;
+}
+
 const Store = (() => {
   let G = null;
 
   function init(game) {
     G = game;
+    restoreRuntime(G);
     Bus.emit('state', G);
   }
 
@@ -541,8 +808,10 @@ const Store = (() => {
     if (!G) throw new Error('尚未开局');
     const handler = COMMANDS[type];
     if (!handler) throw new Error('未知命令: ' + type);
+    if (G.over && !OVER_SAFE[type]) throw new Error('战局已终');
     const draft = U.clone(G);
     const res = handler(draft, payload || {});
+    snapshotRuntime(draft);
     G = draft;
     Bus.emit('state', G);
     Bus.emit('cmd', { type, payload, res });
@@ -551,6 +820,7 @@ const Store = (() => {
 
   function replace(game) {
     G = game;
+    restoreRuntime(G);
     Bus.emit('state', G);
   }
 

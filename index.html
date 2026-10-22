@@ -8,20 +8,39 @@
 </head>
 <body>
 
+
+<svg id="icon-sprite" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+  <defs>
+    <!-- 线性图标集：16×16，1.4 描边，currentColor 上色 -->
+    <symbol id="ico-food" viewBox="0 0 16 16"><path d="M8 14.5V3.5"/><path d="M8 5.6 5 3.4M8 5.6 11 3.4M8 8.6 5 6.4M8 8.6 11 6.4M8 11.6 5 9.4M8 11.6 11 9.4"/></symbol>
+    <symbol id="ico-gold" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.2"/><rect x="6.2" y="6.2" width="3.6" height="3.6"/></symbol>
+    <symbol id="ico-troop" viewBox="0 0 16 16"><path d="M4.6 14V2.4"/><path d="M4.6 3h6.6l-1.7 2.4 1.7 2.4H4.6"/></symbol>
+    <symbol id="ico-mat" viewBox="0 0 16 16"><path d="M8 2.5v11M3.4 13.2 8 8.4l4.6 4.8M3.6 7.2 8 4.2l4.4 3"/></symbol>
+    <symbol id="ico-iron" viewBox="0 0 16 16"><path d="M2.8 9.6h10.4l-1.6 3.6H4.4z"/><path d="M4.6 9.6 6.2 5.4h3.6l1.6 4.2"/></symbol>
+    <symbol id="ico-rp" viewBox="0 0 16 16"><path d="M4.2 2.8h7.6v10.4H4.2z"/><path d="M6.6 2.8v10.4M9.4 2.8v10.4"/></symbol>
+    <symbol id="ico-wall" viewBox="0 0 16 16"><path d="M2.4 13.2h11.2"/><path d="M3.6 13.2V7h2V5h2v2h0.8V5h2v2h2v6.2"/></symbol>
+    <symbol id="ico-order" viewBox="0 0 16 16"><path d="M8 2.8v9.4M3.4 6h9.2"/><path d="M3.4 6 2 9.2h2.8z"/><path d="M12.6 6 11.2 9.2H14z"/><path d="M5.8 13.2h4.4"/></symbol>
+    <symbol id="ico-clan" viewBox="0 0 16 16"><path d="M3.8 13.2V3.6h8.4v9.6"/><path d="M6.4 13.2V7.2h3.2v6"/></symbol>
+    <symbol id="ico-diplo" viewBox="0 0 16 16"><path d="M8 2.4v11.2"/><path d="M8 4.4C6 4.4 4.8 5.4 4.8 6.6M8 4.4c2 0 3.2 1 3.2 2.2"/><path d="M8 8.6c-2 0-3.2 1-3.2 2.2M8 8.6c2 0 3.2 1 3.2 2.2"/></symbol>
+    <symbol id="ico-mission" viewBox="0 0 16 16"><path d="M2.8 13.2 13 3"/><path d="M9 3h4v4"/><path d="M4.4 4.2h4.2"/></symbol>
+    <symbol id="ico-tech" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 2v2.2M8 11.8V14M2 8h2.2M11.8 8H14M3.8 3.8l1.6 1.6M10.6 10.6l1.6 1.6M12.2 3.8l-1.6 1.6M5.4 10.6l-1.6 1.6"/></symbol>
+  </defs>
+</svg>
+
 <div id="app">
 
   <aside id="sidebar">
     <header id="topbar">
       <div id="dateLine"><span id="dateText">190年 1月</span><span id="turnText">第 1 回合</span></div>
       <div id="resLine">
-        <span class="res" title="粮草"><i class="dot food"></i><b id="resFood">0</b></span>
-        <span class="res" title="钱币"><i class="dot gold"></i><b id="resGold">0</b></span>
-        <span class="res" title="总兵力"><i class="dot troop"></i><b id="resTroop">0</b></span>
+        <span class="res" title="粮草"><svg class="ico food" aria-hidden="true"><use href="#ico-food"/></svg><b id="resFood">0</b><i class="delta" id="dFood"></i><canvas class="spark" id="sparkFood" width="34" height="13"></canvas></span>
+        <span class="res" title="钱币"><svg class="ico gold" aria-hidden="true"><use href="#ico-gold"/></svg><b id="resGold">0</b><i class="delta" id="dGold"></i><canvas class="spark" id="sparkGold" width="34" height="13"></canvas></span>
+        <span class="res" title="总兵力"><svg class="ico troop" aria-hidden="true"><use href="#ico-troop"/></svg><b id="resTroop">0</b><i class="delta" id="dTroop"></i><canvas class="spark" id="sparkTroop" width="34" height="13"></canvas></span>
       </div>
       <div id="resLine2">
-        <span class="res" title="建材"><i class="dot mat"></i><b id="resMat">0</b></span>
-        <span class="res" title="铁料"><i class="dot iron"></i><b id="resIron">0</b></span>
-        <span class="res" title="科研点"><i class="dot rp"></i><b id="resRP">0</b></span>
+        <span class="res" title="建材"><svg class="ico mat" aria-hidden="true"><use href="#ico-mat"/></svg><b id="resMat">0</b></span>
+        <span class="res" title="铁料"><svg class="ico iron" aria-hidden="true"><use href="#ico-iron"/></svg><b id="resIron">0</b></span>
+        <span class="res" title="科研点"><svg class="ico rp" aria-hidden="true"><use href="#ico-rp"/></svg><b id="resRP">0</b></span>
       </div>
     </header>
 
@@ -38,6 +57,7 @@
       <div class="card-sub dim">
         <span id="factionLine">曹操军</span> · 直辖 <b id="demesneVal">1</b>/<span id="demesneCap">2</span> 城
         · 上意 <b id="favorVal">62</b>
+        · 天赋 <b id="talentVal">—</b>
       </div>
       <div id="missionLine" class="mission-line">—</div>
       <button id="btnRankHall" class="mini wide-mini">官阶台 · 仕途 / 上命</button>
@@ -47,12 +67,15 @@
       <button data-tab="city" class="on">城池</button>
       <button data-tab="army">军务</button>
       <button data-tab="tech">科技</button>
+      <button data-tab="legion">军区</button>
       <button data-tab="diplo">外交</button>
       <button data-tab="log">纪事</button>
     </nav>
 
     <!-- 城池 -->
     <div id="tabCity" class="tabpane">
+      <div id="bulkBar" class="hidden"></div>
+      <div id="cityRail" class="cityrail hidden"></div>
       <section id="selPanel" class="card grow hidden">
         <div class="card-head">
           <span id="selName">—</span>
@@ -114,6 +137,14 @@
       </section>
     </div>
 
+    <!-- 军区 -->
+    <div id="tabLegion" class="tabpane hidden">
+      <section class="card grow">
+        <div class="card-head"><span>军区 · 都督统辖</span><span class="tag dim" id="legionCount">0</span></div>
+        <div id="legionBody" class="pane"></div>
+      </section>
+    </div>
+
     <!-- 外交 -->
     <div id="tabDiplo" class="tabpane hidden">
       <section class="card" style="flex:0 0 auto">
@@ -136,6 +167,14 @@
           <span>战报 / 纪事</span>
           <button id="logClear" class="mini">清空</button>
         </div>
+        <div id="logFilters" class="logfilters">
+          <button class="chip on" data-lf="all">全部</button>
+          <button class="chip" data-lf="battle">战报</button>
+          <button class="chip" data-lf="event">要事</button>
+          <button class="chip" data-lf="note">纪事</button>
+          <button class="chip" data-lf="turn">回合</button>
+          <input id="logSearch" class="logsearch" placeholder="关键字" maxlength="16" />
+        </div>
         <div id="logList" class="log"></div>
       </section>
     </div>
@@ -144,6 +183,9 @@
       <button id="btnEndTurn" class="primary">结束回合</button>
       <button id="btnSave">存档</button>
       <button id="btnLoad">读档</button>
+      <button id="btnExport" title="导出存档文件，发给别人也能读">导出档</button>
+      <button id="btnImport" title="读取别人发来的存档文件">导入档</button>
+      <input id="importFile" type="file" accept=".json,application/json" hidden />
       <button id="btnNew">新局</button>
     </footer>
   </aside>
@@ -154,8 +196,10 @@
       <button id="zoomIn" class="mini">＋</button>
       <button id="zoomOut" class="mini">－</button>
       <button id="zoomReset" class="mini">◎</button>
+      <button id="btnHelp" class="mini" title="游戏机制与操作指引">?</button>
       <span id="hudTip" class="dim">拖拽平移 · 滚轮缩放 · 点击城池</span>
     </div>
+    <canvas id="minimap" width="180" height="135" title="点击跳转视野"></canvas>
     <div id="cityTip" class="city-tip hidden"></div>
     <div id="toast" class="toast"></div>
     <div id="legend">
@@ -196,6 +240,142 @@
   </div>
 </div>
 
+<div id="helpOverlay" class="overlay hidden">
+  <div class="start-box help-box">
+    <h1>机 制 与 操 作</h1>
+    <p class="dim">一回合 = 一个月 · 你是乱世中的一城之主</p>
+
+    <div class="start-step">
+      <label>胜负</label>
+      <div class="help-sec">
+        你效忠的势力<b>统一全图</b>为胜；你的直辖城全部失守则流亡投奔（尚有生机），无处可投为败。
+      </div>
+    </div>
+
+    <div class="start-step">
+      <label>回合与季节</label>
+      <div class="help-sec">
+        点「结束回合」结算一月。结算顺序固定：行军抵达 / 营造推进 / 经济产出 / 士族情绪 / 科研 / 太守委任 / 持续调兵 / 上意与上命 / 晋升 / AI 行动。
+        春夏秋冬各有系数：秋粮税最厚、征兵建设最佳，冬最贫、士气下滑，春粮少但征兵快。
+      </div>
+    </div>
+
+    <div class="start-step">
+      <label>资源：从哪来、花到哪</label>
+      <div class="help-sec">
+        <table class="help-table">
+          <tr><th>资源</th><th>每月进账</th><th>花在哪 / 代价</th></tr>
+          <tr>
+            <td>粮草</td>
+            <td>农田等级 × 78 × 季节 × 人口 × 治安 × 士族 × 科技；上级赏赐；借粮（600 钱）</td>
+            <td>兵力口粮 + 人口口粮（每月自动扣）。<b>断粮</b>：治安 −5，按缺口逃兵 4%~16%（粮仓可减轻）。上限 = 800 + 农田×400 + 粮仓×250（科技/天赋更高）</td>
+          </tr>
+          <tr>
+            <td>钱币</td>
+            <td>市集等级 × 30 × 季节税 × 人口 × 治安 × 士族 × 科技 × 关市（每级 +10%）；上级赏赐（忠臣路线 / 好感 &gt;80）</td>
+            <td>营造、征兵、外交（遣使 300 / 密约 800 / 求援 1000 / 借粮 600 / 行贿 500）、求援援军。<b>只有直辖城的钱归你支配</b></td>
+          </tr>
+          <tr>
+            <td>建材</td>
+            <td>(28 + 伐木场×13 + 采石场×21) × 季节；上限 = 400 + 伐木×500 + 采石×800</td>
+            <td>营造（越高级越贵）。不足时先补伐木/采石，否则什么也造不了</td>
+          </tr>
+          <tr>
+            <td>铁料</td>
+            <td>(4 + 冶铁坊×7) × 科技；上限 = 200 + 冶铁坊×400</td>
+            <td>营造高级建筑。<b>冶铁坊每级还使器械兵额 +10%</b></td>
+          </tr>
+          <tr>
+            <td>科研点</td>
+            <td>学宫每级 6 点/月（守将政治属性加成），无学宫只能蹭 1.5 点</td>
+            <td>研习 40 项科技（农 / 工 / 商 / 军）。<b>科研点是势力共享的</b>，不止你直辖城在产</td>
+          </tr>
+          <tr>
+            <td>战功</td>
+            <td>攻下一城 <b>+25</b>；完成上命 <b>+18~40</b></td>
+            <td>升官阶（县长 → 丞相 7 级）：提高<b>直辖城上限</b>、解锁外交权限与权柄。<br>扣：抗命 −12、上命逾期 −8、失城流亡 −10；<b>带城投靠会清零</b></td>
+          </tr>
+          <tr>
+            <td>声望</td>
+            <td>攻下一城 <b>+8</b>；完成上命 <b>+8</b>；每次晋升 <b>+15</b>；每月 <b>round(Σ(治安−45)/100)</b>，只算直辖城</td>
+            <td>目前只有一个用途：<b>举兵自立需 150</b>（另需刺史官阶 + 2 座直辖城）。<br>扣：背刺 −15、行贿被同僚检举（15%）−5、失城流亡 −10</td>
+          </tr>
+          <tr>
+            <td>上意<br>（君主好感）</td>
+            <td>忠臣路线 +0.8/月；权臣路线 −1.2/月，另每月 20% 遭猜忌 −6~12；行贿 +12</td>
+            <td>好感 &gt;80：每月获粮钱赏赐、直辖上限 <b>+1</b>；&lt;30：直辖上限 <b>−1</b>；&lt;25：每月 10% 概率被削一城。<br>扣：遣使 −2、借粮 −3、求援 −5、密约败露 −15、背刺 −20、抗命 −25、上命逾期 −15</td>
+          </tr>
+        </table>
+        <div class="help-note">
+          天赋加成只作用于你的直辖城与军队：<b>商人</b> 钱 +25% / 外交 −25%，<b>农夫</b> 粮 +25% / 仓廪 +30%，<b>工匠</b> 建材铁料 +20% / 工期 −25%。
+        </div>
+      </div>
+    </div>
+
+    <div class="start-step">
+      <label>经营城池</label>
+      <div class="help-sec">
+        点地图上的城 → 侧栏分 <b>概览 / 营造 / 士族 / 施政</b>。<br>
+        直辖城多时，城池页顶部有<b>直辖城切换条</b>（点名字即切城，不用回地图）与<b>一键理政条</b>（方针 / 补兵 / 安抚全体一次做完）。<br>
+        嫌逐城管太累可开<b>军区</b>：委一名都督统辖多城，每月自动营建、征兵、出兵；号令决定它守土 / 拓边 / 征讨某一家。<br>
+        <b>营造</b>：16 种建筑，等级越高越贵，各有上限。<br>
+        <b>士族</b>：情绪影响产出与兵额，过低会叛乱，需安抚或打压。<br>
+        <b>施政</b>：设定太守方针（重农 / 备战 / 商贸 / 筑城 / 均衡），太守按方针自动营造与征兵。<br>
+        只有<b>直辖城</b>能建设出兵；势力其他城由 AI 守备，只读。可直辖数受官阶限制，攻下的城满了则归势力、你只拿战功。
+      </div>
+    </div>
+
+    <div class="start-step">
+      <label>军务与战斗</label>
+      <div class="help-sec">
+        五兵种：步 / 弓 / 骑 / 水 / 器。克制 骑 &gt; 步 &gt; 弓 &gt; 骑（±30%），器械削城墙加成。<br>
+        攻城为多轮结算（最多 6 轮）：守军掉到一成则城破，攻方掉到三成则退兵。城墙每级约 +22% 守方战力。<br>
+        出兵前把鼠标悬到目标城可看<b>胜算预估</b>（可克 / 难克 + 余兵估计）。<br>
+        「军务」页可批量操兵：选城 → 选抽取比例 → 补齐所选 / 调兵，再点地图目标城。<br>
+        城池面板可设<b>持续调兵</b>，每月自动输送，用于长期压制或补给前线。
+      </div>
+    </div>
+
+    <div class="start-step">
+      <label>外交</label>
+      <div class="help-sec">
+        四种状态：<b>交战</b> 可攻；<b>中立</b> 攻之即背刺（威望与人望双失）；<b>停战</b> 期内不可攻；<b>同盟</b> 互不攻，盟友受攻可能来援。<br>
+        三档权限随官阶解锁：个人外交（遣使 / 密约 / 求援 / 借粮 / 行贿）、上表言事（请君主宣战 / 求和 / 结盟 / 离间）、代君行令（三公或自立之主）。
+      </div>
+    </div>
+
+    <div class="start-step">
+      <label>仕途</label>
+      <div class="help-sec">
+        <b>战功</b> 升官阶（县长 → 丞相，共 7 级，直辖城上限随之提高）；<b>声望</b> 影响自立与他人态度；<b>上意</b>（君主好感）影响赏赐与削权。<br>
+        君主会派<b>上命</b>，限期内完成得战功，逾期或抗命掉上意。<br>
+        三条路线：忠臣（稳、上意高）、权臣（内政军务加成、招猜忌）、自立（需官阶 + 城数 + 声望达标），点「官阶台」查看与切换。
+      </div>
+    </div>
+
+    <div class="start-step">
+      <label>操作</label>
+      <div class="help-sec">
+        按住左键<b>拖拽</b>平移地图 · <b>滚轮</b>缩放 · 右上 ＋ － ◎ 控制视角 · 点击城池选中<br>
+        <b>← →</b> 在直辖城之间切换<br>
+        需要点选目标时（出兵 / 调兵），地图进入瞄准状态，点目标城确认，<b>Esc</b> 取消<br>
+        <b>结束回合</b>后自动存档 · 存档 / 读档 / 新局在左下角 · 「纪事」留战报 · 地图图例说明颜色与弧线含义
+      </div>
+    </div>
+
+    <button id="btnHelpClose" class="primary wide">退 出</button>
+  </div>
+</div>
+
+<div id="peaceOverlay" class="overlay hidden">
+  <div class="start-box peace-box">
+    <h1>求 和</h1>
+    <div id="peaceHead" class="peace-head"></div>
+    <div id="peaceBody" class="peace-body"></div>
+    <div id="peaceActs" class="peace-acts"></div>
+  </div>
+</div>
+
 <div id="startOverlay" class="overlay">
   <div class="start-box">
     <h1>讨 董 卓</h1>
@@ -207,6 +387,10 @@
     <div class="start-step">
       <label>选择起始城池</label>
       <div id="cityPick" class="picklist"><span class="dim">先选势力</span></div>
+    </div>
+    <div class="start-step">
+      <label>选择天赋</label>
+      <div id="talentPick" class="picklist talent-list"></div>
     </div>
     <div class="start-step">
       <label>城主姓名</label>
@@ -225,11 +409,12 @@
 <script src="js/data/techs.js"></script>
 <script src="js/data/policies.js"></script>
 <script src="js/data/missions.js"></script>
-<script src="js/data/cities-190.js"></script>
-<script src="js/data/heroes-190.js"></script>
-<script src="js/data/factions-190.js"></script>
+<script src="js/data/scenarios/taodong190/cities.js"></script>
+<script src="js/data/scenarios/taodong190/heroes.js"></script>
+<script src="js/data/scenarios/taodong190/factions.js"></script>
 <script src="js/data/scenarios.js"></script>
 <script src="js/data/diplo.js"></script>
+<script src="js/data/talents.js"></script>
 <script src="js/state/state.js"></script>
 <script src="js/systems/economy.js"></script>
 <script src="js/systems/recruit.js"></script>
@@ -245,11 +430,21 @@
 <script src="js/systems/army.js"></script>
 <script src="js/systems/rank.js"></script>
 <script src="js/systems/ai.js"></script>
+<script src="js/systems/legion.js"></script>
 <script src="js/systems/turn.js"></script>
 <script src="js/state/store.js"></script>
 <script src="js/state/save.js"></script>
 <script src="js/view/map.js"></script>
 <script src="js/view/renderer.js"></script>
+<script src="js/view/panels/start.js"></script>
+<script src="js/view/panels/rank.js"></script>
+<script src="js/view/panels/peace.js"></script>
+<script src="js/view/panels/diplo.js"></script>
+<script src="js/view/panels/city.js"></script>
+<script src="js/view/panels/army.js"></script>
+<script src="js/view/panels/tech.js"></script>
+<script src="js/view/panels/log.js"></script>
+<script src="js/view/panels/legion.js"></script>
 <script src="js/view/ui.js"></script>
 <script src="js/main.js"></script>
 </body>

@@ -21,6 +21,7 @@ const Turn = {
     TechSys.advance(G, stamp);
     // 6 太守委任
     Viceroy.run(G, stamp);
+    Legion.run(G, stamp);
     // 7 持续调兵（补给线）
     Rally.run(G, stamp);
     // 8 上级好感 / 上命
@@ -33,15 +34,15 @@ const Turn = {
     // 10 AI 决策
     AI.run(G, stamp);
     // 11 玩家失城 → 流亡投奔
-    Turn._playerFate(G);
+    Turn.playerFate(G);
     // 12 势力存亡
-    Turn._cleanupFactions(G);
+    Turn.cleanupFactions(G);
     // 13 胜负
     State.checkEnd(G);
   },
 
   /** 直辖城全失时，不会立刻出局：被势力重新任命到最弱一城（流亡投奔） */
-  _playerFate(G) {
+  playerFate(G) {
     if (G.player.demesne.length > 0) return;
     const cities = State.factionCities(G, G.player.factionId);
     if (!cities.length) return;
@@ -59,7 +60,7 @@ const Turn = {
       `${G.player.name}城破流亡，辗转投奔${c.name}，暂栖人下。战功 -10。`);
   },
 
-  _cleanupFactions(G) {
+  cleanupFactions(G) {
     for (const f of Object.values(G.factions)) {
       if (f.kind === 'free') continue;
       if (f.dead) continue;

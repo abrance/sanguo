@@ -39,6 +39,7 @@ const Mission = {
     m.id = 'm' + G.meta.turn + '_' + Math.floor(RNG.next() * 1000);
     m.typeKey = key;
     m.title = MISSION_TYPES[key].title;
+    m.issueTurn = G.meta.turn;
     m.done = false;
     p.mission = m;
 
