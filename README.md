@@ -90,7 +90,26 @@ js/main.js          启动与渲染循环
 
 ## 文档
 
-设计决策、全部公式、取舍理由、已知问题见 [DESIGN.md](DESIGN.md)。
+| 文档 | 内容 |
+|---|---|
+| [DESIGN.md](DESIGN.md) | 设计决策、全部数值公式、阶段划分、已知问题 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 分层结构、状态树、数据流、回合流水线、必须守住的不变量 |
+| [docs/COMMANDS.md](docs/COMMANDS.md) | 19 个命令的参数、校验规则、返回值与错误 |
+| [docs/CONTENT.md](docs/CONTENT.md) | 扩展指南：加建筑/科技/兵种/武将/城池/势力/剧本/上命，以及改平衡的入口 |
+| [docs/TESTING.md](docs/TESTING.md) | 无头测试怎么跑、断言覆盖了什么、盲区在哪 |
+
+## 自检
+
+规则层不依赖 DOM，可以脱离浏览器验证：
+
+```bash
+node tools/verify.js          # 38 条断言：不变量/命令校验/长跑/战斗曲线/科技链/补给线/存档
+node tools/verify.js -v       # 附明细
+node tools/sim.js --bot --months 200    # 推演一个主动玩家 200 回合
+node tools/sim.js --months 120          # 被动玩家会怎样
+```
+
+`tools/harness.js` 直接解析 `index.html` 的 script 列表来装载源码，所以新增文件只要加进 index.html，测试自动覆盖。
 
 ## 下一步
 
