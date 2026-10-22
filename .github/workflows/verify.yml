@@ -1,0 +1,27 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 零依赖：不需要 npm install
+      - name: 无头自检（静态检查 + 规则断言）
+        run: node tools/verify.js
+
+      - name: 长跑冒烟（被动玩家 60 回合，检查无崩溃 / 无 NaN）
+        run: node tools/sim.js --months 60 --every 60
+
+      - name: 长跑冒烟（主动玩家 60 回合）
+        run: node tools/sim.js --bot --months 60 --every 60

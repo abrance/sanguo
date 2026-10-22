@@ -85,16 +85,16 @@ agr11: { id: 'agr11', name: '代田新法', branch: '农', tier: 11, cost: 900, 
 ## 加一个武将 / 城池 / 势力
 
 ### 武将
-`js/data/heroes-190.js` 的 `HERO_ROWS` 加一行（紧凑数组）：
+`js/data/scenarios/taodong190/heroes.js` 的 `TAODONG190_HERO_ROWS` 加一行（紧凑数组）：
 
 ```js
 ['newhero', '姓名', 武, 统, 智, 政, 魅, '特技key', '势力id'],
 ```
 
-特技 key 必须在 `HERO_SKILLS` 里，否则 `skillOf()` 返回空对象（不报错，但没效果）。
+特技 key 必须在 `TAODONG190_HERO_SKILLS` 里，否则 `skillOf(G, hero)` 返回空对象（不报错，但没效果）。
 
 ### 城池
-`js/data/cities-190.js` 的 `CITY_ROWS`：
+`js/data/scenarios/taodong190/cities.js` 的 `TAODONG190_CITY_ROWS`：
 
 ```js
 ['newcity', '城名', x, y, 'plain', '州名', pop, farm, market, wall],
@@ -105,7 +105,7 @@ agr11: { id: 'agr11', name: '代田新法', branch: '农', tier: 11, cost: 900, 
 所以城的坐标决定了它和谁接壤。加城后务必检查新城的邻居是否合理。
 
 ### 势力
-`js/data/factions-190.js` 的 `FACTION_ROWS`：
+`js/data/scenarios/taodong190/factions.js` 的 `TAODONG190_FACTION_ROWS`：
 
 ```js
 ['newfid', '势力名', '#rrggbb', 'rulerHeroId', 侵略性0-1, ['cityId', ...]],
@@ -121,7 +121,7 @@ agr11: { id: 'agr11', name: '代田新法', branch: '农', tier: 11, cost: 900, 
 剧本 = 一套城池 + 武将 + 势力 + 初始年月。多剧本是平行的，各自独立存档。
 
 1. 新建 `js/data/cities-<剧本>.js` / `heroes-<剧本>.js` / `factions-<剧本>.js`，
-   导出 `CITY_ROWS` / `HERO_ROWS` / `FACTION_ROWS`（**注意变量名不能和现有剧本重名**，
+   导出 `TAODONG190_CITY_ROWS` / `TAODONG190_HERO_ROWS` / `TAODONG190_FACTION_ROWS`（**注意变量名不能和现有剧本重名**，
    因为全局作用域共享；建议直接导出到 `SCENARIOS` 里，见下）
 2. 在 `js/data/scenarios.js` 的 `SCENARIOS` 注册：
 
@@ -174,7 +174,7 @@ raid: {
 | 兵额 | `js/state/state.js` 的 `troopCapBreakdown()` |
 | 兵种强弱 / 克制 | `js/data/troops.js` |
 | 攻城难度 | `js/systems/combat.js` 的 `power()` 里城墙系数、`resolve()` 的伤亡系数 |
-| AI 好战程度 | `js/data/factions-190.js` 的侵略性 + `js/systems/ai.js` 的 `chances` |
+| AI 好战程度 | `js/data/scenarios/taodong190/factions.js` 的侵略性 + `js/systems/ai.js` 的概率与阈值（全部列在 [AI.md](AI.md) §9） |
 | 晋升速度 | `js/data/ranks.js` 的 `meritNeeded` 与 `ROUTES[*].meritNeededMul` |
 | 科技快慢 | `js/systems/tech-system.js` 的 `cityRate()` + `js/data/techs.js` 的 `cost` |
 

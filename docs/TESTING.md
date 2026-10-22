@@ -4,11 +4,25 @@
 `tools/` 下三个工具都不需要安装任何依赖。
 
 ```bash
-node tools/verify.js        # 一键自检（63 条断言），失败退出码非 0
+node tools/verify.js        # 一键自检（134 条断言），失败退出码非 0
 node tools/verify.js -v     # 附明细
-node tools/sim.js           # 被动玩家长跑 200 回合
+node tools/sim.js           # 被动玩家长跑 200 回合（自动裁决求和报价：有人请和就许）
 node tools/sim.js --bot     # 主动玩家长跑
+node tools/shots.js         # 视觉回归：固定机位截图 vs 基线（见下）
 ```
+
+---
+
+## 静态检查（不用开局就跑）
+
+无模块系统 ⇒ 全局作用域是唯一命名空间，所以 `verify` 先跑三条不依赖状态的检查：
+
+1. `index.html` 声明的脚本都在磁盘上
+2. `js/` 下的脚本都被 `index.html` 引用（写了不生效的孤儿文件会被抓出来）
+3. 各文件顶层 `const/let/var/function/class` 无重名（重名会静默覆盖前一个）
+4. `harness` 的自动导出覆盖全部顶层符号（漏了测试就拿不到那个全局）
+
+新增文件后忘了改 `index.html`、或两个文件都定义了 `State`，第一条和第三条会直接红。
 
 ---
 
@@ -27,7 +41,9 @@ api.Store.dispatch('END_TURN');
 console.log(G.meta.turn, api.State.troopCapOf(G, G.cities.chenliu));
 ```
 
-`api` 里暴露了全部顶层全局：`State` `Store` `Combat` `Army` `AI` `Turn` `Rally` `TechSys` …（清单见 harness 顶部 `EXPORTS`）。
+`api` 里暴露了**全部**顶层全局：`State` `Store` `Combat` `Army` `AI` `Turn` `Rally` `TechSys` …（约 90 个）。
+清单不是手抄的 —— `harness` 用正则从源码收顶层声明再拼成导出代码（vm 里 `const` 不会自动挂到 context 上），
+新加全局无需改测试；`verify` 里有一条断言盯着"源码有的名字 api 必须都能取到"。
 
 辅助函数：
 
@@ -93,8 +109,8 @@ node tools/sim.js [--months 200] [--every 20] [--seed 11]
 `tools/` 覆盖不到 Canvas 渲染与 DOM 交互。这部分要手工或用浏览器自动化：
 
 ```bash
-python3 -m http.server 8080      # 起服务
-# 打开 http://localhost:8080
+make server                      # 起服务（no-store，改完刷新即生效）
+# 打开 http://localhost:10300
 ```
 
 必查四件事（改 UI 后）：
@@ -107,9 +123,40 @@ python3 -m http.server 8080      # 起服务
 
 ---
 
+## `tools/shots.js`：视觉回归
+
+Canvas 画出来的东西没法用断言查，所以用截图比对兜一层：
+
+```bash
+node tools/shots.js           # 对比基线，超阈值退出码 1
+node tools/shots.js -v        # 打印每个机位的差异像素数
+node tools/shots.js --update  # 确认改动无回归后，重写基线
+```
+
+**怎么做到的**
+
+1. `index.html?shot=1&seed=11&turn=4&…` 进「截图模式」（`js/main.js` 的 `bootShot`）：
+   固定种子、固定回合、固定机位，且**每帧 dt=0**（旗飘 / 光晕 / 镜头缓动全停在初始姿态）
+2. `tools/shots.js` 调 Chrome / chrome-headless-shell 无头截图（900×600，disable-gpu）
+3. 用 ImageMagick `compare -metric AE` 与 `tools/shots/*.png` 比像素数，默认阈值 200 px
+
+**机位**：`map-far`（远景地形）、`map-near`（近景城池+旗帜）、`log-battle`（纪事里的战报卡）。
+
+**依赖**：本机需要有可执行 Chrome/Chromium（自动找 playwright / puppeteer 缓存，也可 `CHROME=/path/to/chrome`）
+和 ImageMagick；都缺时脚本会「跳过」并以 0 退出 —— 游戏本身仍然零依赖。
+
+**为什么可信**：同一台机器上连续跑两次，三个机位差异都是 0 px（实测），
+所以只要不是 0，就说明画面真的变了。换机器/换字体后首次会报差异，跑一次 `--update` 重建基线即可。
+
+**改 UI 的正确姿势**：先跑 `node tools/shots.js` 看哪几个机位变了 → 人眼看 `tools/shots/*.png` 与运行页面 →
+确认是有意的改动 → `--update` 提交新基线。**不要**为了让脚本通过就随便 `--update`。
+
+---
+
 ## 已知的测试盲区
 
-- **Canvas 渲染没有快照对比**，地形生成改了只能肉眼看
-- **AI 决策没有单测**，只靠长跑观察宏观指标（外交长跑只验证「出现过停战/结盟」与兼并上限，不验证外交是否打得聪明）
+- **视觉回归只挡「画面变了」，不判断「变好看了」**；且基线绑定本机字体与渲染器，跨机器首次需重建
+- **Canvas 交互没有快照对比**：悬停浮层、拖拽惯性、镜头的中间帧仍只能肉眼看
+- **AI 决策没有单测**，只靠长跑观察宏观指标（外交长跑只验证「出现过停战/结盟」与兼并上限，不验证外交是否打得聪明）；行为规格与人读清单在 [AI.md](AI.md)，改代码时必须同步
 - **平衡没有回归基线**，`verify.js` 里的胜率区间是宽区间，只能挡住"彻底崩坏"
 - **手感无法自动测**：数值对不对和好不好玩是两件事

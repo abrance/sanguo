@@ -82,12 +82,69 @@ Store.dispatch('BUILD', { cityId: 'chenliu', key: 'farm' })
 - 立即扣资源，工程进 `c.buildQueue`
 - 返回：`{ key, turns }`
 
+### `BUILD` `{ cityId, key }`
+在直辖城起一项工程。
+
+- 工程位满 → 抛「工程已满（府衙 3 级可并行）」
+- **同一建筑已在队列中 → 抛「已在工程队列中」**（否则完成后 `to` 相同，白扣一份料）
+- 钱/建材/铁不足、前置未达、已到上限 → 抛对应原因
+
 ### `CANCEL_BUILD` `{ cityId, index }`
 撤项，退还半数物料（钱/建材/铁）。
 
 ### `SET_POLICY` `{ cityId, policy }`
 委任太守方针。`policy` ∈ `POLICY_KEYS` 或 `null`（罢委任 = 亲理）。
 设了方针后每月 `Viceroy.run` 会自动营造 + 征兵，玩家手动操作仍可叠加。
+营造会**把工程位填满**（府衙 3 级 = 2 项），每次都留 150 钱周转；同一建筑不会重复入队。
+
+### `LEGION_CREATE` `{ heroId }`
+委任一名本方在世武将为都督，开一处军区（上限 4 处）。若该将所在城是直辖城，自动作为首城。
+
+- 返回：`{ id, heroId, cityIds }`
+
+### `LEGION_ASSIGN` `{ id, cityIds }`
+设置军区辖城。城必须是你直辖，且不能同时属于两个军区（会抛错）。
+
+### `LEGION_ORDER` `{ id, stance?, targetFid?, policy? }`
+玩家号令。三个字段都可单独更新。
+
+- `stance` ∈ `defend`（守土，不出兵）/ `expand`（拓边，只打已交战与在野）/ `strike`（征讨）
+- `strike` 必须给 `targetFid`，**下号令即宣战**（这是玩家授权的战争）
+- `policy` 决定军区城的营建顺序与征兵比例，缺省 `balanced`
+
+### `LEGION_DELETE` `{ id }`
+裁撤军区，诸城收归亲理。
+
+### `SET_DEMESNE` `{ cityId, releaseId? }`
+收归直辖：把**本方势力但非你直辖**的城纳入直辖。
+
+- 直辖未满：直接收归
+- 直辖已满：必须给 `releaseId`（交出一座现有直辖城），被交出的城 `grantedTo=null`、方针与补给线清空，改由属下代管
+- 首府若被交出，自动迁到新收归的城
+- 直辖上限见 `cityCap(player)` = 官阶 `maxCities` + 路线修正（忠臣 −1 / 自立 +2）+ 好感修正，下限 2
+- 返回：`{ cityId, released, demesne, cap }`
+
+### `SET_POLICY_ALL` `{ policy }`
+一键方针：所有直辖城设同一方针（`null` = 全部收归亲理）。
+
+- 视图入口：城池页顶部「一键理政条」
+- 设完之后每月自动，无需再逐城点
+- 全部城已是此制时抛「诸城已是此制」
+- 返回：`{ changed, total }`
+
+### `BATCH_BUILD` `{ key }`
+一键同造：所有能造的直辖城各起同一项建筑（逐城留 150 钱周转，卡住的城跳过不整体失败）。
+
+- 视图入口：城池页「一键理政条 · 同造」那一行
+- 全都没法开工时抛错，消息里带被卡城数
+- 返回：`{ done, skip, key }`
+
+### `BATCH_PACIFY` `{}`
+一键安抚：只对**士族满意度 < 45** 且不在 3 回合冷却内的直辖城设宴（`Clans.pacify`）。
+
+- 逐城扣除 200 钱 / 120 粮，钱粮不足的城计入 `held` 跳过，不整体失败
+- 全都没得动时抛错（视图直接弹原因）
+- 返回：`{ done, held }`
 
 ### `SET_RALLY` `{ cityId, toId, ratio, fill }`
 持续调兵（补给线）。
@@ -196,6 +253,20 @@ Store.dispatch('BUILD', { cityId: 'chenliu', key: 'farm' })
 action ∈ `war | peace | ally | intrigue`。州牧起的「上表言事」：花提议的钱与好感，
 再由 `Diplo.respond()` 按好感 / 实力对比 / 共同敌人 / 君主侵略性算采纳率（0.05–0.95）。
 被拒好感再 −4。`direct` 层用同一命令时直接办成。
+
+### `PEACE_ACCEPT` `{ fid }`
+接受对方求和：纳钱 `min(对方国库, 400)` 入私库，停战 12 月。
+
+### `PEACE_COUNTER` `{ fid, demands }`
+向请和者提条件。`demands = { gold, mat, iron, troop }`，各项 0–1 的百分比。
+
+- 负担分 `0.55·钱 + 0.15·建材 + 0.10·铁料 + 0.45·输兵`，超过对方容忍度即谈崩
+- 成交：交割资源（钱出对方国库、建材/铁料按各城比例抽、兵从对方最强城抽走并向我首府行军），并停战
+- 谈崩：报价作废，战事照旧（**无法求和**）
+- 返回：`{ accepted, got? }`
+
+### `PEACE_REFUSE` `{ fid }`
+拒绝求和。无任何代价，战事继续。
 
 ### `DECLARE_WAR` / `SUE_FOR_PEACE` / `FORM_ALLIANCE` / `BREAK_ALLIANCE` / `CALL_TO_ARMS` `{ fid }`
 三公或自立之主的「代君行令」。前置：`Diplo.layer(G) === 'direct'`、目标国存在且未覆灭、冷却已过、钱够。

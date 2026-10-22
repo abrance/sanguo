@@ -11,3 +11,7 @@ Thumbs.db
 
 # 本地存档快照（游戏存档走浏览器 localStorage，不落盘）
 saves/
+
+# 视觉回归基线（按机器/字体渲染差异生成，各自本地跑 --update）
+tools/shots/
+tools/shots/.candidate.png

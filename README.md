@@ -10,9 +10,12 @@
 
 ```bash
 cd sanguo
-python3 -m http.server 8080
-# 浏览器打开 http://localhost:8080
+make server
+# 浏览器打开 http://localhost:10300（Ctrl-C 停止，再 make server 重开）
 ```
+
+`make server` 走 `tools/serve.py`，带 `Cache-Control: no-store` —— 改完代码刷新就是新代码，
+不会出现"明明改了、页面还是旧逻辑"（`python3 -m http.server` 会踩这个坑）。
 
 或者用 VS Code 的 Live Server 插件。
 
@@ -20,7 +23,8 @@ python3 -m http.server 8080
 
 ### 地图与回合
 - 选择势力（21 家）与起始城池，自定义城主名
-- 70 郡 Canvas 大地图：拖拽平移、滚轮缩放、点击城池。地形为手绘风（平滑色床 + 山体侧光 + 峰形/树丛/沙丘符号 + 河川三叠），城池画成城墙雉堞城门并挂势力旗，另有势力色领地晕染、治所星标、城名铭牌、右下罗盘
+- **开局天赋（6 选 1）**：商人（钱 +25%、外交 -25%）/ 骑兵（行军 +30%、骑兵兵额 +40%）/ 农夫（粮 +25%、仓廪 +30%）/ 将才（战力 +12%、出征士气 +10）/ 工匠（工期 -25%、建材铁料 +20%）/ 纵横家（外交 -40%、关系回暖更快），只作用于你的直辖城与军队
+- 70 郡 Canvas 大地图：拖拽平移、滚轮缩放、点击城池。地形为手绘风（平滑色床 + 山体侧光 + 峰形/树丛/沙丘符号 + 河川四叠与支流 + 州界虚线与州名朱印），城池画成城墙雉堞城门并挂势力旗，另有势力色领地晕染、治所星标、城名铭牌、右下罗盘
 - 回合推进（一回合 = 一个月），四季影响粮产、税入、征兵、建设
 
 ### 内政
@@ -63,6 +67,8 @@ python3 -m http.server 8080
 - 失城流亡：直辖城全失不会立刻出局，被势力重新任命到最弱一城
 - 悬停城池速览：守军 / 兵额 / 城墙 / 治安 / 守将 / 该势力与你的态度
 - 浮层提示（存档、读档、月份推进）+ 纪事逐条滑入；在建城池城头有微光
+- **战报卡片**：一场攻城一张卡（城名 / 城破或不克 / 双方主将 / 伤亡条 / 合数），点开看逐轮战况
+- 顶栏粮钱兵 12 月 sparkline + 环比箭头；小地图点击跳转；镜头缓动与拖拽惯性
 - 自动存档 / 存档 / 读档（localStorage，旧存档自动迁移）
 - 胜负：本方势力统一全图即胜；本方势力一城不剩即败
 
@@ -109,7 +115,10 @@ js/main.js          启动与渲染循环
 | [docs/COMMANDS.md](docs/COMMANDS.md) | 19 个命令的参数、校验规则、返回值与错误 |
 | [docs/CONTENT.md](docs/CONTENT.md) | 扩展指南：加建筑/科技/兵种/武将/城池/势力/剧本/上命，以及改平衡的入口 |
 | [docs/TESTING.md](docs/TESTING.md) | 无头测试怎么跑、断言覆盖了什么、盲区在哪 |
+| [docs/AI.md](docs/AI.md) | **AI 行为逻辑**（持续维护）：决策顺序、全部阈值与概率、外交 AI、参数速查、已知天花板 |
+| [js/data/talents.js](js/data/talents.js) | **玩家天赋**数值表（开局 6 选 1），改数值只动这一个文件 |
 | [docs/DIPLOMACY.md](docs/DIPLOMACY.md) | **P3 外交系统设计稿**（已实现）：关系与状态机、三层权限、AI 结盟、验收标准 |
+| [docs/STYLE.md](docs/STYLE.md) | **视觉规范**：颜色 / 圆角 / 字号 token 表、12 个线性图标、改样式流程（含视觉回归） |
 | [docs/VISUAL.md](docs/VISUAL.md) | **P5 视觉与交互方向清单**（待实现）：底图/城池/信息层/动效/音效/视觉系统/无障碍，含现状、做法、代价、批次与验收口径 |
 
 ## 自检
@@ -117,10 +126,11 @@ js/main.js          启动与渲染循环
 规则层不依赖 DOM，可以脱离浏览器验证：
 
 ```bash
-node tools/verify.js          # 63 条断言：不变量/命令校验/长跑/战斗曲线/科技链/补给线/外交/存档
+node tools/verify.js          # 97 条断言：不变量/命令校验/长跑/战斗曲线/科技链/补给线/外交/存档
 node tools/verify.js -v       # 附明细
 node tools/sim.js --bot --months 200    # 推演一个主动玩家 200 回合
 node tools/sim.js --months 120          # 被动玩家会怎样
+node tools/shots.js                     # 视觉回归：无头截图 vs 基线（需 Chrome + ImageMagick）
 ```
 
 `tools/harness.js` 直接解析 `index.html` 的 script 列表来装载源码，所以新增文件只要加进 index.html，测试自动覆盖。

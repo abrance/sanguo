@@ -22,10 +22,11 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 │    techs.js       科技 40 项（4 分支 × 10 层）、乘数聚合
 │    policies.js    太守方针 5 种、士族姓氏池
 │    missions.js    上命模板（上贡 / 输兵 / 征讨）
-│    cities-190.js  70 郡坐标与初始等级
-│    heroes-190.js  134 名武将、特技表
-│    factions-190.js  21 势力与初始领城
-│    scenarios.js   剧本注册表（多剧本平行）
+│    scenarios.js   剧本注册表 + 跨剧本共用的在野伪势力定义
+│    scenarios/<剧本id>/     剧本专属数据，顶层符号必须带剧本 id 前缀
+│      taodong190/cities.js    70 郡坐标与初始等级
+│      taodong190/heroes.js    134 名武将、特技表
+│      taodong190/factions.js  21 势力与初始领城
 │    diplo.js       外交状态文案、行动与提案定义
 │
 ├─ js/state/        状态的唯一来源
@@ -53,7 +54,16 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 ├─ js/view/         DOM / Canvas，只读状态
 │    map.js         地形网格程序生成 + 底图预渲染
 │    renderer.js    Canvas 绘制、摄像机、命中检测
-│    ui.js          侧栏、官阶台、全部交互与命令下发
+│    ui.js          核心：视图状态、地图交互、主渲染 UI.render、按钮绑定
+│    panels/        侧栏各面板，按域拆分（见下）
+│      start.js     起始界面 + 天赋选择
+│      rank.js      官阶台
+│      peace.js     求和裁决弹窗
+│      diplo.js     外交面板与行动
+│      city.js      城池面板（概览 / 营造 / 士族 / 施政）
+│      army.js      军务面板
+│      tech.js      科技面板
+│      log.js       纪事面板
 │
 └─ js/main.js       启动：渲染循环（requestAnimationFrame）
 ```
@@ -74,10 +84,22 @@ core ← data ← state ← systems ← (view, main)
 `index.html` 里 `<script>` 的顺序就是执行顺序。没有模块系统，所有顶层 `const`/`function` 共享一个全局作用域，所以：
 
 - **不能有重名的顶层标识符**
-- 顶层代码只允许"定义"，不允许"执行"（唯一的例外是 `main.js` 注册 `DOMContentLoaded`）
+- 顶层代码只允许"定义"，不允许"执行"（两个例外：`main.js` 注册 `DOMContentLoaded`；
+  `ui.js` 末尾的 `Object.assign(UI, UI_CITY, …)` 把面板装配进同一个 `UI` 命名空间，
+  这样面板能拆文件而调用点仍是 `UI.xxx`，不用改 142 处引用）
 - 顺序按上面的分层排列，`store.js` 必须在所有 `systems` 之后（它引用 `COMMANDS` → 各系统）
 
 `tools/harness.js` 会**直接解析 index.html 的 script 标签**来装载，所以新增文件只要加进 index.html，测试就自动覆盖，不会漏。
+`node tools/verify.js` 的静态检查还会反向核对：磁盘上的 `js/**` 有没有漏进 index.html（孤儿文件），以及顶层标识符有没有重名。
+
+### 新增剧本
+
+1. 建 `js/data/scenarios/<剧本id>/{cities,heroes,factions}.js`
+2. 顶层符号一律带剧本 id 前缀：`TAODONG190_CITY_ROWS`、`TAODONG190_HERO_ROWS`、`TAODONG190_FACTION_ROWS`
+   —— 全局作用域没有模块隔离，不带前缀第二个剧本就撞名（静态检查会报）
+3. 在 `SCENARIOS` 里登记，`cityRows / heroRows / factionRows / heroSkills` 指向上面三份
+   查剧本数据一律走 `getScenario(id)`、`heroSkill(G, key)`、`skillOf(G, hero)`，别在系统/视图层直连剧本符号
+4. 三个文件加进 index.html
 
 ---
 
@@ -88,7 +110,8 @@ core ← data ← state ← systems ← (view, main)
 ```
 G.meta      { scenarioId, scenarioName, seed, turn, year, month, startedAt }
 G.player    { heroId, name, factionId, rank, merit, reputation, loyalty, route,
-              favor, mission, missionCooldown, domActionTurn, demesne[], homeCityId }
+              favor, mission, missionCooldown, domActionTurn, demesne[], homeCityId,
+              legions[] }   // 军区，见 §4.2
 G.factions  { [fid]: { id, name, color, rulerId, aggression, kind, treasury,
                        tech:{ rp, done{}, current, queue[] }, bonus, dead?, momentum? } }
 G.cities    { [cid]: City }
@@ -97,6 +120,7 @@ G.heroes    { [hid]: { id, name, wu, tong, zhi, zheng, mei, skill,
 G.armies    { [aid]: { id, factionId, heroId, troops{}, from, to, x, y,
                        eta, totalEta, morale, mission } }
 G.log       [ { turn, year, month, kind, text } ]   // kind: turn|battle|good|bad|note
+G.peaceOffers [ { fid, turn } ]   // 待玩家裁决的求和报价，见 §4.1
 G.stats     { won, lost, citiesTaken, citiesLost, battles }
 G.over      null | { result:'win'|'lose', text }
 ```
@@ -115,7 +139,7 @@ order morale
 garrison{inf cav arc nvy siege}
 buildQueue[ {key,to,left,total} ]
 policy                      太守方针，null = 亲理
-rallyTo rallyRatio rallyFill  持续调兵（rallyKeep 为历史遗留，已不使用）
+rallyTo rallyRatio rallyFill  持续调兵
 clanActionTurn              士族操作冷却
 clans[ {name,sat,inf,mood} ]
 unrest                      新附未安剩余月数
@@ -153,13 +177,14 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
  3  Economy.produce   产出、消耗、饥荒、治安、人口、城防
  4  Clans.drift       士族情绪漂移 / 叛乱判定
  5  TechSys.advance   科研点累积 → 推进当前项 → 接队列
- 6  Viceroy.run       太守按方针自动营造 + 征兵
+ 6  Viceroy.run       太守按方针自动营造（一次填满工程位）+ 征兵（跳过军区城）
+ 6.5 Legion.run       军区：营建 / 征兵 / 集结 / 出兵（受 stance 号令约束）
  7  Rally.run         持续调兵
  8  Favor.monthly     好感漂移 / 赏赐 / 削权
  9  Mission.tick      上命派发与逾期（含量外交类结果）
  9.5 Diplo.advance   停战到期 / 每 6 回合重算边界 / 关系漂移 / AI 外交
 10  Rank.monthly      声望自然增长 + 晋升检查
-11  AI.run            各势力决策（玩家势力的非直辖城也走这里）
+11  AI.run            各势力决策（玩家势力的非直辖城也走这里）—— 细节见 [AI.md](AI.md)
 12  _playerFate       直辖城全失 → 流失投奔
 13  _cleanupFactions  势力覆灭清理
 14  State.checkEnd    胜负判定
@@ -169,6 +194,44 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
 `Viceroy` 在 `Rally` 之前 → 太守当月募的兵当月经能送出；
 `Army` 在 `Economy` 之前 → 当月攻下的城当月就开始产出；
 `Clans` 在 `Economy` 之后 → 士族影响的是**下个月**的产出系数。
+
+### 4.1 求和裁决
+
+AI 判定打不过就想停战，但**只有对方是玩家时挂报价，不自动成交**：
+
+```
+Diplo.ai → 判定 losing → 目标是最强敌国
+   ├─ 目标非玩家 → 立刻 makePeace（AI 之间照旧自动谈）
+   └─ 目标是玩家 → Diplo.offerPeace(G, fid) 塞进 G.peaceOffers → 局面停在"交战"
+                     玩家在回合末弹窗三选一：
+                       PEACE_ACCEPT  接受 → 纳钱 min(国库,400) + 停战 12 月
+                       PEACE_COUNTER 提条件（钱/建材/铁料/输兵的百分比）→ 对方当场裁定
+                                     负担分 ≤ 对方容忍度 → 交割资源 + 停战；否则作罢、战事照旧
+                       PEACE_REFUSE  不接受 → 无任何代价，战事照旧
+```
+
+`Diplo.pruneOffers` 每回合清掉失效报价（势力已亡 / 已非交战）。
+
+### 4.2 军区（一将统辖多城）
+
+玩家嫌逐城点太累时，把若干直辖城交给一名武将托管：
+
+```js
+G.player.legions = [{ id, heroId, cityIds[], policy, stance, targetFid, stats:{attacks,taken} }]
+```
+
+- `Legion.run` 每月对这些城跑：营建（方针 `buildOrder`）、征兵（方针 `recruitRatio`）、士气回复；
+  非「守土」号令时再复用 `AI._mass / AI._attack`，用 `filter` 把号令套上去
+- 号令 `stance`：
+  - `defend` 守土 —— 只营建征兵，不出兵
+  - `expand` 拓边 —— 只打已交战势力与在野，**不主动开新战线**
+  - `strike` 征讨 —— 只打 `targetFid`；下号令即宣战（玩家授权的战争）
+- 战果：军区派出的军队带 `a.legionId`，出兵时 `stats.attacks++`，该军队克城时 `stats.taken++`
+- 征讨目标一旦停战/覆灭，军区自动转「守土」并在纪事里说明，不会一直空转
+- 都督加成：`State.legionMul` = 统率 → 守城战力 `1 + tong/400`，政略 → 产出 `1 + zheng/500`
+- 同一城只归一个军区；`Viceroy.run` 会跳过军区城，避免两套指令打架
+- 玩家当家的势力（`rulerId === PLAYER_HERO_ID`）不跑 `Diplo.ai`：宣战/结盟/求和一律玩家决断
+- 臣属时君主仍会自己罢兵；若此时正有一条等玩家裁决的求和报价，会作废并写明"已因停战作废"，不静默消失
 
 ### 视图
 
@@ -208,6 +271,11 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
    任何地方都不要自己拼 `a + '|' + b`，否则 A→B 与 B→A 会变成两份数据。
 
 7. **随机只走 `RNG`** —— 不用 `Math.random()`，否则同种子不可复现，平衡测试失效。
+   同种子可复现还依赖两处游标入档：`G.meta.rngState`（RNG 序列位置）与 `G.meta.uidSeq`（`U.uid` 计数器），
+   由 `Store` 在每次命令成功后写回、开局/读档时恢复。**别把新的模块级可变状态留在 `G` 之外。**
+
+8. **玩家命令的入口校验只有两处** —— `dispatch` 统一拦终局（`G.over`，白名单见 `OVER_SAFE`），
+   城池权限统一走 `mustOwnCity(G, cityId)`。新命令直接调它，不要另写 `c.grantedTo !== PLAYER_HERO_ID`。
 
 ---
 
@@ -227,8 +295,18 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
 `Save.save(G)` 直接 `JSON.stringify({v, at, G})`，key 为 `sanguo.save.<scenarioId>`。
 因为 G 是纯数据（无函数、无循环引用），序列化天然安全。
 
-`State.migrate(G)` 负责旧档兼容：缺字段补默认值、旧字段转换（如 `popMax` → `basePop`）、
-重建 `buildings`、`clans`、`tech.queue`。**新增字段时务必在这里补一行**，否则老存档会算出 NaN。
+`Save.VERSION` 是**状态形状版本**（改字段语义才 +1，纯加字段不用动）。
+`Save.load` 会：拒绝高于当前版本的存档（未来档不猜）、其余一律交给 `State.migrate(G, 旧版本号)`。
+
+`State.migrate` 负责旧档兼容：旧字段转换（`popMax` → `basePop`）、重建 `buildings` / `clans` / `tech.queue`，
+其余缺字段一律由四张默认值表兜底：
+
+```js
+META_DEFAULTS / PLAYER_DEFAULTS / FACTION_DEFAULTS / CITY_DEFAULTS
+```
+
+**新增状态字段时把默认值加进对应的表就行**（`State._fillDefaults` 只补 `null`/`undefined`，不会覆盖 `false`/`0`），
+别再往 migrate 里手写 `if (x == null)`。
 
 ---
 
@@ -240,4 +318,4 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
 | 命令用 `JSON` 深拷贝整棵 G | 单次 dispatch 是 O(状态大小)（70 城规模下 ≈1ms，可接受）；换成服务端后要改增量 |
 | 战斗是单次多轮结算，不是战棋 | 战场上没有走位与地形微操 |
 | 城镇坐标手工近似 | 只保证相邻关系合理，不是真实地理投影 |
-| AI 是规则型，没有搜索 | 中后期容易被玩家用人海 + 城墙磨死，但不会犯低级错误 |
+| AI 是规则型，没有搜索 | 中后期容易被玩家用人海 + 城墙磨死，但不会犯低级错误；具体阈值见 [AI.md](AI.md) |
