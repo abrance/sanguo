@@ -20,6 +20,7 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 │    ranks.js       官阶 7 级、三路线、自立门槛
 │    buildings.js   建筑 16 种、造价与工期公式
 │    techs.js       科技 40 项（4 分支 × 10 层）、乘数聚合
+│    treasures.js   宝物 20 件（5 类）+ 开局宝物落城表
 │    policies.js    太守方针 5 种、士族姓氏池
 │    missions.js    上命模板（上贡 / 输兵 / 征讨）
 │    scenarios.js   剧本注册表 + 跨剧本共用的在野伪势力定义
