@@ -2354,6 +2354,88 @@ section('P6 补口：AI 用宝 / AI 放战法 / 商人购宝');
 }
 
 // ─────────────────────────────────────────────
+section('战斗中存档');
+{
+  // 造一场挂起的攻城（玩家指挥 → 逐轮推进 → 停在第 1 合）
+  const mk = (seed) => {
+    const { api, get } = h.boot({ seed });
+    const st = get();
+    const home = st.cities[st.player.homeCityId];
+    const nb = api.State.neighbors(st, home.id, 300).find(x => x.owner !== st.player.factionId);
+    for (const k of api.TROOP_KEYS) nb.garrison[k] = 0;
+    nb.garrison.inf = 900;
+    nb.wall = 2;
+    const pr = api.Diplo.pair(st, st.player.factionId, nb.owner);
+    pr.status = api.Diplo.WAR; pr.rel = -80; pr.until = 0;
+    api.Store.replace(st);
+    const g = get();
+    const army = api.Army.create(g, {
+      factionId: g.player.factionId, heroId: 'PLAYER', from: home.id, to: nb.id,
+      troops: { inf: 2000 }, mission: 'attack',
+    });
+    army.eta = 1; army.totalEta = 1;
+    g.armies[army.id] = army;
+    api.Store.replace(g);
+    api.Store.dispatch('END_TURN');
+    const z = get();
+    const ag = Object.values(z.armies).find(a => a.battle);
+    return { api, get, armyId: ag ? ag.id : null, cityId: nb.id };
+  };
+
+  const a = mk(102);
+  const z0 = a.get();
+  ok('战斗中存档：先造出挂起的攻城', !!a.armyId);
+
+  if (a.armyId) {
+    const round0 = z0.armies[a.armyId].battle.round;
+    const lines0 = z0.armies[a.armyId].battle.lines.length;
+
+    // 存档 → 读档（走 Save 的编码/解码，跟真实存读档同一条路径）
+    const enc = a.api.Save.encode(z0);
+    const back = a.api.Save.decode(enc);
+    ok('战斗中存档：存档可解出且战斗还在',
+      !!back && !!back.armies[a.armyId] && !!back.armies[a.armyId].battle
+      && back.armies[a.armyId].battle.round === round0
+      && back.armies[a.armyId].battle.lines.length === lines0,
+      back && back.armies[a.armyId] && back.armies[a.armyId].battle
+        ? `第 ${back.armies[a.armyId].battle.round} 合` : '战斗丢了');
+
+    // 读档后继续打，必须能正常收尾
+    a.api.Store.replace(back);
+    let guard = 0;
+    while (a.get().armies[a.armyId] && a.get().armies[a.armyId].battle && guard < 8) {
+      a.api.Store.dispatch('BATTLE_STEP', { armyId: a.armyId, tactic: guard === 0 ? 'mazhen' : null });
+      guard++;
+    }
+    ok('战斗中存档：读档后能接着打到终局',
+      !a.get().armies[a.armyId] || !a.get().armies[a.armyId].battle, `续了 ${guard} 合`);
+  }
+
+  // 孤儿战斗（战场城池没了）在迁移时被清掉，免得这支军被永久跳过
+  {
+    const b = mk(103);
+    if (!b.armyId) {
+      ok('战斗中存档：孤儿战斗清理（用例未挂起，跳过）', true);
+    } else {
+      const raw = JSON.parse(JSON.stringify(b.get()));
+      delete raw.cities[b.cityId];
+      b.api.State.migrate(raw, 2);
+      ok('战斗中存档：城池消失后清掉挂起战斗', !raw.armies[b.armyId].battle);
+    }
+  }
+
+  // 没有 battle 字段的旧档照样能读
+  {
+    const c = mk(104);
+    const raw = JSON.parse(JSON.stringify(c.get()));
+    for (const x of Object.values(raw.armies)) delete x.battle;
+    let err = null;
+    try { c.api.State.migrate(raw, 2); } catch (e) { err = e.message; }
+    ok('战斗中存档：旧档（无 battle 字段）照常迁移', !err, err || '');
+  }
+}
+
+// ─────────────────────────────────────────────
 console.log(`\n${fail === 0 ? '全部通过' : '有失败'}：${pass} 通过 / ${fail} 失败`);
 if (fail) {
   console.log('\n失败项：');
