@@ -158,12 +158,31 @@ const Renderer = {
   /** 命中城池 */
   pick(G, sx, sy) {
     const z = Renderer.cam.zoom;
+    const pad = 8;
     let best = null, bestD = Infinity;
     for (const c of Object.values(G.cities)) {
       const p = Renderer.toScreen(c.x, c.y);
-      const r = (7 + c.pop / 45) * Math.max(0.75, z) + 8;
-      const d = U.dist(sx, sy, p.x, p.y);
-      if (d < r && d < bestD) { best = c; bestD = d; }
+      const r = (7 + c.pop / 45) * Math.max(0.75, z);
+      let hit = false, d;
+
+      if (z < 0.5) {
+        // 远景色点：还是圆
+        d = U.dist(sx, sy, p.x, p.y);
+        hit = d < Math.max(2.4, r * 0.62) + pad;
+      } else {
+        // 近景城体：立面抬起来以后比底平面高，命中范围得跟着长
+        const tier = Renderer.cityTier(G, c);
+        const foot = Renderer.cityFoot(r, tier);
+        const cz = Renderer.cityHeight(r, tier, c.wall, State.wallMaxOf(c));
+        const x0 = p.x - foot.w / 2 - pad;
+        const x1 = p.x + foot.w / 2 + cz * Renderer.ISO.skew + pad;
+        const y0 = p.y - foot.h * 0.62 - cz - pad;     // 屋顶上沿
+        const y1 = p.y + foot.h * 0.38 + pad;          // 城基下沿
+        hit = sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
+        d = U.dist(sx, sy, p.x, p.y - foot.h * 0.12);  // 多处重叠时取离底平面中心最近的
+      }
+
+      if (hit && d < bestD) { best = c; bestD = d; }
     }
     return best;
   },
@@ -722,6 +741,20 @@ const Renderer = {
     }
 
     ctx.restore();   // 顶面结束
+
+    // 南墙垛口：城头正面那排小方块，画在顶面之后才压得住屋顶前沿
+    if (dy > 0.5 && opts.detail !== false) {
+      const tt = top + h - dy;
+      const damaged = (opts.wallMax || 1) - (opts.wall || 1) > 0.5;
+      const mw = bw * 0.64;
+      const mh = merlon * 0.8;
+      ctx.fillStyle = shade(color, Math.min(1, Renderer.ISO.front * 1.15));
+      for (let i = 0; i < walls; i++) {
+        if (damaged && i === walls - 1 && tier > 0) continue;
+        const mx = left + bw * (0.7 + i * ((w - bw * 1.4) / Math.max(1, walls - 1)));
+        ctx.fillRect(mx - mw / 2 + dx, tt - mh, mw, mh + 1);
+      }
+    }
   },
 
   /** 城外营帐：驻军逼近兵额时出现，表示兵的规模 */
