@@ -90,6 +90,15 @@ function botStep() {
       try { api.Store.dispatch('DISPATCH', { fromId: c.id, toId: best.id, ratio: 0.85 }); } catch (e) { }
     }
   }
+
+  // 6 人情账：忠诚低的守将及时赏赐、有积怨就抚慰（不维护会被叛将带走城池）
+  const z = get();
+  for (const c of api.State.demesne(z)) {
+    const h = c.governor && c.governor !== 'PLAYER' ? z.heroes[c.governor] : null;
+    if (!h) continue;
+    if ((h.loyalty || 0) < 65) { try { api.Store.dispatch('REWARD_HERO', { heroId: h.id }); } catch (e) { } }
+    if ((h.grievance || 0) > 0) { try { api.Store.dispatch('CONSOLE_HERO', { heroId: h.id }); } catch (e) { } }
+  }
 }
 
 function snapshot(tag) {

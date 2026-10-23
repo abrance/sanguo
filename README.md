@@ -156,7 +156,7 @@ git worktree remove ../sanguo-view      # 合完之后删掉
 规则层不依赖 DOM，可以脱离浏览器验证：
 
 ```bash
-node tools/verify.js          # 231 条断言：不变量/命令校验/长跑/战斗曲线/特技接线/人情账/科技链/补给线/外交/存档
+node tools/verify.js          # 240 条断言：不变量/命令校验/长跑/战斗曲线/特技接线/人情账/名望登用/宝物/战法/AI 决策/科技链/补给线/外交/存档
 node tools/verify.js -v       # 附明细
 node tools/sim.js --bot --months 200    # 推演一个主动玩家 200 回合
 node tools/sim.js --months 120          # 被动玩家会怎样

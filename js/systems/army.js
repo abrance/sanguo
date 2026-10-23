@@ -46,6 +46,7 @@ const Army = {
       x: fc.x, y: fc.y,
       eta, totalEta: eta,
       morale: Army._initialMorale(G, factionId, heroId),
+      createdTurn: G.meta.turn,
       mission: mission || 'attack',
     };
     G.armies[id] = a;
