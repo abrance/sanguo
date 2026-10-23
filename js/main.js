@@ -55,6 +55,13 @@
       }
     }
 
+    // 事件卡会盖住地图（截图要稳定的画面）：先替他拍板
+    {
+      const g0 = Store.get();
+      if (typeof EventSys !== 'undefined') EventSys.autoResolve(g0);
+      Store.replace(g0);
+    }
+
     const g = Store.get();
     Renderer.attach(g);
     Renderer.cam.zoom = Number(q.get('zoom') || 0.9);
@@ -89,7 +96,13 @@
     if (shot) { bootShot(shot); return; }
 
     // 有存档则直接续最近一局
-    const saved = Save.latest(DEFAULT_SCENARIO);
+    // 多剧本：挑所有剧本里最新的那一局继续
+    let saved = null;
+    for (const id of Object.keys(SCENARIOS)) {
+      const cand = Save.latest(id);
+      if (!cand) continue;
+      if (!saved || (cand.meta.startedAt || 0) > (saved.meta.startedAt || 0)) saved = cand;
+    }
     if (saved && saved.meta && saved.cities) {
       Store.init(saved);
       Renderer.attach(saved);

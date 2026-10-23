@@ -134,27 +134,40 @@ const TAODONG190_RIVALS = [['yuanshao', 'gongsunzan'], ...];
 
 ## 加一个剧本
 
-剧本 = 一套城池 + 武将 + 势力 + 初始年月。多剧本是平行的，各自独立存档。
+剧本 = 一套城池 + 武将 + 势力 + 初始年月。多剧本是平行的，各自独立存档，起始界面顶部可切换。
 
-1. 新建 `js/data/cities-<剧本>.js` / `heroes-<剧本>.js` / `factions-<剧本>.js`，
-   导出 `TAODONG190_CITY_ROWS` / `TAODONG190_HERO_ROWS` / `TAODONG190_FACTION_ROWS`（**注意变量名不能和现有剧本重名**，
-   因为全局作用域共享；建议直接导出到 `SCENARIOS` 里，见下）
+现成的例子就是 `js/data/scenarios/guandu200/`（官渡 200）—— 它只写「与 190 的差异」，不抄全表：
+
+| 文件 | 做法 |
+|---|---|
+| `cities.js` | 从 `TAODONG190_CITY_ROWS` 派生（同一张地理底图，只改初始人口/城墙） |
+| `factions.js` | 新写 11 家势力与领城（190 的很多家已亡） |
+| `heroes.js` | `亡者除名 + 归属重排 + 补录新将` 三段式，避免维护两份 135 行名单 |
+| `ambitions.js` | 该年代的大势（谁在什么时段打谁）+ 宿敌对 |
+
+步骤：
+
+1. 新建 `js/data/scenarios/<剧本id>/` 下的四个数据文件，顶层符号必须带剧本 id 前缀
+   （全局作用域共享，不带前缀会撞名）
 2. 在 `js/data/scenarios.js` 的 `SCENARIOS` 注册：
 
 ```js
 SCENARIOS.guandu200 = {
-  id: 'guandu200', name: '官渡', subtitle: '建安五年（200）',
-  year: 200, month: 1,
-  cityRows: CITY_ROWS_200, heroRows: HERO_ROWS_200, factionRows: FACTION_ROWS_200,
-  playable: FACTION_ROWS_200.map(r => r[0]),
+  id: 'guandu200', name: '官渡之战', subtitle: '建安五年（200）· 曹袁相持于官渡',
+  year: 200, month: 2,
+  emperorCityId: 'xuchang',          // 天子所在城（朝堂系统用）
+  cityRows, heroRows, factionRows, ambitions, rivals,
+  heroSkills: TAODONG190_HERO_SKILLS, // 特技表可跨剧本共用
+  playable: factionRows.map(r => r[0]),
   desc: '……',
 };
 ```
 
 3. 加进 `index.html` 的 script 列表（在 `scenarios.js` 之前）
-4. 起始界面会自动列出该剧本的所有势力与城池 —— 但**当前开局界面写死了 `DEFAULT_SCENARIO`**，
-   要真正支持"选剧本"，需要改 `js/view/ui.js` 的 `buildStart()` 与 `doStart()`
-   （存档 key 已按 `scenarioId` 分槽，`Save.key()` 无需改）
+4. **起始界面会自动出现剧本选择**（`UI_START.buildScenarios()`，只有一个剧本时该步隐藏），
+   势力 / 城池 / 天赋 / 存档列表都跟着所选剧本走，不用再改视图
+5. 事件可以按剧本限定：事件对象加 `scenario: 'guandu200'` 就只在该剧本抽到/触发
+   （190 的「关东会盟」不该在 200 年冒出来）
 
 **坑**：`State.create()` 里的初始建筑等级是写死的（`lumber:1, barnacks:1, office:1, granary:1`），
 不同年代若要"更发达/更荒废"的开局，就在剧本行里加字段并在 `create()` 里读。

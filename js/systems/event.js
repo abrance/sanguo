@@ -36,6 +36,7 @@ const EventSys = {
     for (const id of EVENT_KEYS) {
       const ev = EVENTS[id];
       if (!ev.anchor || G.events.seen[id]) continue;
+      if (!EventSys._allowed(ev, G)) continue;
       if (turn < ev.anchor[0] || turn > ev.anchor[1]) continue;
       if (G.events.queue.length >= EventSys.MAX_QUEUE) break;
       if (G.events.queue.some(q => q.eventId === id)) continue;
@@ -47,11 +48,18 @@ const EventSys = {
   },
 
   /** 抽一条：权重 × scope 系数；同 id 冷却中 / once 已触发过 / cond 为假 都丢弃 */
+  /** 该剧本能不能用这条事件（锚点尤其要分剧本，190 的会盟不该在 200 年触发） */
+  _allowed(ev, G) {
+    if (!ev.scenario) return true;
+    return ev.scenario === G.meta.scenarioId;
+  },
+
   draw(G, chainDepth) {
     const turn = G.meta.turn;
     const cands = [];
     for (const id of EVENT_KEYS) {
       const ev = EVENTS[id];
+      if (!EventSys._allowed(ev, G)) continue;
       const seen = G.events.seen[id];
 
       let cityIds = [];

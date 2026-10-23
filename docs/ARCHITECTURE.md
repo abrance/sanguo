@@ -24,7 +24,7 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 │    events.js      事件池（B1：蝗灾 / 流民 / 举荐）+ 延迟后果与连锁定义
 │    policies.js    太守方针 5 种、士族姓氏池
 │    missions.js    上命模板（上贡 / 输兵 / 征讨）
-│    scenarios.js   剧本注册表 + 跨剧本共用的在野伪势力定义
+│    scenarios.js   剧本注册表（目前两个：讨董 190 / 官渡 200）+ 跨剧本共用的在野伪势力定义
 │    scenarios/<剧本id>/     剧本专属数据，顶层符号必须带剧本 id 前缀
 │      taodong190/cities.js    70 郡坐标与初始等级
 │      taodong190/heroes.js    134 名武将、特技表

@@ -85,7 +85,7 @@ const State = {
       },
       factions: {},
       events: U.clone(EVENTS_DEFAULTS),
-      court: U.clone(COURT_DEFAULTS),
+      court: Object.assign(U.clone(COURT_DEFAULTS), sc.emperorCityId ? { emperorCityId: sc.emperorCityId } : {}),
       treasures: {},     // 宝物登记表：id → { holder: heroId|null, cityId: 所在城|null }
       cities: {},
       heroes: {},

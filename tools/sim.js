@@ -23,10 +23,11 @@ const EVERY = Number(arg('every', 20));
 const SEED = Number(arg('seed', 11));
 const FACTION = arg('faction', 'caocao');
 const CITY = arg('city', 'chenliu');
+const SCENARIO = arg('scenario', 'taodong190');
 const BOT = flag('bot');
 const VERBOSE = flag('v');
 
-const { api } = h.boot({ seed: SEED, factionId: FACTION, cityId: CITY, playerName: '推演' });
+const { api } = h.boot({ seed: SEED, scenarioId: SCENARIO, factionId: FACTION, cityId: CITY, playerName: '推演' });
 const get = () => api.Store.get();
 
 /* ── 主动玩家策略 ── */
@@ -123,7 +124,8 @@ function snapshot(tag) {
 }
 
 const header = ['回合', '年月', '势力', '最大', '我方城', '官阶', '战功', '直辖', '科技', '粮×'];
-console.log((BOT ? '主动玩家' : '被动玩家') + ` · 势力 ${FACTION} · 城 ${CITY} · 种子 ${SEED} · ${MONTHS} 回合\n`);
+console.log((BOT ? '主动玩家' : '被动玩家')
+  + ` · ${SCENARIO} · 势力 ${FACTION} · 城 ${CITY} · 种子 ${SEED} · ${MONTHS} 回合\n`);
 console.log(header.map((s, i) => i === 0 ? s.padEnd(5) : s.padEnd(i === 1 ? 7 : i === 3 ? 10 : 6)).join(''));
 
 /** 待决求和：推演器替玩家拍板（按当前强弱决定受或却），否则 AI 的求和永远悬着 */
