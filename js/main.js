@@ -12,6 +12,8 @@
   }
 
   function bootShot(q) {
+    // CSS 动画一律停掉：无限循环的闪烁会让像素对比随机翻车
+    document.body.classList.add('shot');
     const G = State.create({
       scenarioId: DEFAULT_SCENARIO,
       factionId: q.get('faction') || 'caocao',

@@ -124,7 +124,7 @@ const UI_CITY = {
     UI.$('selName').textContent = c.name;
     const ownerEl = UI.$('selOwner');
     ownerEl.textContent = (f ? f.name : '—') + (isDemesne ? ' · 直辖' : '');
-    ownerEl.style.color = f ? f.color : '';
+    ownerEl.style.setProperty('--c', f ? f.color : 'var(--ink)');
 
     UI.$('selSub').textContent =
       `${c.region} · ${TERRAIN[c.terrain].name}`
@@ -141,7 +141,7 @@ const UI_CITY = {
     const hint = UI.$('selHint');
     if (UI.pending && UI.pending.type === 'dispatch') {
       hint.classList.remove('hidden');
-      hint.style.color = '';
+      UI._tint(hint, null);
       hint.textContent = `已选 ${G.cities[UI.pending.fromId].name}，抽兵 ${Math.round(UI.pending.ratio * 100)}%。点地图上目标城池进军（悬停看胜算）。`;
     } else {
       hint.classList.add('hidden');
@@ -169,8 +169,7 @@ const UI_CITY = {
     const cap = cityCap(G.player);
     const full = G.player.demesne.length >= cap;
     const info = document.createElement('div');
-    info.className = 'dim';
-    info.style.cssText = 'line-height:1.7';
+    info.className = 'dim lh-17';
     info.innerHTML = `本方势力城池 · 非你直辖，不可营造 / 征兵 / 调兵<br>`
       + `直辖 <b>${G.player.demesne.length}/${cap}</b>`
       + `${full ? ' 已满 · 收归须先交出一座' : ''}`;
@@ -193,7 +192,6 @@ const UI_CITY = {
     if (UI._swapFor === c.id && full) {
       const pick = document.createElement('div');
       pick.className = 'actions';
-      pick.style.flexWrap = 'wrap';
       for (const id of G.player.demesne) {
         const dc = G.cities[id];
         if (!dc) continue;
@@ -213,7 +211,7 @@ const UI_CITY = {
 
   _btn(label, sub, onclick, reason) {
     const b = document.createElement('button');
-    b.innerHTML = sub ? `${label}<span class="dim" style="font-size:9px"> ${sub}</span>` : label;
+    b.innerHTML = sub ? `${label}<span class="dim fs-tiny"> ${sub}</span>` : label;
     if (reason) { b.disabled = true; b.title = reason; }
     b.onclick = onclick;
     return b;
@@ -256,7 +254,7 @@ const UI_CITY = {
       + `户籍 ${U.num(bd.hukou)} × (1.9 + 农田 ${bd.farm} × 0.9) = <b>${U.num(Math.round(bd.popBase))}</b><br>`
       + `× 治安 ${bd.orderMul.toFixed(2)}　× 兵营(${bd.barracks}) ${bd.barracksMul.toFixed(2)}<br>`
       + `× 校场(${bd.drill}) ${bd.drillMul.toFixed(2)}　× 士族(心${Math.round(bd.clanSat)}) ${bd.clanMul.toFixed(2)}<br>`
-      + `× 科技 ${bd.techMul.toFixed(2)}　= <b style="color:#e0b93a">${U.num(bd.total)}</b>`
+      + `× 科技 ${bd.techMul.toFixed(2)}　= <b class="gold-bright-ink">${U.num(bd.total)}</b>`
       + `</div>`;
     html += `<div class="capnote">兵额 = <b>户籍 × 农田</b> 打底，再乘治安、兵营、校场、士族满意度、军制科技。`
       + `户籍靠建造<b>府衙</b>与农政科技提升。<br>`
@@ -264,11 +262,11 @@ const UI_CITY = {
       + `骑兵另需<b>马场</b>（每级 +12% 骑兵额），水军另需<b>船坞</b>，器械受<b>冶铁坊</b>加成。</div>`;
 
     if (c.buildQueue.length) {
-      html += `<div style="margin-top:6px;font-size:10px;color:var(--ink-dim)">在建</div>`;
+      html += `<div class="dim fs-label mt-6">在建</div>`;
       for (const j of c.buildQueue) {
         const pct = Math.round((1 - j.left / j.total) * 100);
         html += `<div class="qrow"><span>${BUILDINGS[j.key].name}→${j.to}</span>
-          <div class="qbar"><div style="width:${pct}%"></div></div>
+          <div class="qbar"><div style="--w:${pct}%"></div></div>
           <span class="dim">${j.left}月</span></div>`;
       }
     }
@@ -314,7 +312,7 @@ const UI_CITY = {
     }
 
     const sep = document.createElement('div');
-    sep.style.cssText = 'flex-basis:100%;height:0';
+    sep.className = 'brk';
     box.appendChild(sep);
 
     if (total >= 20) {
@@ -346,15 +344,15 @@ const UI_CITY = {
     const free = Build.queueFree(c);
     const slots = State.buildSlots(c);
 
-    let html = `<div class="dim" style="margin-bottom:4px">工程位 ${c.buildQueue.length}/${slots}`
+    let html = `<div class="dim mb-4">工程位 ${c.buildQueue.length}/${slots}`
       + `${slots > 1 ? '（府衙 3 级）' : '（府衙 3 级可并行 2 项）'}</div>`;
 
     if (c.buildQueue.length) {
       c.buildQueue.forEach((j, i) => {
         const pct = Math.round((1 - j.left / j.total) * 100);
         html += `<div class="qrow">
-          <span style="min-width:74px">${BUILDINGS[j.key].name}→${j.to}</span>
-          <div class="qbar"><div style="width:${pct}%"></div></div>
+          <span class="minw-74">${BUILDINGS[j.key].name}→${j.to}</span>
+          <div class="qbar"><div style="--w:${pct}%"></div></div>
           <span class="dim">${j.left}月</span>
           ${isDemesne ? `<button class="mini" data-cancel="${i}">撤</button>` : ''}
         </div>`;
@@ -382,7 +380,7 @@ const UI_CITY = {
     }).sort((a, b) => a.rank - b.rank || a.cost.gold - b.cost.gold);
 
     const canCount = rows.filter(r => !r.rank).length;
-    html += `<div style="margin:6px 0 3px;font-size:10px;color:var(--ink-dim)">可营造 ${canCount} 项（按造价排序，卡住的沉底）</div>`;
+    html += `<div class="dim fs-label my-6-3">可营造 ${canCount} 项（按造价排序，卡住的沉底）</div>`;
 
     for (const r of rows) {
       const costTxt = r.maxed ? '—'
@@ -401,8 +399,7 @@ const UI_CITY = {
 
     if (!isDemesne) {
       const box = document.createElement('div');
-      box.className = 'actions';
-      box.style.marginTop = '8px';
+      box.className = 'actions mt-8';
       UI.fillNonDemesne(box, G, c);
       pane.appendChild(box);
       return;
@@ -432,8 +429,8 @@ const UI_CITY = {
       return;
     }
 
-    let html = `<div class="dim" style="margin-bottom:5px">
-      士族均心 <b style="color:${sat > 60 ? '#7fb37f' : sat > 40 ? '#c9a227' : '#d96a6a'}">${Math.round(sat)}</b>
+    let html = `<div class="dim mb-5">
+      士族均心 <b class="${sat > 60 ? 'sat-good' : sat > 40 ? 'sat-mid' : 'sat-bad'}">${Math.round(sat)}</b>
       · 钱粮产出 ×${State.clanEconMul(c).toFixed(2)}
       · 兵额战力 ×${State.clanMilMul(c).toFixed(2)}
     </div>`;
@@ -445,15 +442,15 @@ const UI_CITY = {
           <span class="dim">心 ${Math.round(cl.sat)} · 势 ${Math.round(cl.inf)}</span>
         </div>
         <div class="barbox">
-          <span class="dim" style="font-size:9px">心</span>
-          <div class="bar sat"><div style="width:${Math.round(cl.sat)}%"></div></div>
-          <span class="dim" style="font-size:9px">势</span>
-          <div class="bar inf"><div style="width:${Math.round(cl.inf)}%"></div></div>
+          <span class="dim fs-tiny">心</span>
+          <div class="bar sat"><div style="--w:${Math.round(cl.sat)}%"></div></div>
+          <span class="dim fs-tiny">势</span>
+          <div class="bar inf"><div style="--w:${Math.round(cl.inf)}%"></div></div>
         </div>
       </div>`;
     }
 
-    html += `<div class="dim" style="margin-top:6px;line-height:1.6">
+    html += `<div class="dim mt-6 lh">
       均心低于 28 且影响力高时，有叛乱之虞（折兵、掠库、治安大跌）。<br>
       战乱邻近、兵额过载、断粮都会压低士气。
     </div>`;
@@ -506,7 +503,7 @@ const UI_CITY = {
       ['骑/水/器', `${U.num(caps.cav)} / ${U.num(caps.nvy)} / ${U.num(caps.siege)}`],
     ])}</div>`;
 
-    html += `<div class="dim" style="margin-top:8px;line-height:1.6">
+    html += `<div class="dim mt-8 lh">
       委任太守后，每月自动按方营造、征兵，不必逐一手动。<br>
       你仍可随时手动操作同一座城，二者叠加。
     </div>`;
@@ -517,12 +514,9 @@ const UI_CITY = {
     if (rTarget) {
       const st = Rally.status(G, c);
       const d = Rally.detail(G, c, rTarget.id);
-      const stColor = st.code === 'moving' ? '#9ecf9e'
-        : st.code === 'ready' ? '#e0b93a'
-        : st.code === 'full' ? '#c9a227' : '#d96a6a';
 
-      html += `<div class="capformula" style="border-color:#3f6a3f">
-        补给目标 <b style="color:#9ecf9e">${rTarget.name}</b>
+      html += `<div class="capformula ally-box">
+        补给目标 <b class="ally-ink">${rTarget.name}</b>
         ${rTarget.owner === G.player.factionId ? '（同势力，到即并入）' : '（敌方，持续进攻）'}
         <div class="rallymath">
           本城 ${U.num(d.total)} 兵 ÷ 兵额 ${U.num(d.cap)}　（保护下限 ${U.num(d.keep)}）<br>
@@ -534,21 +528,21 @@ const UI_CITY = {
           ${d.bind === 'room' ? '<span class="bindtag">← 生效</span>' : ''}
         </div>
         ${d.bind === 'keep' && d.send > 0
-          ? `<div class="dim" style="margin-top:3px;color:#c9a227">本城兵只比保护下限多 ${U.num(d.total - d.keep)}，实际送出受此限制。想多送先募兵。</div>`
+          ? `<div class="dim gold-ink mt-3">本城兵只比保护下限多 ${U.num(d.total - d.keep)}，实际送出受此限制。想多送先募兵。</div>`
           : ''}
-        <div style="margin-top:5px;color:${stColor};font-size:11px">● ${U.esc(st.text)}</div>
+        <div class="rally-state ${st.code} mt-5 fs-body">● ${U.esc(st.text)}</div>
       </div>`;
     } else {
       html += `<div class="capnote">未设定。设定后每月自动把本城兵力送往目标城 —— 后方向前线输送、或持续骚扰敌城。<br>
         抽得越狠送得越快，但本城会被抽空；后方城建议<strong>同时设「备战」方针</strong>，太守每月募兵回血，才能形成不断的流水。</div>`;
     }
 
-    html += `<div class="batchbar" style="margin-top:6px">
-      <span class="dim" style="font-size:10px">每月送走本城</span>
+    html += `<div class="batchbar mt-6">
+      <span class="dim fs-label">每月送走本城</span>
       <select class="mini" id="rallyRatio">
         ${[0.1, 0.2, 0.35, 0.5, 0.7, 0.9].map(v => `<option value="${v}" ${Math.abs((c.rallyRatio || 0.5) - v) < 0.01 ? 'selected' : ''}>${Math.round(v * 100)}%</option>`).join('')}
       </select>
-      <span class="dim" style="font-size:10px">补至目标兵额</span>
+      <span class="dim fs-label">补至目标兵额</span>
       <select class="mini" id="rallyFill">
         ${[1, 1.2, 1.5, 2].map(v => `<option value="${v}" ${Math.abs((c.rallyFill || 1.2) - v) < 0.01 ? 'selected' : ''}>${Math.round(v * 100)}%</option>`).join('')}
       </select>
@@ -592,12 +586,12 @@ const UI_CITY = {
         catch (e) { UI.toast(e.message); }
       });
       b.title = P.desc;
-      if (on) b.style.borderColor = '#c9a227';
+      if (on) b.classList.add('sel');
       box.appendChild(b);
     }
 
     const sep = document.createElement('div');
-    sep.style.cssText = 'flex-basis:100%;height:0';
+    sep.className = 'brk';
     box.appendChild(sep);
 
     if (c.policy) {
@@ -608,7 +602,7 @@ const UI_CITY = {
     }
 
     const sep2 = document.createElement('div');
-    sep2.style.cssText = 'flex-basis:100%;height:0';
+    sep2.className = 'brk';
     box.appendChild(sep2);
 
     const ratioSel = UI.$('rallyRatio');

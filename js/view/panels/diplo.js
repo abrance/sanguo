@@ -99,12 +99,12 @@ const UI_DIPLO = {
       const pct = Math.round((rel + 100) / 2);
       return `<div class="diplo-row">
         <div class="drow1">
-          <i class="csw" style="background:${f.color}"></i>
+          <i class="csw fill" style="--fill:${f.color}"></i>
           <b>${U.esc(f.name)}</b>
-          <span class="dst" style="color:${s.color}">${s.name}</span>
+          <span class="dst c" style="--c:${s.color}">${s.name}</span>
           <span class="drel">${U.signed(rel)}</span>
         </div>
-        <div class="dbar"><i style="width:${pct}%;background:${s.color}"></i></div>
+        <div class="dbar"><i class="fill" style="--w:${pct}%;--fill:${s.color}"></i></div>
         <div class="drow2 dim">${s.desc}${pact ? ' · 密约在身' : ''}${cd ? ` · 使者 ${cd} 月后归` : ''}</div>
         <div class="dacts">${UI.diploButtons(layer, f, st, cd, G)}</div>
       </div>`;

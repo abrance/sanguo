@@ -236,6 +236,7 @@ const Army = {
       const idx = G.player.demesne.indexOf(city.id);
       if (idx >= 0) {
         G.player.demesne.splice(idx, 1);
+        State.dropLegionCity(G, city.id);
         G.stats.citiesLost++;
         State.log(G, 'bad', `我军失守：${city.name}陷落！`);
       }

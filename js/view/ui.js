@@ -17,6 +17,12 @@ const UI = {
 
   $: id => document.getElementById(id),
 
+  /** 提示条只换语义类，颜色一律留在 CSS —— 视图层不写颜色值 */
+  _tint(el, cls) {
+    el.classList.remove('tip-dim', 'tip-gold', 'tip-good', 'tip-bad');
+    if (cls) el.classList.add(cls);
+  },
+
   init() {
     UI.bindMap();
     UI.bindButtons();
@@ -265,7 +271,7 @@ const UI = {
       const est = Rally.estimate(G, Object.assign({}, from, prev), city.id);
       const same = city.owner === G.player.factionId;
       hint.classList.remove('hidden');
-      hint.style.color = same ? '#9a8c76' : '#e0b93a';
+      UI._tint(hint, same ? 'tip-dim' : 'tip-gold');
       hint.textContent = `持续调兵至 ${city.name}：每月约 ${U.num(est)} 兵（抽 ${Math.round(p.ratio * 100)}%）`
         + (same ? '' : ' · 该城非本方，将作为持续进攻');
       return;
@@ -283,7 +289,7 @@ const UI = {
         armies++;
       }
       const same = city.owner === G.player.factionId;
-      hint.style.color = same ? '#9a8c76' : '#e0b93a';
+      UI._tint(hint, same ? 'tip-dim' : 'tip-gold');
       hint.textContent = `${same ? '合兵至' : '合攻'} ${city.name}：${armies} 路约 ${U.num(total)} 兵`;
       return;
     }
@@ -298,14 +304,14 @@ const UI = {
 
     if (city.owner === G.player.factionId) {
       const same = city.grantedTo === PLAYER_HERO_ID;
-      hint.style.color = '#9a8c76';
+      UI._tint(hint, 'tip-dim');
       hint.textContent = `增援 ${city.name}：输送 ${U.num(total)}（${same ? '你直辖之城' : '同势力城池'}，直接并入）`;
       return;
     }
 
     const f = G.factions[city.owner];
     const pred = Combat.predict(G, plan, from.governor, city, G.player.factionId, State.bld(from, 'drill'));
-    hint.style.color = pred.win ? '#7fb37f' : '#d96a6a';
+    UI._tint(hint, pred.win ? 'tip-good' : 'tip-bad');
     hint.textContent = `攻 ${city.name}（${f ? f.name : '—'}）：预计${pred.win ? '可克' : '难克'}，`
       + `余兵约 ${U.num(pred.remain)}/${U.num(total)}`;
   },
@@ -372,8 +378,8 @@ const UI = {
     tip.innerHTML = `
       <div class="ct-head">
         <b>${U.esc(city.name)}</b>
-        <span style="color:${f ? f.color : '#888'}">${f ? U.esc(f.name) : '—'}${isDemesne ? ' · 直辖' : ''}</span>
-        ${st ? `<span class="dst" style="color:${st.color}">${st.name}</span>` : ''}
+        <span class="c" style="--c:${f ? f.color : 'var(--ink-ghost)'}">${f ? U.esc(f.name) : '—'}${isDemesne ? ' · 直辖' : ''}</span>
+        ${st ? `<span class="dst c" style="--c:${st.color}">${st.name}</span>` : ''}
       </div>
       <div class="ct-row"><span>守军</span><b>${U.num(troops)}</b><span>/</span>${U.num(cap)}
         <span>城墙</span><b>${city.wall.toFixed(1)}</b></div>
@@ -489,6 +495,9 @@ const UI = {
   // ───────── 按钮 ─────────
   bindButtons() {
     UI.$('btnEndTurn').onclick = () => {
+      // 战局已终：这颗按钮变成「重看结局」，不推进回合
+      const cur = Store.get();
+      if (cur && cur.over) { UI._endKey = null; UI.renderEnd(cur); return; }
       if (UI._turnLock) return;           // 过场期间不接第二次点击
       UI._turnLock = true;
       setTimeout(() => { UI._turnLock = false; }, 450);
@@ -564,11 +573,9 @@ const UI = {
     };
 
     UI.$('logClear').onclick = () => {
-      const G = Store.get();
-      if (!G) return;
-      G.log.length = 0;
+      if (!Store.get()) return;
+      Store.dispatch('CLEAR_LOG');       // 写状态只能走命令层
       UI._logMark = 0;
-      UI.render(G);
     };
 
     for (const btn of UI.$('logFilters').querySelectorAll('.chip')) {
@@ -650,13 +657,14 @@ const UI = {
     UI.renderDiplo(G);
     UI.renderLog(G);
 
-    UI.$('btnEndTurn').disabled = !!G.over;
+    UI.$('btnEndTurn').disabled = false;   // 结局时它当「重看结局」用
     UI.$('btnEndTurn').textContent = G.over
       ? (G.over.result === 'win' ? '天下一统' : '势力覆亡')
       : '结束回合';
 
     if (!UI.$('rankOverlay').classList.contains('hidden')) UI.renderRankHall(G);
     UI.renderPeace(G);
+    UI.renderEnd(G);
   },
 
   // ───────── 顶栏趋势（12 月 sparkline + 环比） ─────────
@@ -739,9 +747,9 @@ const UI = {
     const pct = U.clamp((left / total) * 100, 0, 100);
     el.className = 'mission-line' + (left <= 2 ? ' warn' : '') + (left <= 1 ? ' blink' : '');
     el.innerHTML = `<span class="mline-txt">【${U.esc(m.title)}】${U.esc(Mission.text(m, G))} · 限 ${left} 月 · 战功 ${U.signed(m.rewardMerit)}</span>`
-      + `<span class="mline-bar"><i style="width:${pct.toFixed(0)}%"></i></span>`;
+      + `<span class="mline-bar"><i style="--w:${pct.toFixed(0)}%"></i></span>`;
   },
 };
 
 Object.assign(UI,
-  UI_START, UI_RANK, UI_PEACE, UI_DIPLO, UI_CITY, UI_ARMY, UI_TECH, UI_LOG, UI_LEGION);
+  UI_START, UI_RANK, UI_PEACE, UI_DIPLO, UI_CITY, UI_ARMY, UI_TECH, UI_LOG, UI_LEGION, UI_END);

@@ -36,7 +36,7 @@ const UI_RANK = {
       `声望 <b>${Math.round(p.reputation)}</b>`,
       `直辖 <b>${p.demesne.length}/${cityCap(p)}</b>`,
       `上意 <b>${Math.round(p.favor == null ? 60 : p.favor)}</b>`,
-      `路线 <b style="color:${route.color}">${route.name}</b>`,
+      `路线 <b class="c" style="--c:${route.color}">${route.name}</b>`,
     ].map(x => `<span>${x}</span>`).join('');
 
     // 官阶阶梯
@@ -69,11 +69,11 @@ const UI_RANK = {
       }
 
       cards.push(`<div class="rcard ${on ? 'on' : ''} ${locked ? 'locked' : ''}" data-route="${key}">
-        <h4 style="color:${r.color}">${r.name}${on ? ' · 现行' : ''}</h4>
+        <h4 class="c" style="--c:${r.color}">${r.name}${on ? ' · 现行' : ''}</h4>
         <div class="bl">${r.buff.map(x => `<div>${U.esc(x)}</div>`).join('')}</div>
         <div class="dl">${r.debuff.map(x => `<div>${U.esc(x)}</div>`).join('')}</div>
-        ${locked ? `<div class="dim" style="margin-top:4px">${reason}</div>` : ''}
-        ${key === 'independent' && !on && canIndep ? `<div style="margin-top:5px;color:#e0998f">点击举兵自立</div>` : ''}
+        ${locked ? `<div class="dim mt-4">${reason}</div>` : ''}
+        ${key === 'independent' && !on && canIndep ? `<div class="mt-5 war-soft-ink">点击举兵自立</div>` : ''}
       </div>`);
     }
     UI.$('routeCards').innerHTML = cards.join('');
@@ -109,14 +109,14 @@ const UI_RANK = {
       mbox.innerHTML = `
         <div class="mtitle">${U.esc(m.title)}</div>
         <div class="mtext">${U.esc(Mission.text(m, G))}</div>
-        <div class="mbar ${left <= 2 ? 'warn' : ''}"><i style="width:${pct.toFixed(0)}%"></i></div>
+        <div class="mbar ${left <= 2 ? 'warn' : ''}"><i style="--w:${pct.toFixed(0)}%"></i></div>
         <div class="mmeta">限 ${left}/${total} 月 · 战功 ${U.signed(m.rewardMerit)} · 上意 ${U.signed(m.rewardFavor)}</div>
         <div class="mbtns">
           ${target ? `<button id="btnMissionLocate">定位${U.esc(target.name)}</button>` : ''}
           ${isExp
-            ? `<span class="dim" style="font-size:10px">于城池面板出兵攻取该城，克则自动复命</span>`
+            ? `<span class="dim fs-label">于城池面板出兵攻取该城，克则自动复命</span>`
             : (m.typeKey === 'envoy' || m.typeKey === 'intrigue')
-              ? `<span class="dim" style="font-size:10px">关系指标达成后自动复命</span>`
+              ? `<span class="dim fs-label">关系指标达成后自动复命</span>`
               : `<button class="go" id="btnMissionFulfil">${m.typeKey === 'tribute' ? '如约上缴' : '点兵输送'}</button>`}
           <button class="danger" id="btnMissionDecline">抗命不遵</button>
         </div>`;

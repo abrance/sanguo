@@ -88,6 +88,22 @@ const Build = {
     }
   },
 
+  /**
+   * 自动营建：把空着的工程位填满（太守 / 军区共用）。
+   * 空位不许因"预留金"空转——那是"偶见不营建"的老病根；
+   * 只有城里已经有活干时，才留 reserve 给征兵。
+   */
+  autoWork(G, c, P, reserve) {
+    for (let slot = 0; slot < 3 && Build.queueFree(c); slot++) {
+      const key = Build.autoPick(G, c, P.buildOrder);
+      if (!key) return;
+      const chk = Build.canBuild(G, c, key);
+      if (!chk.ok) return;
+      if (c.buildQueue.length && c.gold - chk.cost.gold < reserve) return;
+      try { Build.start(G, c, key, true); } catch (e) { return; }
+    }
+  },
+
   /** 给 AI / 太守用：按优先级找一个能开工的项目（缺料时先补基础设施） */
   autoPick(G, c, order) {
     const urgent = [];

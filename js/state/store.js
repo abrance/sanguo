@@ -313,6 +313,7 @@ const COMMANDS = {
       r.grantedTo = null;
       r.policy = null;          // 非直辖城不再由太守自动理政
       r.rallyTo = null;
+      State.dropLegionCity(G, releaseId);
       p.demesne = p.demesne.filter(id => id !== releaseId);
       State.log(G, 'note', `${r.name}改由属下治理，${c.name}收归直辖。`);
     } else {
@@ -521,6 +522,11 @@ const COMMANDS = {
 
   DECLINE_MISSION(G) {
     Mission.decline(G);
+  },
+
+  // ───────── 纪事 ─────────
+  CLEAR_LOG(G) {
+    G.log.length = 0;
   },
 
   // ───────── 权臣权柄 ─────────

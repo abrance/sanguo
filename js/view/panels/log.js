@@ -19,8 +19,8 @@ const UI_LOG = {
       .join('');
 
     box.innerHTML = (G.over
-      ? `<div class="l-turn" style="font-size:14px">${U.esc(G.over.text)}</div>`
-      : '') + (html || `<div class="dim" style="padding:6px 2px">${filter === 'all' && !q ? '暂无纪事。' : '此筛选下无记录。'}</div>`);
+      ? `<div class="l-turn fs-lead">${U.esc(G.over.text)}</div>`
+      : '') + (html || `<div class="dim p-6-2">${filter === 'all' && !q ? '暂无纪事。' : '此筛选下无记录。'}</div>`);
 
     if (filter === 'all' && !q) UI._logMark = G.log.length;
     if (UI._logAutoScroll) box.scrollTop = box.scrollHeight;
@@ -50,8 +50,8 @@ const UI_LOG = {
         <span class="bcard-rounds">${b.rounds} 合</span>
       </div>
       <div class="bcard-bar">
-        <i class="atk" style="width:${U.clamp(atkPct, 0, 100)}%"></i>
-        <i class="def" style="width:${U.clamp(defPct, 0, 100)}%"></i>
+        <i class="atk" style="--w:${U.clamp(atkPct, 0, 100)}%"></i>
+        <i class="def" style="--w:${U.clamp(defPct, 0, 100)}%"></i>
       </div>
       <div class="bcard-nums">
         <span>攻 ${U.esc(b.atkLead || '—')} 折 ${U.num(b.atkLoss)} · 余 ${U.num(b.atkRemain)}</span>

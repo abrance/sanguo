@@ -5,6 +5,7 @@ const Diplo = {
   WAR: 'war', NEUTRAL: 'neutral', TRUCE: 'truce', ALLY: 'ally',
 
   COOLDOWN: 3,          // 同一目标国 3 回合冷却
+  MIN_WAR_MONTHS: 6,    // 开战不足半年不议和
   MAX_ALLIES: 2,
   TRUCE_MONTHS: 12,
   PACT_MONTHS: 12,
@@ -149,6 +150,12 @@ const Diplo = {
     x.rel = U.clamp(x.rel - (backstab ? 40 : 30), -100, 100);
     if (backstab) x.grudge = true;
     Diplo._repute(G, a, backstab ? -12 : -4);
+    // 别国开战要播报，否则全图只剩你自己在打仗
+    if (a !== G.player.factionId && b !== G.player.factionId
+        && G.factions[a] && G.factions[b]) {
+      const casus = opts && opts.casus ? `（${opts.casus}）` : '';
+      Diplo._news(G, `${G.factions[a].name}向${G.factions[b].name}宣战${casus}。`);
+    }
     return x;
   },
 
@@ -253,6 +260,10 @@ const Diplo = {
     x.since = G.meta.turn;
     x.lastPeace = G.meta.turn;
     x.rel = U.clamp(x.rel + 10, -100, 100);
+    if (a !== G.player.factionId && b !== G.player.factionId
+        && G.factions[a] && G.factions[b]) {
+      Diplo._news(G, `${G.factions[a].name}与${G.factions[b].name}罢兵，停战 ${Diplo.TRUCE_MONTHS} 月。`);
+    }
     return x;
   },
 
@@ -401,6 +412,9 @@ const Diplo = {
         if (Diplo.commonEnemy(G, a, b)) d += 6;
         d -= 5 * Math.min(x.border, 3);
 
+        // 宿敌：旧怨每月自然结冰——乱世不靠剧本也打不完
+        if (Diplo.isRival(G, a, b)) d -= 2 + Math.floor(RNG.next() * 3);
+
         // 强弱悬殊：弱者更愿意示好
         const sa = Diplo.strength(G, a), sb = Diplo.strength(G, b);
         if (sa > sb * 1.5 || sb > sa * 1.5) d += 2;
@@ -428,6 +442,34 @@ const Diplo = {
     return Math.max(max, myStr * 0.4);
   },
 
+  // ───────── 剧本大势 ─────────
+  /** 该势力此刻想打谁（时间窗内取一条能打的）；没有就 null */
+  ambitionOf(G, fid) {
+    const list = (getScenario(G.meta.scenarioId).ambitions || {})[fid];
+    if (!list) return null;
+    const t = G.meta.turn;
+    for (const [target, from, to, why, sure] of list) {
+      if (t < from || t > to) continue;
+      const f = G.factions[target];
+      if (!f || f.dead) continue;
+      if (Diplo.statusOf(G, fid, target) !== Diplo.NEUTRAL) continue;
+      return { target, why, sure: !!sure };
+    }
+    return null;
+  },
+
+  isRival(G, a, b) {
+    const list = getScenario(G.meta.scenarioId).rivals || [];
+    return list.some(([x, y]) => (x === a && y === b) || (x === b && y === a));
+  },
+
+  /** 天下大事：每月最多一条，让玩家看得见别处在打仗 */
+  _news(G, text) {
+    if (G.meta.newsTurn === G.meta.turn) return;
+    G.meta.newsTurn = G.meta.turn;
+    State.log(G, 'note', `【天下】${text}`);
+  },
+
   // ───────── AI 外交 ─────────
   _phase(fid) {
     let h = 0;
@@ -440,8 +482,10 @@ const Diplo = {
       if (f.kind === 'free' || f.dead) continue;
       // 玩家当家的势力：宣战/结盟/求和都由玩家决断，AI 不得代办
       if (f.id === G.player.factionId && f.rulerId === PLAYER_HERO_ID) continue;
-      if (Diplo._phase(f.id) !== G.meta.turn % 3) continue;
       if (!State.factionCities(G, f.id).length) continue;
+      // 剧本既定之战不受 1/3 轮派限制，否则窗口一过就打不起来了
+      const amb = Diplo.ambitionOf(G, f.id);
+      if (Diplo._phase(f.id) !== G.meta.turn % 3 && !(amb && amb.sure)) continue;
 
       const wars = [];
       for (const other of Object.keys(G.factions)) {
@@ -449,11 +493,12 @@ const Diplo = {
         if (Diplo.statusOf(G, f.id, other) === Diplo.WAR) wars.push(other);
       }
 
-      // 1 多线作战或打不过 → 向最强的敌国求和
+      // 1 多线作战或打不过 → 向最强的敌国求和（开打不足半年的不议和，否则天下无战）
       if (wars.length) {
-        const enemies = wars.map(id => ({ id, s: Diplo.strength(G, id) })).sort((a, b) => b.s - a.s);
+        const ripe = wars.filter(id => G.meta.turn - Diplo.pair(G, f.id, id).since >= Diplo.MIN_WAR_MONTHS);
+        const enemies = ripe.map(id => ({ id, s: Diplo.strength(G, id) })).sort((a, b) => b.s - a.s);
         const worst = enemies[0];
-        const losing = wars.length >= 2 || Diplo.strength(G, f.id) < worst.s * 0.85;
+        const losing = worst && (ripe.length >= 2 || Diplo.strength(G, f.id) < worst.s * 0.85);
         // 玩家当家的势力不许被 AI 代表去求和（否则会出现"莫名被停战、报价瞬间作废"）。
         // 臣属时君主仍可自行罢兵——那是"效忠一方"的代价，玩家可上表进言。
         const playerRules = f.id === G.player.factionId && f.rulerId === PLAYER_HERO_ID;
@@ -501,7 +546,18 @@ const Diplo = {
         }
       }
 
-      // 3 睦邻不攻；有可乘之机才兴兵问罪
+      // 3 剧本野望：时段一到，该势力就盯着既定目标（必战的几仗不看强弱）
+      if (amb) {
+        const x = Diplo.pair(G, f.id, amb.target);
+        x.rel = U.clamp(Math.min(x.rel, -45), -100, 100);
+        const strong = Diplo.strength(G, f.id) > Diplo.strength(G, amb.target) * 1.05;
+        if ((amb.sure || strong) && RNG.chance(amb.sure ? 1 : 0.30 + f.aggression * 0.35)) {
+          Diplo.declareWar(G, f.id, amb.target, { casus: amb.why });
+          continue;
+        }
+      }
+
+      // 3.5 随机兴兵：睦邻不攻，有可乘之机才问罪
       if (RNG.chance(f.aggression * 0.5)) {
         const myStr = Diplo.strength(G, f.id);
         const targets = Object.keys(G.factions)
@@ -517,7 +573,7 @@ const Diplo = {
         if (targets.length) {
           const t = targets[0];
           f.treasury = Math.max(0, f.treasury - 500);
-          Diplo.declareWar(G, f.id, t);
+          Diplo.declareWar(G, f.id, t, { casus: '边境屡遭侵扰' });
           Diplo._log(G, f, t, `【宣战】${f.name}以${G.factions[t].name}屡犯边境为辞，兴兵问罪。`);
           continue;
         }

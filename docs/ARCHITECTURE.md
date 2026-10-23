@@ -64,6 +64,8 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 │      army.js      军务面板
 │      tech.js      科技面板
 │      log.js       纪事面板
+│      legion.js    军区面板（一将统辖多城）
+│      end.js       结局弹窗（天下一统 / 势力覆亡）
 │
 └─ js/main.js       启动：渲染循环（requestAnimationFrame）
 ```
@@ -186,7 +188,7 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
 10  Rank.monthly      声望自然增长 + 晋升检查
 11  AI.run            各势力决策（玩家势力的非直辖城也走这里）—— 细节见 [AI.md](AI.md)
 12  _playerFate       直辖城全失 → 流失投奔
-13  _cleanupFactions  势力覆灭清理
+13  _cleanupFactions  势力覆灭清理（无城即亡，残军清空）
 14  State.checkEnd    胜负判定
 ```
 
@@ -277,10 +279,36 @@ G.player.legions = [{ id, heroId, cityIds[], policy, stance, targetFid, stats:{a
 8. **玩家命令的入口校验只有两处** —— `dispatch` 统一拦终局（`G.over`，白名单见 `OVER_SAFE`），
    城池权限统一走 `mustOwnCity(G, cityId)`。新命令直接调它，不要另写 `c.grantedTo !== PLAYER_HERO_ID`。
 
+9. **视图层不写状态** —— `js/view/**` 里不能出现 `G.xxx = …`。连「清空纪事」也走 `dispatch('CLEAR_LOG')`。
+   视图只能读 `Store.get()`，改状态一律 `dispatch`。
+
+10. **样式值只有一个来源** —— 颜色/字号/圆角只从 `style.css` 的 `:root` token 或数据层自带配色
+   （地形 `TERRAIN[].color`、势力 `f.color`、科技分支 `BRANCH_COLOR`）来。
+   `js/view/**` 与 `index.html` 里禁止裸色值与静态内联样式，详见 [STYLE.md](STYLE.md)。
+
 ---
 
 ## 6. UI 与逻辑的分工
 
+### 视图层内部四层
+
+| 层 | 住在哪 | 管什么 |
+|---|---|---|
+| 结构 | `view/**` 的模板字符串 / `index.html` | 标签与 class 名 |
+| 语义类 | `style.css` 组件区（`.card .qbar .brow …`） | 这类组件长什么样 |
+| 工具类 | `style.css` 工具层（`.fs-label .mt-6 .p-4 …`） | 纯间距/字号，替代内联样式 |
+| 数据变量 | JS 写 `style="--w:42%"`，CSS 翻译成属性 | 数值与数据配色 |
+
+分界线就一句：**JS 传值，CSS 管属性名**。所以视图里能看到 `style="--w:42%"`，
+但看不到 `style="width:42%"`；能看到 `class="c" style="--c:${f.color}"`，看不到 `color:#xxx`。
+
+例外：`renderer.js` / `map.js` / sparkline 是 canvas 绘制，吃不到 CSS 继承，用色自带在脚本里。
+
+`node tools/verify.js` 的「分层守护」会拦住越界：systems 碰 DOM 或调 `dispatch`、
+core/data 碰 `Store`/`UI`/`Bus`、view 直接改 `G`、`style.css` 规则区裸色值、
+非 `--` 开头的数据内联样式。
+
+### 数值与文案
 - 数值展示要**复用逻辑层的函数**：城池面板的兵额拆解直接调 `State.troopCapBreakdown`，
   补给线的"本次送出多少"直接调 `Rally.detail`。不要在视图里重算一遍公式。
 - 按钮的禁用原因来自逻辑层的校验函数（`Recruit.check` / `Build.canBuild`），

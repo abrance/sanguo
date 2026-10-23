@@ -44,6 +44,7 @@ const Favor = {
       if (victim) {
         victim.grantedTo = null;
         p.demesne = p.demesne.filter(id => id !== victimId);
+        State.dropLegionCity(G, victimId);
         if (p.homeCityId === victimId) p.homeCityId = p.demesne[0];
         p.favor = U.clamp(p.favor + 10, 0, 100);
         State.log(G, 'bad', `上级削权：${victim.name}收归势力直辖，不再由你节制。`);
