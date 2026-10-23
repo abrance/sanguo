@@ -538,6 +538,13 @@ const State = {
     return 0;
   },
 
+  /** 按倍率缩放一份兵表（预估守军在行军期间补了多少兵） */
+  scaleTroops(troops, mul) {
+    const out = {};
+    for (const k of TROOP_KEYS) out[k] = Math.round((troops[k] || 0) * mul);
+    return out;
+  },
+
   neighbors(G, cityId, maxDist = 230) {
     const c = G.cities[cityId];
     if (!c) return [];

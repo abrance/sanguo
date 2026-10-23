@@ -1995,8 +1995,10 @@ section('攻城逐轮推进 + 战法');
     } else {
       a.api.Store.dispatch('END_TURN');
       const z2 = a.get();
-      const left = Object.values(z2.armies).filter(x => x.battle);
-      ok('结束回合：自动收尾挂起的战斗', left.length === 0, `残留 ${left.length}`);
+      // 只断言「这一场」被收尾：同一回合别处可能又有新的攻城开打（那是正常的挂起）
+      ok('结束回合：自动收尾挂起的战斗',
+        !z2.armies[ag.id] || !z2.armies[ag.id].battle,
+        `残留 ${Object.values(z2.armies).filter(x => x.battle).length}`);
     }
   }
 }

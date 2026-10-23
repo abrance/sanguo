@@ -12,7 +12,7 @@ const AI = {
   /** 全部旋钮集中一处 */
   TUNE: {
     commitRatio: 0.75,      // 单回合最多抽走全势力在册兵力的比例
-    reservePeace: 0.30,     // 非前线城留守（占现有兵力）
+    reservePeace: 0.25,     // 非前线城留守（占现有兵力）
     reserveFront: 0.40,     // 前线城（邻接敌国）留守（占现有兵力）
     reserveThreat: 0.90,    // 已有敌军在途指向此城：按现有兵力保留
     reserveForce: 0.15,     // 硬底：任何情况下留在城里不低于兵额的 15%
@@ -22,6 +22,11 @@ const AI = {
     avoidMonths: 6,         // 打不下来的目标冷落几个月
     minSpare: 120,          // 可抽兵少于这个数就不折腾
     minArmy: 150,           // 成军下限（与其送人头不如囤着）
+    attackMargin: 0.55,     // 出兵要求：预测能赢且剩兵 ≥ 该比例（守军会在行军途中补兵）
+    maxReinforce: 2,        // 单次 defend 最多造几支援军
+    maxReinforceInTransit: 3, // 在途援军超过这个数就不再抽调
+    convergeCooldown: 4,    // 两次合攻之间至少隔几个月
+    convergeMaxWall: 3,     // 城墙超过这个等级就不指望合攻
     frontRange: 235,        // 判定「前线」与「邻接目标」的半径
   },
 
@@ -112,6 +117,29 @@ const AI = {
         && !(G.factions[id] && G.factions[id].dead)
         && Diplo.statusOf(G, f.id, id) === Diplo.WAR);
 
+    // ── 预判威胁：还没看到敌军，但邻国驻军足以压过来 → 提前补防 ──
+    // 只看已交战的邻国，免得把「和平邻居的守军」当威胁，导致到处乱补兵
+    const pressureOf = c => {
+      let best = 0;
+      for (const nb of State.neighbors(G, c.id, T.frontRange).slice(0, 6)) {
+        if (nb.owner === f.id || nb.owner === 'free') continue;
+        if (!Diplo.canAttack(G, nb.owner, f.id)) continue;
+        best = Math.max(best, Combat.attackScore(G, nb.garrison, nb.governor, nb.terrain, nb.owner));
+      }
+      return best;
+    };
+    const exposed = cities
+      .filter(c => !incoming[c.id] && isFront(c))
+      .map(c => {
+        const pressure = pressureOf(c);
+        if (pressure <= 0) return null;
+        const def = Combat.defenseScore(G, c);
+        return { cityId: c.id, pressure, defense: def, ratio: def / Math.max(1, pressure) };
+      })
+      .filter(e => e && e.ratio < 1.0)
+      .sort((a, b) => a.ratio - b.ratio)
+      .slice(0, 2);
+
     // ── 目标清单：能打的、算得出胜算的、不在冷落期的 ──
     const targets = [];
     for (const from of cities) {
@@ -136,7 +164,20 @@ const AI = {
         if (size < T.minArmy) continue;
 
         const drill = State.bld(from, 'drill');
-        const pred = Combat.predict(G, troops, from.governor, nb, f.id, drill);
+        // 守军会在行军的这几个月里补兵/增援 —— 按每月 +10%（上限 +40%）预估，
+        // 否则「预测能赢」的仗有一半会打输（实测败仗率 40% vs 19%）
+        const eta = Army.estimateEta(from, nb, troops, Army.speedMul(G, f.id));
+        const grow = 1 + Math.min(0.40, 0.10 * eta);
+        // 取较大者：现在守军 / 现守军×行军增幅 / 兵额×0.8（战时对手会在你路上补兵）
+        const capDef = State.troopCapOf(G, nb) * 0.80;
+        const projTroops = {};
+        for (const k of TROOP_KEYS) {
+          projTroops[k] = Math.max(
+            Math.round((nb.garrison[k] || 0) * grow),
+            Math.round(capDef * ((nb.garrison[k] || 0) / Math.max(1, troopTotal(nb.garrison)))));
+        }
+        const proj = { ...nb, garrison: projTroops };
+        const pred = Combat.predict(G, troops, from.governor, proj, f.id, drill);
         const atk = Combat.attackScore(G, troops, from.governor, from.terrain, f.id, drill);
         const def = Combat.defenseScore(G, nb);
         targets.push({
@@ -157,7 +198,7 @@ const AI = {
     return {
       turn, faction: f, cities, exclude,
       atWar: wars.length > 0, wars,
-      threatened, incoming,
+      threatened, incoming, exposed,
       isFront, garrison, reserveOf, spareOf,
       totalTroops, totalCap, spareTotal, outgoing,
       targets,
