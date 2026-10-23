@@ -537,20 +537,31 @@ const Renderer = {
     const isMine = a.factionId === playerFid;
     const size = U.clamp(7 * Math.max(0.8, z), 6, 13);
 
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate(-Math.PI / 2);
+    // 地面软影（与城池同一套光向：东南）
     ctx.beginPath();
-    ctx.moveTo(size, 0);
-    ctx.lineTo(-size * 0.7, size * 0.75);
-    ctx.lineTo(-size * 0.7, -size * 0.75);
-    ctx.closePath();
-    ctx.fillStyle = color;
+    ctx.ellipse(p.x + size * 0.22, p.y + size * 0.3, size * 0.8, size * 0.5, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.fill();
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = isMine ? '#ffe9a8' : 'rgba(0,0,0,0.7)';
-    ctx.stroke();
-    ctx.restore();
+
+    // 主体三角：先画一枚压暗的底片（往东南错开一点），再压本色 —— 薄薄一层厚度
+    for (const pass of [0, 1]) {
+      ctx.save();
+      ctx.translate(p.x + (pass ? 0 : size * 0.16), p.y + (pass ? 0 : size * 0.22));
+      ctx.rotate(-Math.PI / 2);
+      ctx.beginPath();
+      ctx.moveTo(size, 0);
+      ctx.lineTo(-size * 0.7, size * 0.75);
+      ctx.lineTo(-size * 0.7, -size * 0.75);
+      ctx.closePath();
+      ctx.fillStyle = pass ? color : shade(color, 0.45);
+      ctx.fill();
+      if (pass) {
+        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = isMine ? '#ffe9a8' : 'rgba(0,0,0,0.7)';
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
 
     if (z > 0.6) {
       ctx.font = `${U.clamp(9 * z, 9, 12)}px "Noto Serif SC",serif`;
@@ -714,15 +725,31 @@ const Renderer = {
 
     const detail = opts.detail !== false;
 
-    // 角楼（郡城 2 座后角 / 都城 4 座，前角即箭楼）
+    // 角楼 / 箭楼：座数随城墙等级走（郡城 1~2 座后角，都城 2~4 座、前角即箭楼）
     if (detail && tier >= 1) {
       const t = Math.max(2, r * 0.3);
+      const wallLv = opts.wall || 1;
+      const towers = tier === 2
+        ? [[-1, -1], [1, -1], [-1, 1], [1, 1]].slice(0, wallLv >= 3 ? 4 : 2)
+        : [[-1, -1], [1, -1]].slice(0, wallLv >= 2 ? 2 : 1);
       ctx.fillStyle = color;
-      ctx.fillRect(left - t * 0.5, top - t * 0.5, t, t);
-      ctx.fillRect(left + w - t * 0.5, top - t * 0.5, t, t);
-      if (tier === 2) {
-        ctx.fillRect(left - t * 0.5, top + h - t * 0.5, t, t);
-        ctx.fillRect(left + w - t * 0.5, top + h - t * 0.5, t, t);
+      towers.forEach(([sx, sy], i) => {
+        // 城墙被打塌：塌掉最后一座角楼，只在原地留一堆碎石
+        if (damaged && i === towers.length - 1) return;
+        const tx = sx < 0 ? left - t * 0.5 : left + w - t * 0.5;
+        const ty = sy < 0 ? top - t * 0.5 : top + h - t * 0.5;
+        ctx.fillRect(tx, ty, t, t);
+      });
+      if (damaged) {
+        const [sx, sy] = towers[towers.length - 1];
+        const tx = sx < 0 ? left - t * 0.5 : left + w - t * 0.5;
+        const ty = sy < 0 ? top - t * 0.5 : top + h - t * 0.5;
+        ctx.fillStyle = 'rgba(10,9,7,0.55)';
+        ctx.fillRect(tx, ty, t, t);
+        ctx.fillStyle = shade(color, 0.42);
+        for (let k = 0; k < 4; k++) {
+          ctx.fillRect(tx - t * 0.2 + k * t * 0.36, ty + t * 0.72, t * 0.24, t * 0.3);
+        }
       }
     }
 
