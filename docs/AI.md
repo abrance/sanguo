@@ -20,6 +20,7 @@ AI.run                      每个势力每月一次
     ├ 前线判定 / 留守下限 / 可抽兵力（spareOf）
     ├ 兵力账目（在册兵 / 出城兵 / 本回合已投入）
     └ 目标清单（带 predict 胜算，按「能不能赢」排序）
+ ├ AI._equipTreasures      把本势力城里的宝物发给最强的将（同槽只在更稀有才换）
  └ AIEcon.run(G, f, plan)   税 → 募兵（受威胁城优先）→ 营造（战时先堆墙）
  └ AIWar.run(G, f, plan)    防守 > 进攻 > 集结，三选一
  └ AI._trace(G, plan)       G.meta.aiTrace 打开时留痕，供排查
@@ -149,6 +150,8 @@ severe = threatened 里「eta ≤ 1 或来犯兵力 ≥ 守军 × 1.1」的城
 - 战败/无果后退：部队消失而目标仍在敌手 → `_settleOffense` 记 `_avoid[城] = 回合 + 6`，
   6 个月内不再打它；同目标若已在路上（`pendingTargets`）也不重复派兵
 - `force`（军区「征讨」号令）：不算预算、不掷骰、不看胜算，但保留兵额 15% 的硬底
+- **战法**：AI 之间的战斗由 `Combat.resolve(..., { aiTactic: true })` 在第一轮放一个战法
+  （按 `Combat._aiTactic` 的收益优先级挑第一个可用的；玩家指挥的仗不走这条路，由界面决定）
 
 ### 5.4 集结 `mass`
 

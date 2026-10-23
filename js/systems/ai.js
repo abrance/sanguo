@@ -48,6 +48,7 @@ const AI = {
       }
 
       AI._settleOffense(G, f);
+      AI._equipTreasures(G, f, cities);
       const plan = AI.assess(G, f, cities, { exclude });
       AIEcon.run(G, f, plan);
       AIWar.run(G, f, plan, stamp);
@@ -208,6 +209,40 @@ const AI = {
         : T.maxRoutesPeace,
       budget: Math.max(0, Math.round(totalTroops * T.commitRatio) - AI._committedTroops(G, f)),
     };
+  },
+
+  /**
+   * 宝物：把本势力城里躺着的宝物发给最能用的将（docs/HERO.md §4.3）。
+   * 玩家侧只发非直辖城的，直辖城的宝物留给玩家自己支配。
+   */
+  _equipTreasures(G, f, cities) {
+    const pool = [];
+    for (const c of cities) {
+      for (const tid of State.treasuresAt(G, c.id)) pool.push({ tid, cityId: c.id });
+    }
+    if (!pool.length) return;
+
+    const heroes = Object.values(G.heroes)
+      .filter(h => h.alive && h.factionId === f.id && h.id !== PLAYER_HERO_ID)
+      .sort((a, b) => (b.tong + b.wu + b.zhi) - (a.tong + a.wu + a.zhi));
+    if (!heroes.length) return;
+
+    for (const { tid, cityId } of pool.slice(0, 3)) {
+      const def = TREASURES[tid];
+      if (!def) continue;
+      let best = null, bestGain = 0;
+      for (const h of heroes) {
+        h.slots = h.slots || {};
+        const cur = h.slots[def.cat] ? TREASURES[h.slots[def.cat]] : null;
+        const gain = (def.rare || 1) - (cur ? (cur.rare || 1) : 0);
+        if (gain > bestGain) { bestGain = gain; best = h; }
+      }
+      if (!best) continue;
+      const old = best.slots[def.cat] || null;
+      best.slots[def.cat] = tid;
+      G.treasures[tid] = { holder: best.id, cityId: null };
+      if (old) G.treasures[old] = { holder: null, cityId: best.cityId || cityId };
+    }
   },
 
   /** 本回合已投入进攻的兵力（含军区，避免 AI 与军区两边抢兵） */

@@ -20,6 +20,7 @@ const META_DEFAULTS = { rngState: null, uidSeq: null };
 const PLAYER_DEFAULTS = {
   favor: 60, mission: null, missionCooldown: 0, domActionTurn: 0, route: 'loyal',
   talent: null, pacts: [], diploCooldown: {}, usurp: 0, legions: [], beseech: null,
+  boughtTreasure: false,
 };
 const FACTION_DEFAULTS = {};
 const CITY_DEFAULTS = {
