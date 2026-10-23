@@ -485,5 +485,5 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
 8. **官阶在自立后语义不清** —— 自立后你是君主，但仍沿用 7 阶官阶（现在代表行政容量）。面板上以「自立之主」标注，逻辑上未另设君主阶。
 9. **玩家势力的城会自己打仗** —— 为保证玩家势力不会因「全图只有这家长不大」而必败，非直辖城由 AI 以完整逻辑（含出征）运作；代价是你无法完全控制盟友的行动，可能丢城。
 10. **上命类型偏少** —— 只有上贡 / 输兵 / 征讨三种，缺守土、离间、护送等；征讨目标按「邻接且最弱」机械选取，不看你实际能否打赢。
-11. **特技有一半是假文案** —— `TAODONG190_HERO_SKILLS` 声明 11 个特技，`combat.js` 只读 `atk / def / defenseCity`，`economy.js` 只读 `economy`；`cavalry / archer / infantry / navy / siege / morale / enemyDef / enemyAtk` 八项从未被读取（`byType` 用技能 id 去索引技能对象，键写错）。颜良文丑「突击」、太史慈「神射」当前不生效。修法见 [docs/HERO.md](docs/HERO.md) §5.1。
+11. **特技有一半是假文案** —— `TAODONG190_HERO_SKILLS` 声明 11 个特技，`combat.js` 只读 `atk / def / defenseCity`，`economy.js` 只读 `economy`；`cavalry / archer / infantry / navy / siege / morale / enemyDef / enemyAtk` 八项从未被读取（`byType` 用技能 id 去索引技能对象，键写错）。颜良文丑「突击」、太史慈「神射」当前不生效。**已修**（`feat/hero-skills-wiring`，8 个键全部接线，见 [docs/HERO.md](docs/HERO.md) §5.1；`verify.js` 新增「武将特技接线」板块 + 一条「效果键不许写了没人读」的静态守护）。
 12. **人物层与故事层缺位** —— 已知问题 5 的完整解法见 [docs/HERO.md](docs/HERO.md)（人情账/登用/宝物）与 [docs/EVENTS.md](docs/EVENTS.md)（事件/朝堂/结局）。

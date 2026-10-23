@@ -1273,6 +1273,55 @@ section('玩家天赋');
 }
 
 // ─────────────────────────────────────────────
+section('武将特技接线');
+{
+  const { api, get } = h.boot({ seed: 7 });
+  const G = get();
+  const base = { terrain: 'plain', morale: 55 };
+  const powOf = (heroId, troops, extra) => api.Combat.power(G, troops, heroId, { ...base, ...extra });
+  // 剥离「统领加成」(1 + tong/200)，只留特技自身的倍率
+  const skillMul = (heroId, troops, extra) => {
+    const h = G.heroes[heroId];
+    return powOf(heroId, troops, extra) / ((1 + h.tong / 200) * powOf(null, troops, extra));
+  };
+  const near = (a, b, tol = 0.005) => Math.abs(a - b) <= tol;
+
+  // 兵种特技（旧版本键名写错，一律不生效）
+  ok('突击：骑兵 +15%', near(skillMul('yanliang', { cav: 1000 }), 1.15), skillMul('yanliang', { cav: 1000 }).toFixed(3));
+  ok('突击：不带骑兵则不生效', near(skillMul('yanliang', { inf: 1000 }), 1), skillMul('yanliang', { inf: 1000 }).toFixed(3));
+  ok('突击：混编按兵种占比加权', near(skillMul('yanliang', { cav: 500, inf: 500 }), 1.075), skillMul('yanliang', { cav: 500, inf: 500 }).toFixed(3));
+  ok('神射：弓兵 +15%', near(skillMul('taishici', { arc: 1000 }), 1.15), skillMul('taishici', { arc: 1000 }).toFixed(3));
+  ok('陷阵：步兵 +15%', near(skillMul('yuejin', { inf: 1000 }), 1.15), skillMul('yuejin', { inf: 1000 }).toFixed(3));
+  ok('水战：水军 +25%', near(skillMul('caimao', { nvy: 1000 }), 1.25), skillMul('caimao', { nvy: 1000 }).toFixed(3));
+
+  // 火计：攻城伤害只在进攻方结算
+  ok('火计：进攻 +20%', near(skillMul('liru', { inf: 1000 }, { isDefender: false }), 1.20), skillMul('liru', { inf: 1000 }, { isDefender: false }).toFixed(3));
+  ok('火计：防守不加攻城伤害', near(skillMul('liru', { inf: 1000 }, { isDefender: true }), 1), skillMul('liru', { inf: 1000 }, { isDefender: true }).toFixed(3));
+
+  ok('扬威：全军士气 +15%', near(skillMul('yuanshao', { inf: 1000 }), 1.15), skillMul('yuanshao', { inf: 1000 }).toFixed(3));
+  ok('铁壁：守城 +20%', near(skillMul('xurong', { inf: 1000 }, { isDefender: true }), 1.20), skillMul('xurong', { inf: 1000 }, { isDefender: true }).toFixed(3));
+
+  // 压制型特技：作用于「敌方」战力
+  const plainPow = powOf(null, { inf: 1000 });
+  ok('火计：令敌全军防御 -8%', near(powOf(null, { inf: 1000 }, { enemyHeroId: 'liru' }) / plainPow, 0.92),
+    (powOf(null, { inf: 1000 }, { enemyHeroId: 'liru' }) / plainPow).toFixed(3));
+  ok('急智：令敌全军攻击 -10%', near(powOf(null, { inf: 1000 }, { enemyHeroId: 'jiaxu' }) / plainPow, 0.90),
+    (powOf(null, { inf: 1000 }, { enemyHeroId: 'jiaxu' }) / plainPow).toFixed(3));
+
+  // 静态守护：特技表里的效果键必须都在「代码真的读了」的白名单内
+  const READ_KEYS = ['atk', 'def', 'defenseCity', 'economy', 'cavalry', 'archer',
+    'infantry', 'navy', 'siege', 'morale', 'enemyDef', 'enemyAtk'];
+  const META_KEYS = ['name', 'desc'];
+  const deadKeys = [];
+  for (const [sid, sk] of Object.entries(api.TAODONG190_HERO_SKILLS)) {
+    for (const k of Object.keys(sk)) {
+      if (!READ_KEYS.includes(k) && !META_KEYS.includes(k)) deadKeys.push(`${sid}.${k}`);
+    }
+  }
+  ok('特技效果键无「写了没人读」', !deadKeys.length, deadKeys.join(', '));
+}
+
+// ─────────────────────────────────────────────
 console.log(`\n${fail === 0 ? '全部通过' : '有失败'}：${pass} 通过 / ${fail} 失败`);
 if (fail) {
   console.log('\n失败项：');
