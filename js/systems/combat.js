@@ -47,12 +47,26 @@ const Combat = {
       if (sk.atk) p *= sk.atk;
       if (isDef && sk.def) p *= sk.def;
       if (isDef && sk.defenseCity) p *= sk.defenseCity;
-      const byType = { tuji: 'cav', shenyi: 'arc', xianzhen: 'inf', shuijun: 'nvy' };
-      for (const skey in byType) {
-        if (!sk[skey]) continue;
-        const share = (troops[byType[skey]] || 0) / total;
-        p *= 1 + (sk[skey] - 1) * share;
+      // 兵种特技：突击 / 神射 / 陷阵 / 水战（按该兵种兵力占比加权）
+      const byType = { cav: 'cavalry', arc: 'archer', inf: 'infantry', nvy: 'navy' };
+      for (const tk in byType) {
+        const v = sk[byType[tk]];
+        if (!v) continue;
+        p *= 1 + (v - 1) * ((troops[tk] || 0) / total);
       }
+      // 火计：攻城伤害（只对进攻方生效）
+      if (!isDef && sk.siege) p *= sk.siege;
+      // 扬威：士气（攻守同享）
+      if (sk.morale) p *= sk.morale;
+    }
+
+    // 敌方武将的压制型特技：火计令敌防 -8%、急智令敌攻 -10%
+    // ponytail: 单方战力是集总模型，把「削敌防 / 削敌攻」折算成对方战力乘数，效果方向单调正确
+    const eh = opts.enemyHeroId ? G.heroes[opts.enemyHeroId] : null;
+    if (eh) {
+      const es = skillOf(G, eh);
+      if (es.enemyDef) p *= es.enemyDef;
+      if (es.enemyAtk) p *= es.enemyAtk;
     }
 
     // 势力科技
@@ -154,11 +168,13 @@ const Combat = {
         terrain: city.terrain, isDefender: false,
         enemyTroops: city.garrison, morale: Math.max(20, atkMorale - rounds * 2),
         factionId: army.factionId, drill: atkDrill,
+        enemyHeroId: city.governor,
       });
       const DP = Combat.power(G, city.garrison, city.governor, {
         terrain: city.terrain, isDefender: true,
         enemyTroops: army.troops, morale: defMorale, wall: city.wall,
         factionId: city.owner, drill: defDrill,
+        enemyHeroId: army.heroId,
       });
 
       const share = AP / Math.max(1, AP + DP);
@@ -262,11 +278,13 @@ const Combat = {
         terrain: city.terrain, isDefender: false,
         enemyTroops: d, morale: Math.max(20, 58 - rounds * 2),
         factionId: atkFactionId, drill: atkDrill, wall: 0,
+        enemyHeroId: city.governor,
       });
       const DP = Combat.power(G, d, city.governor, {
         terrain: city.terrain, isDefender: true,
         enemyTroops: a, morale: city.morale || 55, wall: city.wall,
         factionId: city.owner, drill: defDrill,
+        enemyHeroId: atkHeroId,
       });
       const share = AP / Math.max(1, AP + DP);
       Combat._applyLosses(a, U.clamp((1 - share) * 0.58, 0.02, 0.70));

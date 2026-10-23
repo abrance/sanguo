@@ -319,6 +319,10 @@ treasure.holder = heroId | null      // 全局唯一持有者
 
 ### 5.1 先修一个真 bug（Step 1，半天，不新增任何东西）
 
+> **✅ 已实现**（2026-10）：`feat/hero-skills-wiring`，新增 13 条断言（`verify.js`「武将特技接线」板块）。
+> 顺带修了一处行为矛盾：`Legion.run` 的「征讨」按注释应「不掷骰子、当回合出兵」，但代码仍卡在胜算闸门上 ——
+> 现改为带 `force` 时忽略 `pred.win` / `pred.remain`（AI 常规出兵不受影响）。
+
 `TAODONG190_HERO_SKILLS` 声明了 11 个特技、20 个效果键，但**全项目只有 4 个键被读取**：
 
 | 键 | 状态 |

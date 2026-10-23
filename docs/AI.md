@@ -154,8 +154,8 @@ chances   = (outgoing === 0 ? 0.10 + aggression × 0.30
 | 玩家密约 | 目标是玩家直辖城且 `Diplo.hasPact` 有效 → 跳过 |
 | 新手保护·势力 | `target.owner === player.factionId && turn < 36` → 跳过 |
 | 新手保护·直辖 | `target.grantedTo === PLAYER_HERO_ID && turn < 54` → 跳过 |
-| 胜算 | `Combat.predict()`（无随机推演，UI 悬停同一套）；不赢且未超编 → 跳过 |
-| 余兵 | `pred.remain < plan × (overstacked ? 0.15 : 0.45)` → 跳过；即非超编时必须「能赢且剩 45% 以上」 |
+| 胜算 | `Combat.predict()`（无随机推演，UI 悬停同一套）；不赢且未超编 → 跳过。**军区「征讨」号令带 `force` 时不看胜算**（玩家点了名的仗必须打，否则号令会整月空转） |
+| 余兵 | `pred.remain < plan × (overstacked ? 0.15 : 0.45)` → 跳过；即非超编时必须「能赢且剩 45% 以上」。同样对 `force` 不生效 |
 
 通过全部闸门后取**距离最近**者（不是胜算最大者）。这是已知的粗糙点：路上有更好的目标也不会换。
 

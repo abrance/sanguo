@@ -193,8 +193,10 @@ const AI = {
         if (nb.grantedTo === PLAYER_HERO_ID && G.meta.turn < 54) continue;
 
         const pred = Combat.predict(G, plan, from.governor, nb, f.id, State.bld(from, 'drill'));
-        if (!pred.win && !overstacked) continue;
-        if (pred.remain < troopTotal(plan) * (overstacked ? 0.15 : 0.45)) continue;
+        // 一般 AI 只打胜算够的仗；玩家点了名的征讨（force）是命令，胜算不足也照打，
+        // 否则「征讨」会让军区整月按兵不动，玩家以为号令失效。
+        if (!pred.win && !overstacked && !force) continue;
+        if (!force && pred.remain < troopTotal(plan) * (overstacked ? 0.15 : 0.45)) continue;
 
         const d = U.dist(from.x, from.y, nb.x, nb.y);
         if (!picked || d < picked.d) picked = { nb, d };
