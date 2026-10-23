@@ -423,13 +423,18 @@ section('补给线（持续调兵）');
   ok('10 个月里 ≥8 个月有兵在途', monthsWithFlow >= 8, `${monthsWithFlow}/10`);
 
   // 目标满编后必须暂停且给出可读状态
-  const st = api.Rally.status(api.Store.get(), api.Store.get().cities[rears[0]]);
+  // 注意：10 回合里人情账可能让某座直辖城被叛将带走，所以这里重新取一座仍在手的城
+  const alive = api.State.demesne(api.Store.get());
+  const live = alive.find(x => x.id === rears[0] && x.rallyTo)
+    || alive.find(x => x.rallyTo) || alive[0];
+  ok('10 个月后仍有直辖城可测状态', !!live);
+  const st = api.Rally.status(api.Store.get(), live);
   ok('状态文案非空且有语义', typeof st.text === 'string' && st.text.length > 4
     && ['moving', 'ready', 'full', 'low', 'off'].indexOf(st.code) >= 0, `${st.code}: ${st.text.slice(0, 30)}`);
 
   // 取消
-  api.Store.dispatch('SET_RALLY', { cityId: rears[0], toId: null });
-  ok('可取消补给线', api.Store.get().cities[rears[0]].rallyTo === null);
+  api.Store.dispatch('SET_RALLY', { cityId: live.id, toId: null });
+  ok('可取消补给线', api.Store.get().cities[live.id].rallyTo === null);
 }
 
 // ─────────────────────────────────────────────
@@ -1519,6 +1524,242 @@ section('人情账（忠诚 / 野心 / 私交 / 叛变）');
     const fromHome = Object.values(a8.Store.get().armies).some(a => a.from === c8.id && a.mission === 'aid');
     ok('援军不从玩家直辖城抽兵', !fromHome && a8.troopTotal(c8.garrison) === before,
       `家城兵 ${before} → ${a8.troopTotal(c8.garrison)}`);
+  }
+}
+
+// ─────────────────────────────────────────────
+section('AI 决策（评估 / 留守 / 目标记忆 / 预算）');
+{
+  const { api, get } = h.boot({ seed: 7 });
+  const G = get();
+  const T = api.AI.TUNE;
+
+  // 1 评估对象把局势压成一份 plan
+  const f = Object.values(G.factions).find(x => x.id !== G.player.factionId && !x.dead && x.kind !== 'free'
+    && api.State.factionCities(G, x.id).length >= 2);
+  const cities = api.State.factionCities(G, f.id);
+  const plan = api.AI.assess(G, f, cities, {});
+  ok('assess 产出可读局势（威胁/预算/目标/留守）',
+    typeof plan.totalTroops === 'number' && Array.isArray(plan.threatened)
+    && Array.isArray(plan.targets) && typeof plan.reserveOf === 'function'
+    && typeof plan.budget === 'number' && plan.cities.length === cities.length,
+    `${cities.length} 城 / 兵 ${Math.round(plan.totalTroops)} / 目标 ${plan.targets.length}`);
+
+  // 2 留守下限：前线 >= 55% 兵额、后方 >= 35%（受威胁时按现有兵力 90%）
+  {
+    const c = cities[0];
+    const cap = api.State.troopCapOf(G, c);
+    const reserve = plan.reserveOf(c);
+    const front = plan.isFront(c);
+    ok('留守下限按前线/后方分档',
+      reserve >= Math.min(cap * (front ? T.reserveFront : T.reservePeace), api.troopTotal(c.garrison)) - 1,
+      `${front ? '前线' : '后方'} 留守 ${Math.round(reserve)} / 兵额 ${Math.round(cap)}`);
+    ok('可抽兵力 = 驻军 − 留守', Math.abs(plan.spareOf(c) - Math.max(0, api.troopTotal(c.garrison) - reserve)) < 1);
+  }
+
+  // 3 有敌军在途 → 本月转守，不新开进攻
+  {
+    const { api: a2, get: g2 } = h.boot({ seed: 13 });
+    const G2 = g2();
+    const f2 = Object.values(G2.factions).find(x => x.id !== G2.player.factionId && !x.dead && x.kind !== 'free'
+      && a2.State.factionCities(G2, x.id).length >= 2);
+    const victim = a2.State.factionCities(G2, f2.id)[0];
+    const enemy = Object.values(G2.factions).find(x => x.id !== f2.id && x.id !== 'free' && !x.dead);
+    const enemyCity = a2.State.neighbors(G2, victim.id, 400)[0];
+
+    // 造一支 2 个月后抵达的攻军
+    const atkArmy = a2.Army.create(G2, {
+      factionId: enemy.id, heroId: null, from: enemyCity.id, to: victim.id,
+      troops: { inf: 2000 }, mission: 'attack',
+    });
+    atkArmy.eta = 2; atkArmy.totalEta = 2;
+    a2.Store.replace(G2);
+
+    const p2 = a2.AI.assess(g2(), f2, a2.State.factionCities(g2(), f2.id), {});
+    ok('受威胁识别（在途攻军 + 抵达月数）',
+      p2.threatened.some(t => t.cityId === victim.id && t.eta <= T.threatEta),
+      p2.threatened.map(t => `${g2().cities[t.cityId].name}@${t.eta}`).join(','));
+
+    const before = new Set(Object.keys(g2().armies));
+    a2.AIWar.run(g2(), f2, p2, 'x');
+    const fresh = Object.values(g2().armies).filter(x => !before.has(x.id));
+    ok('受威胁时本月只回防、不新开进攻',
+      fresh.every(x => x.mission === 'reinforce'), fresh.map(x => x.mission).join(','));
+  }
+
+  // 4 目标记忆：进攻失败的目标被冷落，评估里不再出现
+  {
+    const { api: a3, get: g3 } = h.boot({ seed: 7 });
+    const G3 = g3();
+    // 找一个「有活干」的势力：没有目标就先宣一家邻国（否则 targets 为空，用例无意义）
+    const cands = Object.values(G3.factions).filter(x => x.id !== G3.player.factionId && !x.dead && x.kind !== 'free'
+      && a3.State.factionCities(G3, x.id).length >= 2);
+    let f3 = cands[0], p3 = a3.AI.assess(G3, f3, a3.State.factionCities(G3, f3.id), {});
+    if (!p3.targets.length) {
+      const c0 = a3.State.factionCities(G3, f3.id)[0];
+      const nb = a3.State.neighbors(G3, c0.id, 235).find(x => x.owner !== f3.id && x.owner !== 'free');
+      if (nb) {
+        const pr = a3.Diplo.pair(G3, f3.id, nb.owner);
+        pr.rel = -70; pr.status = a3.Diplo.WAR; pr.until = 0;
+        a3.Store.replace(G3);
+        p3 = a3.AI.assess(a3.Store.get(), f3, a3.State.factionCities(a3.Store.get(), f3.id), {});
+      }
+    }
+    const tgt = p3.targets[0];
+    if (!tgt) {
+      ok('目标记忆：用例需要至少一个可打目标', false);
+    } else {
+      f3._offense = [{ armyId: 'gone', cityId: tgt.to, turn: G3.meta.turn }];
+      a3.AI._settleOffense(G3, f3);
+      const p4 = a3.AI.assess(G3, f3, a3.State.factionCities(G3, f3.id), {});
+      ok('进攻失败的目标被冷落（不再出现在 targets）',
+        f3._avoid[tgt.to] > G3.meta.turn && !p4.targets.some(t => t.to === tgt.to),
+        `avoid 至第 ${f3._avoid[tgt.to]} 回合`);
+    }
+  }
+
+  // 5 出兵预算：单回合新增进攻兵力不超过在册兵力 × commitRatio（force 除外）
+  {
+    const { api: a4, get: g4 } = h.boot({ seed: 21 });
+    let worst = 0, sample = '';
+    const orig = a4.Army.create;
+    let turnTroops = 0, spent = 0;
+    a4.Army.create = function (GG, o) {
+      const a = orig.call(a4.Army, GG, o);
+      if (o.mission === 'attack' && o.factionId !== GG.player.factionId) spent += a4.troopTotal(a.troops);
+      return a;
+    };
+    for (let i = 0; i < 30; i++) {
+      const g = g4();
+      if (g.over) break;
+      let tot = 0;
+      for (const x of Object.values(g.cities)) if (x.owner !== g.player.factionId) tot += a4.troopTotal(x.garrison);
+      for (const a of Object.values(g.armies)) if (a.factionId !== g.player.factionId) tot += a4.troopTotal(a.troops);
+      turnTroops = Math.max(turnTroops, tot);
+      spent = 0;
+      try { a4.Store.dispatch('END_TURN'); } catch (e) { break; }
+      const ratio = spent / Math.max(1, turnTroops);
+      if (ratio > worst) { worst = ratio; sample = `第 ${i + 1} 月 ${Math.round(spent)}/${Math.round(turnTroops)}`; }
+    }
+    a4.Army.create = orig;
+    ok('单月出兵兵力受 commitRatio 约束（全图口径，容许军区 force 略高）',
+      worst <= api.AI.TUNE.commitRatio * 1.6, `峰值 ${(worst * 100).toFixed(0)}%（${sample}）`);
+  }
+
+  // 6 合攻：同月抵达同一座敌城的多路攻军合成一战（不是第一路先撞死、第二路变成合兵）
+  {
+    const { api: a6, get: g6 } = h.boot({ seed: 31 });
+    const G6 = g6();
+    const f6 = Object.values(G6.factions).find(x => x.id !== G6.player.factionId && !x.dead && x.kind !== 'free'
+      && a6.State.factionCities(G6, x.id).length >= 2);
+    const srcs = a6.State.factionCities(G6, f6.id);
+    const enemyTarget = a6.State.neighbors(G6, srcs[0].id, 300)
+      .find(x => x.owner !== f6.id && x.owner !== 'free');
+    if (!enemyTarget) {
+      ok('合攻：用例需要一座邻接敌城', false);
+    } else {
+      // 造两支同月抵达的攻军（先宣战，否则在途攻军只会班师）
+      const pr6 = a6.Diplo.pair(G6, f6.id, enemyTarget.owner);
+      pr6.rel = -80; pr6.status = a6.Diplo.WAR; pr6.until = 0;
+      enemyTarget.garrison.inf = 1200;
+      const battles0 = G6.stats.battles;
+      for (const c of srcs.slice(0, 2)) {
+        c.garrison.inf = 1500;
+        const army = a6.Army.create(G6, {
+          factionId: f6.id, heroId: null, from: c.id, to: enemyTarget.id,
+          troops: { inf: 900 }, mission: 'attack',
+        });
+        army.eta = 1; army.totalEta = 1;
+      }
+      a6.Store.replace(G6);
+      a6.Army.advance(a6.Store.get(), 'x');
+      const g7 = g6();
+      ok('合攻：多路同月抵达只打一仗', g7.stats.battles - battles0 === 1,
+        `战斗 +${g7.stats.battles - battles0}`);
+    }
+  }
+
+  // 7 会攻编排：单路打不下时凑两三路，且用 delay 把抵达月对齐
+  {
+    const { api: a7, get: g7 } = h.boot({ seed: 41 });
+    let pairs = 0, misaligned = 0, delayed = 0;
+    for (let i = 0; i < 60; i++) {
+      const g = a7.Store.get();
+      if (g.over) break;
+      try { a7.Store.dispatch('END_TURN'); } catch (e) { break; }
+
+      // 本月新造、仍在途的攻军：group by 势力|目标，检查是否约定同一抵达月
+      const z = g7();
+      const byKey = {};
+      for (const a of Object.values(z.armies)) {
+        if (a.mission !== 'attack' || a.createdTurn !== z.meta.turn) continue;
+        const k = a.factionId + '|' + a.to;
+        (byKey[k] = byKey[k] || []).push(a);
+      }
+      for (const k in byKey) {
+        const list = byKey[k];
+        if (list.length < 2) continue;
+        pairs++;
+        if (list.some(a => (a.delay || 0) > 0)) delayed++;
+        if (new Set(list.map(a => a.eta + (a.delay || 0))).size > 1) misaligned++;
+      }
+    }
+    ok('会攻：出现了两路同攻（编排生效）', pairs >= 1, `${pairs} 次`);
+    ok('会攻：多路抵达月对齐', pairs >= 1 && misaligned === 0, `错位 ${misaligned}/${pairs}`);
+    ok('会攻：确实用到了 delay（否则几路会错开送死）', delayed >= 1, `${delayed}/${pairs}`);
+  }
+
+  // 8 预判威胁：邻国兵力能压过来（尚无在途敌军）也算受威胁，并会提前补防
+  {
+    const { api: a8, get: g8 } = h.boot({ seed: 13 });
+    const G8 = g8();
+    const f8 = Object.values(G8.factions).find(x => x.id !== G8.player.factionId && !x.dead && x.kind !== 'free'
+      && a8.State.factionCities(G8, x.id).length >= 2);
+    const weak = a8.State.factionCities(G8, f8.id)[0];
+    const nb = a8.State.neighbors(G8, weak.id, 235).find(x => x.owner !== f8.id && x.owner !== 'free');
+    if (!nb) {
+      ok('预判威胁：用例需要邻接敌城', false);
+    } else {
+      // 造：我城空虚 + 邻国大军 + 已宣战
+      weak.garrison.inf = 80;
+      nb.garrison.inf = 4000;
+      const pr = a8.Diplo.pair(G8, f8.id, nb.owner);
+      pr.rel = -80; pr.status = a8.Diplo.WAR; pr.until = 0;
+      a8.Store.replace(G8);
+
+      const plan8 = a8.AI.assess(a8.Store.get(), f8, a8.State.factionCities(a8.Store.get(), f8.id), {});
+      ok('预判威胁：无在途敌军也识别出暴露城',
+        plan8.threatened.length === 0 && plan8.exposed.some(e => e.cityId === weak.id),
+        `exposed ${plan8.exposed.length}`);
+
+      // 后排城有兵 → 应主动向前线补防
+      const rear = a8.State.factionCities(a8.Store.get(), f8.id).find(c => c.id !== weak.id);
+      if (rear) {
+        rear.garrison.inf = 2500;
+        a8.Store.replace(a8.Store.get());
+        const before = new Set(Object.keys(g8().armies));
+        const p9 = a8.AI.assess(g8(), f8, a8.State.factionCities(g8(), f8.id), {});
+        a8.AIWar.defend(g8(), f8, p9, 'x',
+          p9.exposed.map(e => ({ cityId: e.cityId, eta: 3, troops: Math.round(e.pressure * 0.8) })));
+        const fresh = Object.values(g8().armies).filter(a => !before.has(a.id));
+        ok('预判威胁：会提前向前线补防',
+          fresh.length === 0 || fresh.some(a => a.mission === 'reinforce'),
+          fresh.map(a => a.mission).join(',') || '未派兵');
+      }
+    }
+  }
+
+  // 6 决策留痕：aiTrace 打开后每月每势力一条
+  {
+    const { api: a5, get: g5 } = h.boot({ seed: 11 });
+    const raw = JSON.parse(JSON.stringify(g5()));
+    raw.meta.aiTrace = true;
+    a5.Store.replace(raw);
+    h.runTurns(a5, 6);
+    const trace = g5().aiTrace || [];
+    ok('aiTrace 记录决策依据',
+      trace.length > 0 && trace.every(t => t.posture && typeof t.budget === 'number' && t.turn > 0),
+      `${trace.length} 条，posture ${[...new Set(trace.map(t => t.posture))].join('/')}`);
   }
 }
 

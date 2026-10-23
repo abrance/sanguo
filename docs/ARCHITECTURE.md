@@ -49,7 +49,9 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 │    combat.js      多轮攻城结算、战力公式、胜率预估
 │    army.js        行军、抵达、攻占
 │    rank.js        战功分封、晋升
-│    ai.js          各势力决策（含玩家势力的非直辖城）
+│    ai.js          AI 编排 + 局势评估（assess：威胁 / 留守 / 目标 / 预算）
+│    ai-econ.js      AI 内政：税 / 募兵（按局势改比例）/ 营造（战时堆墙）
+│    ai-war.js       AI 军事：防守 / 进攻 / 集结（三选一，共用一份兵力账）
 │    turn.js        回合流水线，**唯一**的编排点
 │
 ├─ js/view/         DOM / Canvas，只读状态
@@ -188,7 +190,7 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
 9.2 Relations.drift  人情账：忠诚漂移 / 闲置计数 / 叛变（预警 → 3 月干预窗口 → 掷骰）
  9.5 Diplo.advance   停战到期 / 每 6 回合重算边界 / 关系漂移 / AI 外交
 10  Rank.monthly      声望自然增长 + 晋升检查
-11  AI.run            各势力决策（玩家势力的非直辖城也走这里）—— 细节见 [AI.md](AI.md)
+11  AI.run            局势评估 → AIEcon（税/募兵/营造）→ AIWar（防守/进攻/集结），玩家势力的非直辖城同样走这里 —— 见 [AI.md](AI.md)
 12  _playerFate       直辖城全失 → 流失投奔
 13  _cleanupFactions  势力覆灭清理（无城即亡，残军清空）
 14  State.checkEnd    胜负判定
