@@ -151,9 +151,14 @@ const Combat = {
     mazhen:   { name: '骂阵', cost: 6, enemyMorale: -12, selfMorale: 8, desc: '辱骂挑战：敌士气 -12，己士气 +8' },
   },
 
-  /** 玩家指挥的战斗：自己能用的战法（含可用性与原因，界面直接渲染） */
-  tacticsFor(G, army, city) {
-    const isAtk = army.factionId === G.player.factionId;
+  /**
+   * 某一侧能用的战法（含可用性与原因）。
+   * side：'atk' | 'def'，缺省按「玩家在攻方还是守方」推断（界面调用即走缺省）。
+   */
+  tacticsFor(G, army, city, side) {
+    const isAtk = side ? side === 'atk'
+      : (army.factionId === G.player.factionId
+        || (city.grantedTo !== PLAYER_HERO_ID && army.factionId !== G.player.factionId));
     const heroId = isAtk ? army.heroId : city.governor;
     const hero = heroId ? G.heroes[heroId] : null;
     const sk = hero ? heroSkill(G, hero.skill) : {};
@@ -371,11 +376,27 @@ const Combat = {
     };
   },
 
-  /** 一次跑完（AI 之间、以及无头测试用） */
-  resolve(G, army, city, stamp) {
+  /**
+   * 一次跑完（AI 之间、以及无头测试用）。
+   * opts.aiTactic：AI 会在第一轮放一个战法（玩家指挥的仗不走这里，由界面决定放不放）
+   */
+  resolve(G, army, city, stamp, opts) {
     Combat.begin(G, army, city, stamp);
-    while (!Combat.step(G, army, city, null, stamp)) { /* 一路打到结束 */ }
+    let tactic = opts && opts.aiTactic ? Combat._aiTactic(G, army, city) : null;
+    while (!Combat.step(G, army, city, tactic, stamp)) { tactic = null; }
     return Combat.conclude(G, army, city, stamp);
+  },
+
+  /** AI 的战法选择：按收益从高到低挑第一个可用的（先放再说，没有长期算计） */
+  _aiTactic(G, army, city) {
+    const usable = Combat.tacticsFor(G, army, city, 'atk').filter(t => t.ok);
+    if (!usable.length) return null;
+    const pref = ['huoji', 'yexi', 'wushuang', 'tuji', 'shenyi', 'xianzhen',
+      'fubing', 'shuijun', 'duanliang', 'mazhen', 'jizhi', 'tiebi'];
+    for (const k of pref) {
+      if (usable.some(t => t.key === k)) return k;
+    }
+    return usable[0].key;
   },
 
   /** 回合开始前收尾所有没打完的玩家战斗（否则玩家点「结束回合」会卡住） */

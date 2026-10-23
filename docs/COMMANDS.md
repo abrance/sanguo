@@ -183,6 +183,11 @@ Store.dispatch('BUILD', { cityId: 'chenliu', key: 'farm' })
 
 ## 宝物（人物页）
 
+### `BUY_TREASURE` `{}`
+商人天赋专属：一次性花 **600 钱**（从主城扣）从市肆随机买一件无主宝物，放进主城府库。
+
+- 非商人天赋抛错；只能买一次（`player.boughtTreasure`）；无钱或无宝时抛错
+
 ### `EQUIP_TREASURE` `{ heroId, treasureId }`
 把府库里的宝物装到本势力武将身上。槽位由宝物的 `cat` 决定（兵器/甲胄/坐骑/典籍/印绶）。
 

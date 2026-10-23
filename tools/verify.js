@@ -644,16 +644,31 @@ section('外交');
   };
   const before = homeGarrison();
   h.runTurns(a3, 3);               // 过使者冷却
+  // 盟友兵力受世界演化影响，可能穷到派不出兵 —— 先给它补满，专测「援军抵达并入守军」
+  {
+    const g = a3.Store.get();
+    for (const c of a3.State.factionCities(g, 'yuanshao')) {
+      if (a3.troopTotal(c.garrison) < 800) c.garrison.inf += 800 - a3.troopTotal(c.garrison);
+      c.food = Math.max(c.food, 3000);
+    }
+    a3.Store.replace(g);
+  }
   a3.Store.dispatch('CALL_TO_ARMS', { fid: 'yuanshao' });
   ok('请盟出兵造出 aid 军', Object.values(a3.Store.get().armies).some(a => a.mission === 'aid'));
 
-  let merged = false;
-  for (let i = 0; i < 20 && !merged; i++) {
+  // 联盟网络里各家常互派援军，所以「此刻没有援军在路上」这个条件不成立；
+  // 改为看纪事里的「援兵抵 X，并入守军」+ 守军确实变多
+  const homeName = a3.Store.get().cities[a3.Store.get().player.homeCityId].name;
+  let mergedLog = false;
+  for (let i = 0; i < 20; i++) {
     h.runTurns(a3, 1);
-    merged = !Object.values(a3.Store.get().armies).some(a => a.mission === 'aid');
+    if (a3.Store.get().log.some(e => /援兵抵/.test(e.text) && e.text.indexOf(homeName) >= 0)) {
+      mergedLog = true;
+      break;
+    }
   }
-  ok('援军抵达并入守军（非攻城）', merged && homeGarrison() > before,
-    `守军 ${before} → ${homeGarrison()}`);
+  ok('援军抵达并入守军（非攻城）', mergedLog && homeGarrison() > before,
+    `守军 ${before} → ${homeGarrison()}（${mergedLog ? '纪事已记援兵抵达' : '未见援兵抵达'}）`);
 }
 
 // ─────────────────────────────────────────────
@@ -2236,6 +2251,105 @@ section('AI 决策（评估 / 留守 / 目标记忆 / 预算）');
     ok('aiTrace 记录决策依据',
       trace.length > 0 && trace.every(t => t.posture && typeof t.budget === 'number' && t.turn > 0),
       `${trace.length} 条，posture ${[...new Set(trace.map(t => t.posture))].join('/')}`);
+  }
+}
+
+// ─────────────────────────────────────────────
+section('P6 补口：AI 用宝 / AI 放战法 / 商人购宝');
+{
+  // 1 AI 会给自己的将发宝，且优先给更强的稀有度
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    const f = Object.values(G.factions).find(x => x.id !== G.player.factionId && !x.dead && x.kind !== 'free'
+      && api.State.factionCities(G, x.id).length);
+    const city = api.State.factionCities(G, f.id)[0];
+    // 往这座城塞两件宝：一件普通、一件稀有
+    G.treasures.guding.cityId = city.id;
+    G.treasures.fangtian.cityId = city.id;
+    api.Store.replace(G);
+
+    const g1 = get();
+    const f1 = g1.factions[f.id];
+    api.AI._equipTreasures(g1, f1, api.State.factionCities(g1, f.id));
+    const z = get();
+    const holderA = z.treasures.fangtian.holder;
+    const heroA = holderA ? z.heroes[holderA] : null;
+    ok('AI 发宝：宝装到了本势力武将身上',
+      !!heroA && heroA.slots.weapon === 'fangtian' && z.treasures.fangtian.cityId === null,
+      heroA ? `${heroA.name} 佩 方天画戟` : '未装备');
+
+    // 再塞一件更稀有的？没有更高（3 已是最高）；塞同稀有度不应顶掉
+    const g2 = get();
+    g2.treasures.qinggang.cityId = city.id;
+    api.Store.replace(g2);
+    const before = get().heroes[holderA].slots.weapon;
+    api.AI._equipTreasures(get(), get().factions[f.id], api.State.factionCities(get(), f.id));
+    ok('AI 发宝：同稀有度不来回换', get().heroes[holderA].slots.weapon === before, before);
+  }
+
+  // 2 AI 会放战法（resolve 的 aiTactic 开关）
+  {
+    const mk = (aiTactic) => {
+      const { api, get } = h.boot({ seed: 44 });
+      const st = get();
+      const home = st.cities[st.player.homeCityId];
+      const nb = api.State.neighbors(st, home.id, 300).find(x => x.owner !== st.player.factionId);
+      for (const k of api.TROOP_KEYS) nb.garrison[k] = 0;
+      nb.garrison.inf = 900;
+      nb.wall = 2; nb.morale = 55;
+      const pr = api.Diplo.pair(st, st.player.factionId, nb.owner);
+      pr.status = api.Diplo.WAR; pr.rel = -80; pr.until = 0;
+      api.Store.replace(st);
+      const g = get();
+      const army = api.Army.create(g, {
+        factionId: g.player.factionId, heroId: 'PLAYER', from: home.id, to: nb.id,
+        troops: { inf: 1500, siege: 300 }, mission: 'attack',
+      });
+      army.factionId = 'yuanshao';       // 冒充 AI 势力，走 resolve 路径
+      army.heroId = null;
+      g.heroes.PLAYER.skill = 'huoji';  // 让「火计」可选
+      g.armies[army.id] = army;
+      api.Store.replace(g);
+      const rep = api.Combat.resolve(get(), get().armies[army.id], get().cities[nb.id], 'x',
+        aiTactic ? { aiTactic: true } : undefined);
+      return { rep, lines: rep.lines.join('\n') };
+    };
+    const noT = mk(false);
+    const withT = mk(true);
+    ok('AI 放战法：战报里出现战法', /用「/.test(withT.lines) && !/用「/.test(noT.lines),
+      (withT.lines.match(/用「([^」]+)」/) || [])[1] || '无');
+    ok('AI 放战法：一轮内守方伤亡不少于不放战法',
+      withT.rep.defLoss >= noT.rep.defLoss, `${noT.rep.defLoss} → ${withT.rep.defLoss}`);
+  }
+
+  // 3 商人天赋购宝：非商人拒绝、商人限一次、扣 600 钱
+  {
+    const { api, get } = h.boot({ seed: 5, talent: 'merchant' });
+    const st = get();
+    st.cities[st.player.homeCityId].gold = 2000;
+    api.Store.replace(st);
+    const gold0 = get().cities[st.player.homeCityId].gold;
+
+    let errNon = null;
+    {
+      const { api: a2, get: g2 } = h.boot({ seed: 5, talent: 'farmer' });
+      const s2 = g2();
+      s2.cities[s2.player.homeCityId].gold = 2000;
+      a2.Store.replace(s2);
+      try { a2.Store.dispatch('BUY_TREASURE'); } catch (e) { errNon = e.message; }
+    }
+    ok('购宝：非商人天赋被拒', /唯商人/.test(errNon || ''), errNon || '未抛错');
+
+    const r = api.Store.dispatch('BUY_TREASURE');
+    const z = get();
+    ok('购宝：扣 600 钱且宝物入库',
+      z.cities[st.player.homeCityId].gold === gold0 - 600
+      && z.treasures[r.treasureId].cityId === st.player.homeCityId
+      && z.player.boughtTreasure === true);
+    let err2 = null;
+    try { api.Store.dispatch('BUY_TREASURE'); } catch (e) { err2 = e.message; }
+    ok('购宝：只能买一次', /已购/.test(err2 || ''), err2 || '未抛错');
   }
 }
 

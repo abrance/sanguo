@@ -623,6 +623,19 @@ const UI_CITY = {
       }
     }
 
+    // 商人天赋：一次性花 600 钱买一件宝（docs/HERO.md §4.2 ④）
+    if (talentOf(G).id === 'merchant' && !G.player.boughtTreasure) {
+      const bar = document.createElement('div');
+      bar.className = 'actions';
+      bar.appendChild(UI._btn('市肆购宝 600钱', '商人天赋 · 只此一次', () => {
+        try {
+          const r = Store.dispatch('BUY_TREASURE');
+          UI.toast(`得${TREASURES[r.treasureId].name}一件`);
+        } catch (e) { UI.toast(e.message); }
+      }, c.gold < 600 ? '钱不足' : null));
+      pane.appendChild(bar);
+    }
+
     // 在野名士：三档登用（拜访 / 送礼 / 三顾），成功率逐项列出
     const free = Object.values(G.heroes)
       .filter(h => h.alive && h.factionId === 'free')

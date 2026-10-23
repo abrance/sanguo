@@ -572,6 +572,24 @@ const COMMANDS = {
 
   // ─────── 宝物（docs/HERO.md §4） ───────
 
+  /** 商人天赋：开局后一次性花 600 钱买一件宝（docs/HERO.md §4.2 ④） */
+  BUY_TREASURE(G) {
+    const p = G.player;
+    if (talentOf(G).id !== 'merchant') throw new Error('唯商人天赋可行此道');
+    if (p.boughtTreasure) throw new Error('已购过一次，别无他宝');
+    const home = G.cities[p.homeCityId];
+    if (!home || home.gold < 600) throw new Error('钱不足（需 600）');
+    const free = State.freeTreasures(G);
+    if (!free.length) throw new Error('市肆已无可购之宝');
+
+    const tid = free[RNG.between(0, free.length - 1)];
+    home.gold -= 600;
+    G.treasures[tid] = { holder: null, cityId: home.id };
+    p.boughtTreasure = true;
+    State.log(G, 'good', `市肆得${TREASURES[tid].name}一件（${TREASURE_CAT_NAME[TREASURES[tid].cat]}），送入${home.name}府库。`);
+    return { treasureId: tid };
+  },
+
   EQUIP_TREASURE(G, { heroId, treasureId }) {
     const h = G.heroes[heroId];
     const def = TREASURES[treasureId];

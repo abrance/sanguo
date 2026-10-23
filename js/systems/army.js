@@ -215,7 +215,8 @@ const Army = {
       return;
     }
 
-    const rep = Combat.resolve(G, a, target, stamp);
+    // AI 之间的仗：让 AI 在前几轮放一个战法（玩家指挥的仗走上面的交互路径）
+    const rep = Combat.resolve(G, a, target, stamp, { aiTactic: true });
     Army._afterBattle(G, a, target, rep, stamp);
   },
 
