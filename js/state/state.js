@@ -30,6 +30,9 @@ const CITY_DEFAULTS = {
   clanActionTurn: 0, buildQueue: [], promoteTurn: 0,
 };
 /** 人情账新字段（docs/HERO.md §1.2）。ambition 由公式算，这里只是兜底值 */
+/** 事件层（docs/EVENTS.md §1）：只存纯数据，函数一律回查 EVENTS */
+const EVENTS_DEFAULTS = { seen: {}, queue: [], pending: [], history: [], chain: { depth: 0 } };
+
 const HERO_DEFAULTS = {
   ambition: 40, bond: 0, grievance: 0, idle: 0, lastAct: 0, warnTurn: 0, cd: {},
   visits: {},                 // 定向登用：{ visit/gift/beseech: 上次回合, fails: 连败次数 }
@@ -76,6 +79,7 @@ const State = {
         legions: [],
       },
       factions: {},
+      events: U.clone(EVENTS_DEFAULTS),
       treasures: {},     // 宝物登记表：id → { holder: heroId|null, cityId: 所在城|null }
       cities: {},
       heroes: {},
@@ -611,6 +615,12 @@ const State = {
 
     State._fillDefaults(G.player, PLAYER_DEFAULTS);
     State._fillDefaults(G.meta, META_DEFAULTS);
+
+    // 事件层：旧档没有就补空容器（从下一回合开始抽）
+    if (!G.events) G.events = U.clone(EVENTS_DEFAULTS);
+    State._fillDefaults(G.events, EVENTS_DEFAULTS);
+    if (!Array.isArray(G.events.queue)) G.events.queue = [];
+    if (!Array.isArray(G.events.pending)) G.events.pending = [];
 
     // 宝物：旧档补齐登记表与武将槽位
     if (!G.treasures) G.treasures = {};

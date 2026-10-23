@@ -168,6 +168,15 @@ Store.dispatch('BUILD', { cityId: 'chenliu', key: 'farm' })
 
 ---
 
+## 事件：`EVENT_CHOICE` `{ optionKey }`
+
+待决事件卡（`G.events.queue[0]`）里选一个选项：
+
+- 扣代价（钱/粮从该事件关联的城扣）→ 立刻生效 → 记 `G.events.history` → 出队
+- 带`delay` 的选项会往 `G.events.pending` 压一条 `{due,eventId,optionKey,cityId}`，
+  到期（回合开始后的 `EventSys.tick`）回查事件表执行并**必写一条纪事**
+- 不可选（代价不足）时抛错并给出原因；玩家不选就结束回合 → `EventSys.autoResolve` 替他拍板
+
 ## 攻城轮间：`BATTLE_STEP` `{ armyId, tactic? }`
 
 玩家指挥的攻城战会在轮与轮之间**挂起**（`army.battle`），每次调用推进一合：
