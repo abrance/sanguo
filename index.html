@@ -31,7 +31,10 @@
 
   <aside id="sidebar">
     <header id="topbar">
-      <div id="dateLine"><span id="dateText">190年 1月</span><span id="turnText">第 1 回合</span></div>
+      <div id="dateLine">
+        <span id="dateText">190年 1月</span><span id="turnText">第 1 回合</span>
+        <button id="btnMute" class="mini mute" title="音效开关">♪</button>
+      </div>
       <div id="resLine">
         <span class="res" title="粮草"><svg class="ico food" aria-hidden="true"><use href="#ico-food"/></svg><b id="resFood">0</b><i class="delta" id="dFood"></i><canvas class="spark" id="sparkFood" width="34" height="13"></canvas></span>
         <span class="res" title="钱币"><svg class="ico gold" aria-hidden="true"><use href="#ico-gold"/></svg><b id="resGold">0</b><i class="delta" id="dGold"></i><canvas class="spark" id="sparkGold" width="34" height="13"></canvas></span>
@@ -175,6 +178,7 @@
           <button class="chip" data-lf="note">纪事</button>
           <button class="chip" data-lf="turn">回合</button>
           <input id="logSearch" class="logsearch" placeholder="关键字" maxlength="16" />
+          <button id="logKeyOnly" class="chip" title="战报只列城门破 / 战法 / 大伤亡">关键轮</button>
         </div>
         <div id="logList" class="log"></div>
       </section>
@@ -193,6 +197,7 @@
 
   <main id="mapwrap">
     <canvas id="map"></canvas>
+    <div id="seasonTint" class="season-spring"></div>
     <div id="mapHud">
       <button id="zoomIn" class="mini">＋</button>
       <button id="zoomOut" class="mini">－</button>
@@ -385,6 +390,14 @@
   </div>
 </div>
 
+<div id="turnOverlay" class="overlay turnfx hidden">
+  <div class="turnfx-veil"></div>
+  <div class="turnfx-card">
+    <div id="turnMonth" class="turnfx-month">190年 1月</div>
+    <div id="turnSeason" class="turnfx-season dim">春</div>
+  </div>
+</div>
+
 <div id="eventOverlay" class="overlay hidden">
   <div class="start-box event-box">
     <div class="ev-head">
@@ -491,6 +504,8 @@
 <script src="js/view/panels/rank.js"></script>
 <script src="js/view/panels/peace.js"></script>
 <script src="js/view/panels/event.js"></script>
+<script src="js/view/audio.js"></script>
+<script src="js/view/panels/turnfx.js"></script>
 <script src="js/view/panels/diplo.js"></script>
 <script src="js/view/panels/city.js"></script>
 <script src="js/view/panels/army.js"></script>

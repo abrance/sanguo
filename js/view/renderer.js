@@ -311,6 +311,7 @@ const Renderer = {
         wall: c.wall,
         wallMax: State.wallMaxOf(c),
         detail: lod >= 2,
+        imperial: !!(G.court && G.court.emperorCityId === c.id),
         demesne: isDemesne,
         player: isPlayer,
         z: cz,
@@ -583,21 +584,31 @@ const Renderer = {
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.fill();
 
-    // 主体：先画一枚压暗的底片（往东南错开），再压本色 —— 薄薄一层厚度
-    for (const pass of [0, 1]) {
-      ctx.save();
-      ctx.translate(p.x + (pass ? 0 : size * 0.16), p.y + (pass ? 0 : size * 0.22));
-      ctx.rotate(-Math.PI / 2);
-      ctx.beginPath();
-      Renderer._armyPath(ctx, kind, size);
-      ctx.fillStyle = pass ? color : shade(color, 0.45);
-      ctx.fill();
-      if (pass) {
-        ctx.lineWidth = 1.2;
-        ctx.strokeStyle = isMine ? '#ffe9a8' : 'rgba(0,0,0,0.7)';
-        ctx.stroke();
+    // 队形数随兵力：<500 一队 · <2000 两队 · <5000 三队 · 以上四队（docs/VISUAL.md §11.2）
+    const ranks = men < 500 ? 1 : men < 2000 ? 2 : men < 5000 ? 3 : 4;
+    const gap = size * 2.05;
+    const start = -gap * (ranks - 1) / 2;
+
+    for (let i = 0; i < ranks; i++) {
+      const ox = ranks === 1 ? 0 : start + gap * i;
+      // 后排略压暗、略小：一眼看出"行列"而不是一坨
+      const depth = ranks === 1 ? 1 : 1 - Math.abs(i - (ranks - 1) / 2) * 0.08;
+      const s = size * depth;
+      for (const pass of [0, 1]) {
+        ctx.save();
+        ctx.translate(p.x + ox + (pass ? 0 : s * 0.16), p.y + (pass ? 0 : s * 0.22));
+        ctx.rotate(-Math.PI / 2);
+        ctx.beginPath();
+        Renderer._armyPath(ctx, kind, s);
+        ctx.fillStyle = pass ? color : shade(color, 0.45);
+        ctx.fill();
+        if (pass) {
+          ctx.lineWidth = 1.2;
+          ctx.strokeStyle = isMine ? '#ffe9a8' : 'rgba(0,0,0,0.7)';
+          ctx.stroke();
+        }
+        ctx.restore();
       }
-      ctx.restore();
     }
 
     if (z > 0.6) {
@@ -678,6 +689,27 @@ const Renderer = {
       0, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(0,0,0,0.32)';
     ctx.fill();
+
+    // 护城河：城墙 3 级以上才成规模（docs/VISUAL.md §11.1）
+    if (opts.detail !== false && (opts.wall || 1) >= 3) {
+      ctx.beginPath();
+      ctx.ellipse(x, y - h * 0.05, w / 2 + 5.5, h / 2 + 5, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(70,110,120,0.55)';
+      ctx.lineWidth = Math.max(1.6, r * 0.16);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(18,26,28,0.35)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // 帝都：一圈金边（谁挟天子，地图上一眼可辨）
+    if (opts.imperial) {
+      ctx.beginPath();
+      ctx.ellipse(x, y - h * 0.05, w / 2 + 8, h / 2 + 7, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(224,185,58,0.75)';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    }
 
     // 玩家直辖城光晕：底平面外扩一圈（城体只挡住中间，看起来仍是“脚下发光”）
     if (opts.glow) {
@@ -761,6 +793,17 @@ const Renderer = {
     }
 
     const detail = opts.detail !== false;
+
+    // 门楼：南墙正中一座小楼（城墙 2 级起），城越大越显眼
+    if (detail && (opts.wall || 1) >= 2) {
+      const gw = Math.max(3, w * 0.12), gh = Math.max(3, h * 0.16);
+      const gx = left + w / 2 - gw / 2;
+      const gy = top + h - gh * 0.35;
+      ctx.fillStyle = shade(color, 0.86);
+      ctx.fillRect(gx, gy, gw, gh);
+      ctx.fillStyle = 'rgba(10,9,7,0.55)';
+      ctx.fillRect(gx + gw * 0.3, gy + gh * 0.55, gw * 0.4, gh * 0.45);   // 门洞
+    }
 
     // 角楼 / 箭楼：座数随城墙等级走（郡城 1~2 座后角，都城 2~4 座、前角即箭楼）
     if (detail && tier >= 1) {

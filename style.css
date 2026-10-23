@@ -39,6 +39,12 @@
   --ink-warm:#b8a888;      /* 注释里的强调 */
   --ink-locked:#5f574a;    /* 未解锁 */
 
+  /* ── 季节色调（回合过场的整图薄色，VISUAL §11.3） ── */
+  --season-spring-1:#4e7a52; --season-spring-2:#2f4a35;
+  --season-summer-1:#6f7a3a; --season-summer-2:#4a521f;
+  --season-autumn-1:#8a6a2f; --season-autumn-2:#5a3f18;
+  --season-winter-1:#6a7686; --season-winter-2:#3f4a56;
+
   /* ── 宝物稀有度（边框，docs/HERO.md §4.5） ── */
   --rare-1:#6f6558;
   --rare-2:#8a7a3a;
@@ -325,6 +331,41 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
 .bar.inf>div{background:linear-gradient(90deg,var(--inf-deep),var(--inf))}
 .barbox{display:flex;gap:8px;align-items:center}
 .barbox>div{flex:1}
+
+/* ---------- 回合过场 + 季节色调（VISUAL §11.3） ---------- */
+#seasonTint{
+  position:absolute;inset:0;pointer-events:none;z-index:6;
+  transition:background .5s ease;mix-blend-mode:soft-light;opacity:.12;
+}
+#seasonTint.season-spring{background:linear-gradient(180deg,var(--season-spring-1),var(--season-spring-2))}
+#seasonTint.season-summer{background:linear-gradient(180deg,var(--season-summer-1),var(--season-summer-2))}
+#seasonTint.season-autumn{background:linear-gradient(180deg,var(--season-autumn-1),var(--season-autumn-2))}
+#seasonTint.season-winter{background:linear-gradient(180deg,var(--season-winter-1),var(--season-winter-2))}
+
+.turnfx{z-index:60;display:flex;align-items:center;justify-content:center}
+.turnfx .turnfx-veil{position:absolute;inset:0;background:var(--bg-veil);opacity:0;animation:tveil .36s ease forwards}
+.turnfx .turnfx-card{
+  position:relative;text-align:center;transform:translateY(14px);opacity:0;
+  animation:tcard .34s cubic-bezier(.2,.9,.3,1) .06s forwards;
+}
+.turnfx-month{font-size:calc(var(--fs-lead) * 2);letter-spacing:.18em;color:var(--gold-pale)}
+.turnfx-season{font-size:var(--fs-lead);letter-spacing:.3em;margin-top:6px}
+.turnfx.out{animation:none;opacity:0;transition:opacity .09s}
+.turnfx.reduced .turnfx-veil{animation-duration:.1s}
+.turnfx.reduced .turnfx-card{animation-duration:.1s;animation-delay:0s}
+@keyframes tveil{to{opacity:.9}}
+@keyframes tcard{to{opacity:1;transform:translateY(0)}}
+@media (prefers-reduced-motion: reduce){
+  #seasonTint{transition:none}
+}
+
+/* 静音开关 */
+#btnMute.mute{font-size:var(--fs-body);padding:0 6px;line-height:1.4;margin-left:6px}
+#btnMute.mute.off{color:var(--ink-locked);text-decoration:line-through}
+
+/* 战报行高亮（战法 / 城门破） */
+.bline.tactic{color:var(--gold-pale)}
+.bline.key{color:var(--gold)}
 
 /* ---------- 朝堂（官阶台） ---------- */
 .court-row{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center}
