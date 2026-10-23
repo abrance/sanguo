@@ -326,6 +326,15 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
 .barbox{display:flex;gap:8px;align-items:center}
 .barbox>div{flex:1}
 
+/* ---------- 正在进行的攻城（纪事页顶部） ---------- */
+.livebattle{
+  border:1px solid var(--gold-deep);border-radius:var(--r-sm);
+  padding:6px 8px;margin:4px 0 8px;background:var(--surface-3);
+}
+.livebattle .lb-head{font-size:var(--fs-body);color:var(--gold-pale);margin-bottom:2px}
+.livebattle .lb-line{margin-bottom:4px}
+.livebattle .lb-acts{display:flex;flex-wrap:wrap;gap:4px}
+
 /* ---------- 宝物槽（人物页） ---------- */
 .tslots{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
 .tslot{

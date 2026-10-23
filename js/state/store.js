@@ -549,6 +549,27 @@ const COMMANDS = {
     State.log(G, 'good', `${c.name}：亲往${h.name}处劳问，其意稍解。`);
   },
 
+  // ─────── 攻城轮间：放一次战法或继续下一合（docs/HERO.md §5） ───────
+
+  BATTLE_STEP(G, { armyId, tactic }) {
+    const a = G.armies[armyId];
+    if (!a) throw new Error('无此军队');
+    const b = a.battle;
+    if (!b) throw new Error('此军并未在交战');
+    const city = G.cities[b.cityId];
+    if (!city) throw new Error('战场城池不存在');
+    const mine = a.factionId === G.player.factionId || city.grantedTo === PLAYER_HERO_ID;
+    if (!mine) throw new Error('此战非你指挥');
+
+    const done = Combat.step(G, a, city, tactic || null, '');
+    if (!done) return { done: false, round: b.round };
+
+    const rep = Combat.conclude(G, a, city, '');
+    delete a.battle;
+    Army._afterBattle(G, a, city, rep, '');
+    return { done: true, captured: rep.captured, round: b.round };
+  },
+
   // ─────── 宝物（docs/HERO.md §4） ───────
 
   EQUIP_TREASURE(G, { heroId, treasureId }) {

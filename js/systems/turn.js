@@ -2,6 +2,11 @@
 const Turn = {
 
   advance(G) {
+    // 收尾上回合没打完的攻城（玩家没点「继续」），且必须在月份推进之前 ——
+    // 否则这一仗要跨月结算，等于白送守军一个月的补兵/修墙时间
+    if (typeof Combat !== 'undefined') {
+      Combat.finishOpen(G, `${G.meta.year}年${G.meta.month}月`);
+    }
     G.meta.turn++;
     G.meta.month++;
     if (G.meta.month > 12) { G.meta.month = 1; G.meta.year++; }

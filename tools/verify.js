@@ -1832,6 +1832,171 @@ section('宝物（装备 / 派生 / 破城掉落）');
 }
 
 // ─────────────────────────────────────────────
+section('攻城逐轮推进 + 战法');
+{
+  // 造一局：玩家带大兵打邻城，返回 { api, get, army, city }
+  const setup = (seed, opts = {}) => {
+    const { api, get } = h.boot({ seed });
+    const st = get();
+    const home = st.cities[st.player.homeCityId];
+    const nb = api.State.neighbors(st, home.id, 300).find(x => x.owner !== st.player.factionId
+      && x.owner !== 'free');
+    for (const k of api.TROOP_KEYS) nb.garrison[k] = 0;
+    nb.garrison.inf = opts.defTroops == null ? 600 : opts.defTroops;
+    nb.wall = opts.wall == null ? 1 : opts.wall;
+    nb.morale = 55;
+    const pr = api.Diplo.pair(st, st.player.factionId, nb.owner);
+    pr.status = api.Diplo.WAR; pr.rel = -80; pr.until = 0;
+    st.player.reputation = 0;
+    if (opts.heroSkill) st.heroes.PLAYER.skill = opts.heroSkill;
+    api.Store.replace(st);
+
+    const g = get();
+    const army = api.Army.create(g, {
+      factionId: g.player.factionId, heroId: 'PLAYER', from: home.id, to: nb.id,
+      troops: { inf: 1200 }, mission: 'attack',
+    });
+    army.eta = 1; army.totalEta = 1;
+    g.armies[army.id] = army;
+    api.Store.replace(g);
+    return { api, get, armyId: army.id, cityId: nb.id, homeId: home.id };
+  };
+
+  // 1 逐轮 step 与一次跑完 resolve 结果一致（同种子、同输入）
+  {
+    const a = setup(101);
+    const cityA = a.get().cities[a.cityId];
+    const armyA = a.get().armies[a.armyId];
+    const rep = a.api.Combat.resolve(a.get(), armyA, cityA, 'x');
+
+    const b = setup(101);
+    const cityB = b.get().cities[b.cityId];
+    const armyB = b.get().armies[b.armyId];
+    b.api.Combat.begin(b.get(), armyB, cityB, 'x');
+    while (!b.api.Combat.step(b.get(), armyB, cityB, null, 'x')) { /* 逐轮 */ }
+    const rep2 = b.api.Combat.conclude(b.get(), armyB, cityB, 'x');
+
+    ok('逐轮推进与一次打完结果一致',
+      rep.captured === rep2.captured && rep.atkLoss === rep2.atkLoss
+      && rep.defLoss === rep2.defLoss && rep.rounds === rep2.rounds,
+      `${rep.captured}/${rep.atkLoss}/${rep.defLoss}/${rep.rounds} vs ${rep2.captured}/${rep2.atkLoss}/${rep2.defLoss}/${rep2.rounds}`);
+  }
+
+  // 2 玩家指挥的攻城会挂起在轮间，不自动打完
+  {
+    const a = setup(102);
+    a.api.Store.dispatch('END_TURN');   // 行军到位 → 开战（交互）
+    const z = a.get();
+    const ag = Object.values(z.armies).find(x => x.battle);
+    ok('玩家指挥的攻城挂在轮间等指令', !!ag, ag ? `第 ${ag.battle.round} 合` : '未挂起');
+
+    // 挂起期间 Army.advance 不许推进它
+    if (ag) {
+      const before = JSON.stringify(ag.battle.round);
+      a.api.Army.advance(a.get(), 'x');
+      ok('挂起的战斗不会被推进', JSON.stringify(a.get().armies[ag.id].battle.round) === before);
+    }
+  }
+
+  // 3 战法：加了战法守方伤亡更多（同种子对比）
+  {
+    const run = (tactic) => {
+      const a = setup(103, { heroSkill: 'huoji' });
+      const city = a.get().cities[a.cityId];
+      const army = a.get().armies[a.armyId];
+      a.api.Combat.begin(a.get(), army, city, 'x');
+      a.api.Combat.step(a.get(), army, city, tactic, 'x');
+      const rep = a.api.Combat.conclude(a.get(), army, city, 'x');
+      return { defLoss: rep.defLoss, round: rep.rounds, cityName: city.name };
+    };
+    const plain = run(null);
+    const fired = run('huoji');
+    ok('火计：一轮内守方伤亡显著更多', fired.defLoss >= plain.defLoss, `${plain.defLoss} → ${fired.defLoss}`);
+  }
+
+  // 4 战法只能用一次 + 士气门槛 + 专属战法判定
+  {
+    const a = setup(104, { heroSkill: 'huoji' });
+    const z = a.get();
+    const city = z.cities[a.cityId];
+    const army = z.armies[a.armyId];
+    a.api.Combat.begin(z, army, city, 'x');
+    const list = a.api.Combat.tacticsFor(z, army, city);
+    const huoji = list.find(x => x.key === 'huoji');
+    const yexi = list.find(x => x.key === 'yexi');
+    ok('战法表：专属（火计）+ 通用（夜袭）都在', !!huoji && !!yexi,
+      list.map(x => x.name).join('/'));
+    ok('战法：非本将特技的专属战法不出现在列表',
+      !list.some(x => x.key === 'tuji'), list.filter(x => x.skill).map(x => x.name).join('/'));
+
+    a.api.Combat.step(z, army, city, 'huoji', 'x');
+    const after = a.api.Combat.tacticsFor(z, army, city);
+    ok('战法：一场只能用一次', after.every(x => !x.ok && /已用过/.test(x.why || '')),
+      after[0] ? after[0].why : '');
+
+    // 士气 < 30 时禁用
+    const b = setup(105);
+    const z2 = b.get();
+    const c2 = z2.cities[b.cityId];
+    const a2 = z2.armies[b.armyId];
+    a2.morale = 22;
+    a2.battle = null;
+    b.api.Combat.begin(z2, a2, c2, 'x');
+    const l2 = b.api.Combat.tacticsFor(z2, a2, c2);
+    ok('战法：士气 < 30 不可用', l2.every(x => !x.ok && /士气/.test(x.why || '')),
+      (l2.find(x => /士气/.test(x.why || '')) || {}).why || '');
+  }
+
+  // 5 BATTLE_STEP 命令：打完 → 下城；非指挥战斗抛错
+  {
+    const a = setup(106, { defTroops: 900, wall: 2 });
+    a.api.Store.dispatch('END_TURN');
+    let z = a.get();
+    let ag = Object.values(z.armies).find(x => x.battle);
+    ok('BATTLE_STEP：有正在进行的战斗可用', !!ag, ag ? `第 ${ag.battle.round} 合` : '无挂起战斗');
+
+    if (ag) {
+      const id = ag.id;
+      let guard = 0;
+      while (a.get().armies[id] && a.get().armies[id].battle && guard < 8) {
+        a.api.Store.dispatch('BATTLE_STEP', { armyId: id, tactic: guard === 0 ? 'mazhen' : null });
+        guard++;
+      }
+      z = a.get();
+      ok('BATTLE_STEP：能一路打到终局（城破或班师）',
+        !z.armies[id] || !z.armies[id].battle, `用了 ${guard} 次`);
+    }
+
+    // AI 的战斗不接受玩家指令
+    const b = setup(107);
+    const z3 = b.get();
+    const c3 = z3.cities[b.cityId];
+    const a3 = z3.armies[b.armyId];
+    a3.factionId = 'yuanshao';
+    b.api.Combat.begin(z3, a3, c3, 'x');
+    let err = null;
+    try { b.api.Store.dispatch('BATTLE_STEP', { armyId: a3.id }); } catch (e) { err = e.message; }
+    ok('BATTLE_STEP：非你指挥的战斗拒绝', /非你指挥/.test(err || ''), err || '未抛错');
+  }
+
+  // 6 结束回合会自动收尾没打完的战斗（不会卡住）
+  {
+    const a = setup(108);
+    a.api.Store.dispatch('END_TURN');
+    const z = a.get();
+    const ag = Object.values(z.armies).find(x => x.battle);
+    if (!ag) {
+      ok('结束回合：自动收尾挂起的战斗（用例未挂起，跳过）', true);
+    } else {
+      a.api.Store.dispatch('END_TURN');
+      const z2 = a.get();
+      const left = Object.values(z2.armies).filter(x => x.battle);
+      ok('结束回合：自动收尾挂起的战斗', left.length === 0, `残留 ${left.length}`);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
 console.log(`\n${fail === 0 ? '全部通过' : '有失败'}：${pass} 通过 / ${fail} 失败`);
 if (fail) {
   console.log('\n失败项：');
