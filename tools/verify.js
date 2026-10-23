@@ -1279,10 +1279,12 @@ section('武将特技接线');
   const G = get();
   const base = { terrain: 'plain', morale: 55 };
   const powOf = (heroId, troops, extra) => api.Combat.power(G, troops, heroId, { ...base, ...extra });
-  // 剥离「统领加成」(1 + tong/200)，只留特技自身的倍率
+  // 剥离「统领加成」(1 + tong/200) 与「守将忠诚」(守方)，只留特技自身的倍率
   const skillMul = (heroId, troops, extra) => {
     const h = G.heroes[heroId];
-    return powOf(heroId, troops, extra) / ((1 + h.tong / 200) * powOf(null, troops, extra));
+    let denom = (1 + h.tong / 200) * powOf(null, troops, extra);
+    if (extra && extra.isDefender) denom *= 0.90 + (h.loyalty == null ? 70 : h.loyalty) / 500;
+    return powOf(heroId, troops, extra) / denom;
   };
   const near = (a, b, tol = 0.005) => Math.abs(a - b) <= tol;
 
@@ -1319,6 +1321,205 @@ section('武将特技接线');
     }
   }
   ok('特技效果键无「写了没人读」', !deadKeys.length, deadKeys.join(', '));
+}
+
+// ─────────────────────────────────────────────
+section('人情账（忠诚 / 野心 / 私交 / 叛变）');
+{
+  const { api, get } = h.boot({ seed: 7 });
+  const G = get();
+  const home = G.cities[G.player.homeCityId];
+  const govOf = c => G.heroes[c.governor];
+  const pickNonPlayer = () => Object.values(G.heroes)
+    .find(x => x.factionId === G.player.factionId && x.id !== 'PLAYER' && x.cityId === home.id);
+
+  ok('开局武将带人情账字段',
+    Object.values(G.heroes).every(x => x.ambition >= 5 && x.ambition <= 95
+      && x.bond != null && x.grievance != null && x.idle != null && x.cd));
+  ok('野心按 智/武/魅 算：智勇高、人缘差者野心大',
+    api.State._ambitionOf({ wu: 95, zhi: 95, mei: 20 }) > api.State._ambitionOf({ wu: 40, zhi: 40, mei: 90 }));
+
+  // 赏赐：精确加成 + 扣钱 + 冷却
+  {
+    const hero = pickNonPlayer();
+    const city = G.cities[hero.cityId];
+    city.gold = 3000;
+    hero.loyalty = 50;
+    const loy0 = hero.loyalty, bond0 = hero.bond, gold0 = city.gold;
+    const cost = 80 * (1 + G.player.rank);
+    api.Store.dispatch('REWARD_HERO', { heroId: hero.id });
+    const hh = get().heroes[hero.id];
+    const freshCity = get().cities[hero.cityId];
+    ok('赏赐：忠诚 +6 / 私交 +10 / 按官阶扣钱',
+      Math.abs(hh.loyalty - (loy0 + 6)) < 0.01 && Math.abs(hh.bond - (bond0 + 10)) < 0.01
+      && freshCity.gold === gold0 - cost);
+    let err = null;
+    try { api.Store.dispatch('REWARD_HERO', { heroId: hero.id }); } catch (e) { err = e.message; }
+    ok('赏赐：冷却期内再办被拒且状态不变',
+      /尚需/.test(err || '') && get().heroes[hero.id].loyalty === hh.loyalty);
+  }
+
+  // 责罚：只能罚守将，积怨 +1、治安 +3；抚慰消积怨
+  {
+    const raw = JSON.parse(JSON.stringify(get()));
+    const c = raw.cities[raw.player.homeCityId];
+    const hero = Object.values(raw.heroes).find(x => x.id === c.governor);
+    const order0 = c.order;
+    api.Store.replace(raw);
+    api.Store.dispatch('PUNISH_HERO', { heroId: hero.id });
+    const hh = get().heroes[hero.id];
+    ok('责罚：忠诚 -10 / 积怨 +1 / 治安 +3',
+      Math.abs(hh.loyalty - (hero.loyalty - 10)) < 0.01 && hh.grievance === hero.grievance + 1
+      && Math.abs(get().cities[raw.player.homeCityId].order - (order0 + 3)) < 0.01);
+    const c2 = get().cities[raw.player.homeCityId];
+    c2.food = Math.max(c2.food, 500);
+    api.Store.dispatch('CONSOLE_HERO', { heroId: hero.id });
+    ok('抚慰：积怨 -1 且扣粮 60', get().heroes[hero.id].grievance === hh.grievance - 1);
+  }
+
+  // 提拔：换守将，战功 -5，旧守将忠诚 -6
+  {
+    const raw = JSON.parse(JSON.stringify(get()));
+    const c = raw.cities[raw.player.homeCityId];
+    raw.player.merit = 100;
+    const prev = c.governor;
+    const cand = Object.values(raw.heroes).find(x => x.factionId === raw.player.factionId
+      && x.id !== 'PLAYER' && x.id !== prev && x.cityId === c.id);
+    api.Store.replace(raw);
+    api.Store.dispatch('PROMOTE_HERO', { heroId: cand.id, cityId: c.id });
+    const g2 = get();
+    ok('提拔：换守将 / 战功 -5 / 旧守将忠诚 -6',
+      g2.cities[c.id].governor === cand.id && g2.player.merit === 95
+      && Math.abs(g2.heroes[prev].loyalty - (raw.heroes[prev].loyalty - 6)) < 0.01);
+  }
+
+  // 闲置：连续 6 回合不被任用 → idle 增长且忠诚下滑
+  {
+    const { api: a2, get: g2 } = h.boot({ seed: 21 });
+    const raw = JSON.parse(JSON.stringify(g2()));
+    const hero = Object.values(raw.heroes).find(x => x.factionId === raw.player.factionId
+      && x.id !== 'PLAYER' && x.cityId !== raw.player.homeCityId);
+    // 让他既不当守将、也不在军中
+    for (const c of Object.values(raw.cities)) if (c.governor === hero.id) c.governor = null;
+    hero.cityId = null;
+    raw.heroes[hero.id] = { ...hero, loyalty: 70, ambition: 40, bond: 0, idle: 0 };
+    a2.Store.replace(raw);
+    h.runTurns(a2, 7);
+    const hh = g2().heroes[hero.id];
+    ok('闲置 6 月：idle 累积且忠诚下滑', hh.idle >= 6 && hh.loyalty < 70.5,
+      `idle ${hh.idle}，忠诚 ${hh.loyalty.toFixed(1)}`);
+  }
+
+  // 叛变：先预警，再叛；武将不许消失
+  {
+    const { api: a3, get: g3 } = h.boot({ seed: 33 });
+    const raw = JSON.parse(JSON.stringify(g3()));
+    const c = raw.cities[raw.player.homeCityId];
+    const heroId = Object.keys(raw.heroes).find(id => id !== 'PLAYER'
+      && raw.heroes[id].factionId === raw.player.factionId && raw.heroes[id].cityId === c.id);
+    const hero = raw.heroes[heroId];
+    c.governor = heroId;
+    Object.assign(hero, { loyalty: 12, ambition: 92, bond: 0, grievance: 0, warnTurn: 0, cd: {} });
+    a3.Store.replace(raw);
+
+    let warned = false, defected = false, turns = 0;
+    for (let i = 0; i < 24 && !defected; i++) {
+      h.runTurns(a3, 1);
+      turns++;
+      const g = g3();
+      const log = g.log.map(e => e.text).join('\n');
+      if (/心怀异志/.test(log)) warned = true;
+      const hh = g.heroes[heroId];
+      if (hh.factionId !== raw.player.factionId || g.cities[c.id].owner !== raw.player.factionId) defected = true;
+    }
+    const g = g3();
+    const hh = g.heroes[heroId];
+    ok('叛变前必有预警', warned, `${turns} 回合内`);
+    ok('叛变：武将仍在册（只换主子，不消失）', !!hh && hh.alive === true);
+    ok('叛变：带城投敌或落草', defected && (hh.factionId !== raw.player.factionId || g.cities[c.id].owner !== raw.player.factionId),
+      `将属 ${hh.factionId}，城属 ${g.cities[c.id].owner}`);
+  }
+
+  // 安抚窗口：预警后 3 月内办过事 → 本次不叛
+  {
+    const { api: a4, get: g4 } = h.boot({ seed: 33 });
+    const raw = JSON.parse(JSON.stringify(g4()));
+    const c = raw.cities[raw.player.homeCityId];
+    const heroId = Object.keys(raw.heroes).find(id => id !== 'PLAYER'
+      && raw.heroes[id].factionId === raw.player.factionId && raw.heroes[id].cityId === c.id);
+    const hero = raw.heroes[heroId];
+    const turn = raw.meta.turn;
+    c.governor = heroId;
+    Object.assign(hero, { loyalty: 12, ambition: 92, warnTurn: turn, lastAct: turn, cd: {} });
+    a4.Store.replace(raw);
+    h.runTurns(a4, 1);
+    const hh = g4().heroes[heroId];
+    ok('安抚窗口：预警后 3 月内办过事则不叛', hh.factionId === raw.player.factionId && hh.warnTurn === 0);
+  }
+
+  // 派生：守将忠诚影响守城战力；私交影响产出；忠诚影响建军士气
+  {
+    const { api: a5, get: g5 } = h.boot({ seed: 7 });
+    const raw = JSON.parse(JSON.stringify(g5()));
+    const c = raw.cities[raw.player.homeCityId];
+    const hid = c.governor;
+    const war = obj => a5.Combat.power(raw, c.garrison, hid, {
+      terrain: 'plain', isDefender: true, enemyTroops: { inf: 1000 }, wall: 0,
+      factionId: raw.player.factionId,
+    });
+    raw.heroes[hid].loyalty = 100;
+    const p100 = war(raw);
+    raw.heroes[hid].loyalty = 40;
+    const p40 = war(raw);
+    ok('守将忠诚：100 比 40 守城战力高约 12%', Math.abs(p100 / p40 - 1.10 / 0.98) < 0.01,
+      (p100 / p40).toFixed(3));
+
+    const a6 = h.boot({ seed: 7 });
+    const G6 = a6.get();
+    const c6 = G6.cities[G6.player.homeCityId];
+    G6.heroes[c6.governor].loyalty = 20;
+    const low = a6.api.Army._initialMorale(G6, G6.player.factionId, c6.governor);
+    G6.heroes[c6.governor].loyalty = 95;
+    const high = a6.api.Army._initialMorale(G6, G6.player.factionId, c6.governor);
+    ok('建军士气随主将忠诚变化', high > low, `${low.toFixed(1)} → ${high.toFixed(1)}`);
+  }
+
+  // 旧档迁移：缺新字段的存档读入后补齐，且两次迁移结果一致
+  {
+    const { api: a7, get: g7 } = h.boot({ seed: 9 });
+    const strip = () => {
+      const raw = JSON.parse(JSON.stringify(g7()));
+      for (const x of Object.values(raw.heroes)) {
+        delete x.ambition; delete x.bond; delete x.grievance;
+        delete x.idle; delete x.lastAct; delete x.warnTurn; delete x.cd;
+      }
+      return raw;
+    };
+    const r1 = strip(), r2 = strip();
+    a7.State.migrate(r1, 2);
+    a7.State.migrate(r2, 2);
+    const bad = Object.keys(r1.heroes).filter(id => {
+      const h = r1.heroes[id];
+      return h.ambition == null || h.ambition < 5 || h.ambition > 95 || !h.cd;
+    });
+    ok('旧档迁移：补齐 ambition/bond/cd', !bad.length, bad.slice(0, 3).join(','));
+    ok('旧档迁移：同档多次迁移结果一致',
+      Object.keys(r1.heroes).every(id => r1.heroes[id].ambition === r2.heroes[id].ambition));
+  }
+
+  // 回归守门：AI 调度援军不许搬走玩家直辖城的兵
+  {
+    const { api: a8, get: g8 } = h.boot({ seed: 12 });
+    const G8 = g8();
+    const c8 = G8.cities[G8.player.homeCityId];
+    c8.garrison.inf = 900;
+    const near = a8.State.neighbors(G8, c8.id, 260).find(x => x.owner !== G8.player.factionId);
+    const before = a8.troopTotal(c8.garrison);
+    if (near) a8.Diplo.sendAid(G8, G8.player.factionId, near.id, 0.3);
+    const fromHome = Object.values(a8.Store.get().armies).some(a => a.from === c8.id && a.mission === 'aid');
+    ok('援军不从玩家直辖城抽兵', !fromHome && a8.troopTotal(c8.garrison) === before,
+      `家城兵 ${before} → ${a8.troopTotal(c8.garrison)}`);
+  }
 }
 
 // ─────────────────────────────────────────────

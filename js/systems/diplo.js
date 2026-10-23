@@ -616,7 +616,9 @@ const Diplo = {
   sendAid(G, fromFid, toCityId, ratio) {
     const target = G.cities[toCityId];
     if (!target) return 0;
+    // 玩家的直辖城不归 AI 调度（维护 AI._support 的同一条不变量：不能悄无声息搬走玩家自己的兵）
     const src = State.factionCities(G, fromFid)
+      .filter(c => fromFid !== G.player.factionId || !State.isPlayerCity(G, c))
       .map(c => ({ c, t: troopTotal(c.garrison) }))
       .sort((a, b) => b.t - a.t)[0];
     if (!src || src.t < 200) return 0;
