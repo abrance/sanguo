@@ -263,7 +263,19 @@ const Renderer = {
     }
     cityDraw.sort((a, b) => a.c.y - b.c.y);
 
+    // 军队也按世界 y 排，和城池混排 —— 否则兵符永远浮在所有城之上，城后有兵时穿帮
+    const armies = Object.values(G.armies)
+      .map(a => ({ a, p: Renderer.toScreen(a.x, a.y) }))
+      .filter(o => o.p.x > -40 && o.p.y > -40 && o.p.x < cw + 40 && o.p.y < ch + 40)
+      .sort((m, n) => m.a.y - n.a.y);
+    let ai = 0;
+
     for (const { c, p } of cityDraw) {
+      while (ai < armies.length && armies[ai].a.y < c.y) {
+        Renderer.drawArmyMarker(ctx, G, armies[ai].a, armies[ai].p, playerFid, z);
+        ai++;
+      }
+
       const f = G.factions[c.owner];
       const color = f ? f.color : '#888';
       const isPlayer = c.owner === playerFid;
@@ -374,42 +386,8 @@ const Renderer = {
       }
     }
 
-    // 军队标记
-    for (const a of Object.values(G.armies)) {
-      const p = Renderer.toScreen(a.x, a.y);
-      if (p.x < -40 || p.y < -40 || p.x > cw + 40 || p.y > ch + 40) continue;
-      const f = G.factions[a.factionId];
-      const color = f ? f.color : '#888';
-      const isMine = a.factionId === playerFid;
-      const size = U.clamp(7 * Math.max(0.8, z), 6, 13);
-
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate(-Math.PI / 2);
-      ctx.beginPath();
-      ctx.moveTo(size, 0);
-      ctx.lineTo(-size * 0.7, size * 0.75);
-      ctx.lineTo(-size * 0.7, -size * 0.75);
-      ctx.closePath();
-      ctx.fillStyle = color;
-      ctx.fill();
-      ctx.lineWidth = 1.2;
-      ctx.strokeStyle = isMine ? '#ffe9a8' : 'rgba(0,0,0,0.7)';
-      ctx.stroke();
-      ctx.restore();
-
-      if (z > 0.6) {
-        ctx.font = `${U.clamp(9 * z, 9, 12)}px "Noto Serif SC",serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = 'rgba(6,5,4,0.9)';
-        const t = `${a.eta}月`;
-        ctx.strokeText(t, p.x, p.y - size - 2);
-        ctx.fillStyle = isMine ? '#ffe9a8' : '#e8c0b4';
-        ctx.fillText(t, p.x, p.y - size - 2);
-      }
-    }
+    // 剩下的军队（比所有城都靠南）
+    while (ai < armies.length) Renderer.drawArmyMarker(ctx, G, armies[ai].a, armies[ai].p, playerFid, z);
 
     // 目标选择模式的十字说明
     if (Renderer.targeting) {
@@ -552,6 +530,41 @@ const Renderer = {
   },
 
   /** 远景城池：只画一个色点（带直辖金环与选中反馈） */
+  /** 军队标记：一枚三角 + 行军月数（按 y 混排进城池绘制流，见 draw） */
+  drawArmyMarker(ctx, G, a, p, playerFid, z) {
+    const f = G.factions[a.factionId];
+    const color = f ? f.color : '#888';
+    const isMine = a.factionId === playerFid;
+    const size = U.clamp(7 * Math.max(0.8, z), 6, 13);
+
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(-Math.PI / 2);
+    ctx.beginPath();
+    ctx.moveTo(size, 0);
+    ctx.lineTo(-size * 0.7, size * 0.75);
+    ctx.lineTo(-size * 0.7, -size * 0.75);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = isMine ? '#ffe9a8' : 'rgba(0,0,0,0.7)';
+    ctx.stroke();
+    ctx.restore();
+
+    if (z > 0.6) {
+      ctx.font = `${U.clamp(9 * z, 9, 12)}px "Noto Serif SC",serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(6,5,4,0.9)';
+      const t = `${a.eta}月`;
+      ctx.strokeText(t, p.x, p.y - size - 2);
+      ctx.fillStyle = isMine ? '#ffe9a8' : '#e8c0b4';
+      ctx.fillText(t, p.x, p.y - size - 2);
+    }
+  },
+
   drawCityDot(ctx, x, y, r, color, opts) {
     // 远景也要一点高度感：东南向软影 → 色点看着是“浮在地面上”而不是贴纸
     ctx.beginPath();
@@ -606,6 +619,8 @@ const Renderer = {
     const bw = w / (walls + 2);
 
     const z = Math.max(0, opts.z || 0);
+    const damaged = (opts.wallMax || 1) - (opts.wall || 1) > 0.5;   // 城墙被打过：缺堞 + 缺口
+    const gapIdx = damaged ? Math.max(1, walls - 2) : -1;           // 塌掉的那一段（取中偏右，别贴着墙角）
     const dy = z;                              // 竖向抬升
     const dx = z * Renderer.ISO.skew;            // 横向偏移：露出东面墙（斜投影角度）
 
@@ -664,6 +679,18 @@ const Renderer = {
       // 接地暗线
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fillRect(left, bt - 0.8, w + dx, 1.2);
+
+      // 破损：南墙塌出一段缺口（与顶面少掉的那个雉堞同位置），前方散碎石
+      if (gapIdx >= 0) {
+        const gx = left + bw * 0.7 + gapIdx * ((w - bw * 1.4) / Math.max(1, walls - 1)) + dx * 0.5;
+        const gwd = bw * 1.6, ght = dy * 0.62;
+        ctx.fillStyle = 'rgba(8,7,5,0.5)';
+        ctx.fillRect(gx - gwd / 2, bt - ght, gwd, ght);
+        ctx.fillStyle = shade(color, 0.4);
+        for (let k = 0; k < 3; k++) {
+          ctx.fillRect(gx - gwd / 2 + k * gwd * 0.34, bt - 1.4, gwd * 0.2, 1.4 + (k % 2));
+        }
+      }
     }
 
     // 顶面：整套原有画法，整体上抬 (dx, -dy)
@@ -679,21 +706,24 @@ const Renderer = {
 
     // 雉堞
     ctx.fillStyle = color;
-    const damaged = (opts.wallMax || 1) - (opts.wall || 1) > 0.5;
     for (let i = 0; i < walls; i++) {
-      if (damaged && i === walls - 1 && tier > 0) continue;   // 塌掉一段
+      if (i === gapIdx && tier > 0) continue;   // 塌掉一段
       const mx = left + bw * (0.7 + i * ((w - bw * 1.4) / Math.max(1, walls - 1)));
       ctx.fillRect(mx - bw * 0.32, top - merlon, bw * 0.64, merlon + 1);
     }
 
     const detail = opts.detail !== false;
 
-    // 角楼（郡城起）
+    // 角楼（郡城 2 座后角 / 都城 4 座，前角即箭楼）
     if (detail && tier >= 1) {
       const t = Math.max(2, r * 0.3);
       ctx.fillStyle = color;
       ctx.fillRect(left - t * 0.5, top - t * 0.5, t, t);
       ctx.fillRect(left + w - t * 0.5, top - t * 0.5, t, t);
+      if (tier === 2) {
+        ctx.fillRect(left - t * 0.5, top + h - t * 0.5, t, t);
+        ctx.fillRect(left + w - t * 0.5, top + h - t * 0.5, t, t);
+      }
     }
 
     // 内城（都城）
@@ -703,6 +733,13 @@ const Renderer = {
       ctx.fillRect(x - iw / 2, y - h * 0.16 - ih, iw, ih);
       ctx.fillStyle = 'rgba(12,10,8,0.42)';
       ctx.fillRect(x - iw / 2 + thick * 0.7, y - h * 0.16 - ih + thick * 0.7, iw - thick * 1.4, ih - thick * 1.4);
+      // 内城雉堞：都城是"双重城墙"，顶上还有一圈小堞
+      ctx.fillStyle = color;
+      const inm = 5, imw = Math.max(1.2, bw * 0.4), imh = Math.max(1.2, merlon * 0.68);
+      for (let i = 0; i < inm; i++) {
+        const mx = x - iw / 2 + imw * 0.9 + i * ((iw - imw * 1.8) / (inm - 1));
+        ctx.fillRect(mx - imw / 2, y - h * 0.16 - ih - imh, imw, imh + 1);
+      }
       // 主楼檐顶
       ctx.fillStyle = 'rgba(20,16,12,0.75)';
       ctx.fillRect(x - iw * 0.58, y - h * 0.16 - ih - Math.max(1.4, r * 0.14), iw * 1.16, Math.max(1.4, r * 0.14));
@@ -745,12 +782,11 @@ const Renderer = {
     // 南墙垛口：城头正面那排小方块，画在顶面之后才压得住屋顶前沿
     if (dy > 0.5 && opts.detail !== false) {
       const tt = top + h - dy;
-      const damaged = (opts.wallMax || 1) - (opts.wall || 1) > 0.5;
       const mw = bw * 0.64;
       const mh = merlon * 0.8;
       ctx.fillStyle = shade(color, Math.min(1, Renderer.ISO.front * 1.15));
       for (let i = 0; i < walls; i++) {
-        if (damaged && i === walls - 1 && tier > 0) continue;
+        if (i === gapIdx && tier > 0) continue;
         const mx = left + bw * (0.7 + i * ((w - bw * 1.4) / Math.max(1, walls - 1)));
         ctx.fillRect(mx - mw / 2 + dx, tt - mh, mw, mh + 1);
       }
