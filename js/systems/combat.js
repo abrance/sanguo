@@ -47,6 +47,8 @@ const Combat = {
       if (sk.atk) p *= sk.atk;
       if (isDef && sk.def) p *= sk.def;
       if (isDef && sk.defenseCity) p *= sk.defenseCity;
+      // 守将忠诚影响守城战力（docs/HERO.md §1.5）：100 → ×1.10，0 → ×0.90
+      if (isDef) p *= 0.90 + (h.loyalty == null ? 70 : h.loyalty) / 500;
       // 兵种特技：突击 / 神射 / 陷阵 / 水战（按该兵种兵力占比加权）
       const byType = { cav: 'cavalry', arc: 'archer', inf: 'infantry', nvy: 'navy' };
       for (const tk in byType) {
