@@ -16,6 +16,7 @@ const EventSys = {
   tick(G) {
     EventSys.flushPending(G);
     if (G.over) return;
+    EventSys._anchors(G);
     if ((G.events.queue || []).length >= EventSys.MAX_QUEUE) return;
 
     const want = G.meta.turn % 4 === 0 ? 2 : 1;
@@ -25,6 +26,22 @@ const EventSys = {
       if (!pick) break;
       G.events.queue.push(pick);
       G.events.seen[pick.eventId] = G.meta.turn;
+      G.stats.eventsSeen = (G.stats.eventsSeen || 0) + 1;
+    }
+  },
+
+  /** 历史锚点：到窗口必触发，忽略权重与 cond（docs/EVENTS.md §8） */
+  _anchors(G) {
+    const turn = G.meta.turn;
+    for (const id of EVENT_KEYS) {
+      const ev = EVENTS[id];
+      if (!ev.anchor || G.events.seen[id]) continue;
+      if (turn < ev.anchor[0] || turn > ev.anchor[1]) continue;
+      if (G.events.queue.length >= EventSys.MAX_QUEUE) break;
+      if (G.events.queue.some(q => q.eventId === id)) continue;
+      const first = State.demesne(G)[0];
+      G.events.queue.push({ eventId: id, cityId: first ? first.id : null, turn });
+      G.events.seen[id] = turn;
       G.stats.eventsSeen = (G.stats.eventsSeen || 0) + 1;
     }
   },

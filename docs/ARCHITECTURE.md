@@ -43,7 +43,8 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 │    tech-system.js 科研点累积、排队、乘数刷新
 │    clans.js       士族情绪漂移与叛乱
 │    relations.js   人情账：武将忠诚漂移 / 闲置 / 叛变（含带城投敌）
-│    event.js       事件层：抽取（权重×scope）/ 选项代价 / 延迟后果 / 连锁 / 自动拍板
+│    event.js       事件层：抽取（权重×scope）/ 历史锚点 / 选项代价 / 延迟后果 / 连锁 / 自动拍板
+│    court.js       朝堂：帝都归属 → 矫诏权，诏令 / 授职 / 征辟
 │    viceroy.js     太守按方针自动营造 + 征兵
 │    rally.js       持续调兵（补给线）
 │    diplo.js       关系漂移 / 状态机 / canAttack 闸门 / AI 议和宣战结盟
@@ -195,7 +196,8 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
  9.5 Diplo.advance   停战到期 / 每 6 回合重算边界 / 关系漂移 / AI 外交
 10  Rank.monthly      声望自然增长 + 晋升检查
 11  AI.run            局势评估 → AIEcon（税/募兵/营造）→ AIWar（防守/进攻/集结），玩家势力的非直辖城同样走这里 —— 见 [AI.md](AI.md)
-12  EventSys.tick     兑现到期后果 → 抽新事件（放在最后：不许影响本月已算完的经济）
+12  EventSys.tick     兑现到期后果 → 抽历史锚点 → 抽新事件（放在最后：不许影响本月已算完的经济）
+12.6 Court.refresh     帝都易主 → 矫诏权随之转移（失去者名望 −20）
 12  _playerFate       直辖城全失 → 流失投奔
 13  _cleanupFactions  势力覆灭清理（无城即亡，残军清空）
 14  State.checkEnd    胜负判定
