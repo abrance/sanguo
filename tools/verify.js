@@ -1523,6 +1523,140 @@ section('人情账（忠诚 / 野心 / 私交 / 叛变）');
 }
 
 // ─────────────────────────────────────────────
+section('名望与定向登用');
+{
+  const { api, get } = h.boot({ seed: 7 });
+  const G = get();
+
+  // 1 名望档位
+  ok('名望档位分四段',
+    api.repTitle(10) === '无名之辈' && api.repTitle(80) === '一方名士'
+    && api.repTitle(200) === '海内知名' && api.repTitle(300) === '天下归心');
+
+  // 2 城档：治所最高、县城最低
+  {
+    const caps = api.State.capitals(G);
+    const cap = G.cities[[...caps][0]];
+    const small = Object.values(G.cities)
+      .filter(c => !caps.has(c.id))
+      .sort((a, b) => a.pop - b.pop)[0];
+    ok('城档：治所 = 都城（2）、小城 = 县城（0）',
+      api.State.cityLevel(G, cap, caps) === 2 && api.State.cityLevel(G, small, caps) === 0,
+      `${cap.name}=${api.State.cityLevel(G, cap, caps)} ${small.name}=${api.State.cityLevel(G, small, caps)}`);
+  }
+
+  // 3 破城名望按城档：县城 +4 / 郡城 +6 / 都城 +12
+  {
+    const runCapture = (pickSmall) => {
+      const { api: a, get: g } = h.boot({ seed: 7 });
+      const st = g();
+      const home = st.cities[st.player.homeCityId];
+      const caps = a.State.capitals(st);
+      const nbs = a.State.neighbors(st, home.id, 300)
+        .filter(x => x.owner !== st.player.factionId);
+      const target = pickSmall
+        ? nbs.filter(x => a.State.cityLevel(st, x, caps) === 0).sort((x, y) => x.pop - y.pop)[0]
+        : nbs.filter(x => a.State.cityLevel(st, x, caps) >= 1).sort((x, y) => y.pop - x.pop)[0];
+      if (!target) return null;
+      const tierBefore = a.State.cityLevel(st, target, caps);   // 先记档，拆墙会改档次
+      // 目标守军抽干、城墙拆掉，保证必下
+      for (const k of a.TROOP_KEYS) target.garrison[k] = 0;
+      target.garrison.inf = 1;
+      // 城墙不动：改 wall 会改掉治所判定（capitals 用 pop + wall×60），
+      // 5000 打 1 兵，墙再高也必下
+      const pr = a.Diplo.pair(st, st.player.factionId, target.owner);
+      pr.status = a.Diplo.WAR; pr.rel = -80; pr.until = 0;
+      a.Store.replace(st);
+      const g2 = g();
+      const army = a.Army.create(g2, {
+        factionId: g2.player.factionId, heroId: 'PLAYER', from: home.id, to: target.id,
+        troops: { inf: 5000 }, mission: 'attack',
+      });
+      army.eta = 1; army.totalEta = 1;
+      const rep0 = g2.player.reputation;
+      a.Store.replace(g2);
+      a.Army.advance(a.Store.get(), 'x');
+      const after = g();
+      return {
+        gained: after.player.reputation - rep0,
+        tier: tierBefore,
+        captured: after.cities[target.id].owner === after.player.factionId,
+      };
+    };
+    const low = runCapture(true);
+    const high = runCapture(false);
+    ok('破城名望：县城 +4', !!low && low.captured && low.gained === 4, low ? `+${low.gained}` : '无县城可测');
+    ok('破城名望：郡城/都城 +6/+12', !!high && high.gained === (high.tier === 2 ? 12 : 6),
+      high ? `tier${high.tier} +${high.gained}` : '无大城可测');
+  }
+
+  // 4 登用成功率公式：分项可复算，且被 clamp 在 3%-92%
+  {
+    const free = Object.values(G.heroes).find(x => x.factionId === 'free');
+    const c1 = api.Relations.recruitChance(G, free, 'beseech');
+    const manual = 0.55 + (free.bond || 0) * 0.005 + (G.player.reputation || 0) / 800
+      + (G.player.mei || 0) / 400 + (100 - (free.ambition || 40)) * 0.002 - free.zhi * 0.0015;
+    ok('登用成功率：分项之和 = 总概率（clamp 前）',
+      Math.abs(c1.parts.reduce((s, x) => s + x[1], 0) - manual) < 1e-9);
+    ok('登用成功率：夹在 3%–92%',
+      c1.p >= 0.03 && c1.p <= 0.92 && api.Relations.recruitChance(G, free, 'visit').p >= 0.03);
+  }
+
+  // 5 拜访：扣钱、失败仍在野；成功则入麾下
+  {
+    const { api: a, get: g } = h.boot({ seed: 5 });
+    const st = g();
+    const target = Object.values(st.heroes).find(x => x.factionId === 'free');
+    st.player.reputation = 400;                       // 拉满胜算
+    st.heroes[target.id].ambition = 5;
+    st.heroes[target.id].zhi = 10;
+    st.cities[st.player.homeCityId].gold = 5000;
+    a.Store.replace(st);
+    const gold0 = g().cities[st.player.homeCityId].gold;
+    const r = a.Store.dispatch('VISIT_HERO', { heroId: target.id });
+    const after = g();
+    ok('拜访：扣 60 钱', gold0 - after.cities[st.player.homeCityId].gold === 60);
+    ok('拜访：成功则入麾下且忠诚按公式',
+      !r.ok || (after.heroes[target.id].factionId === after.player.factionId
+        && Math.abs(after.heroes[target.id].loyalty - (45 + (st.heroes[target.id].bond || 0) / 2)) < 0.01),
+      `ok=${r.ok} 胜算 ${(r.chance * 100).toFixed(0)}%`);
+    let err = null;
+    try { a.Store.dispatch('VISIT_HERO', { heroId: target.id }); } catch (e) { err = e.message; }
+    ok('拜访：冷却期内再往被拒（或已入麾下）', /尚需|已仕/.test(err || ''), err || '未抛错');
+  }
+
+  // 6 三顾互斥：同一时间只许一位
+  {
+    const { api: a, get: g } = h.boot({ seed: 9 });
+    const st = g();
+    const frees = Object.values(st.heroes).filter(x => x.factionId === 'free').slice(0, 2);
+    st.cities[st.player.homeCityId].gold = 9000;
+    a.Store.replace(st);
+    a.Store.dispatch('BESEECH_HERO', { heroId: frees[0].id });
+    let err = null;
+    try { a.Store.dispatch('BESEECH_HERO', { heroId: frees[1].id }); } catch (e) { err = e.message; }
+    ok('三顾：同一时间只许一人', /三顾之礼已许/.test(err || ''), err || '未抛错');
+  }
+
+  // 7 士族征辟改走成功率：不再 500 钱必成功
+  {
+    let joined = 0;
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const { api: a, get: g } = h.boot({ seed });
+      const st = g();
+      const city = st.cities[st.player.homeCityId];
+      city.gold = 5000;
+      a.Store.replace(st);
+      try { a.Store.dispatch('CLAN_ACTION', { cityId: city.id, action: 'recruit' }); } catch (e) { }
+      const own = Object.values(g().heroes)
+        .some(x => x.factionId === g().player.factionId && x.id !== 'PLAYER' && x.bond >= 25 && x.loyalty === 78);
+      if (own) joined++;
+    }
+    ok('士族征辟：有成功也有失败（不是必成功）', joined > 0 && joined < 8, `${joined}/8 成功`);
+  }
+}
+
+// ─────────────────────────────────────────────
 console.log(`\n${fail === 0 ? '全部通过' : '有失败'}：${pass} 通过 / ${fail} 失败`);
 if (fail) {
   console.log('\n失败项：');

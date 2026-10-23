@@ -3,6 +3,14 @@
 
 const PLAYER_HERO_ID = 'PLAYER';
 
+/** 名望档位（顶栏与事件选项的「以名望服人」共用） */
+function repTitle(v) {
+  if (v >= 280) return '天下归心';
+  if (v >= 150) return '海内知名';
+  if (v >= 60) return '一方名士';
+  return '无名之辈';
+}
+
 /** 纪事上限：存 500 条，界面只画最近 400 条（多了 DOM 太重） */
 const LOG_MAX = 500;
 const LOG_VIEW = 400;
@@ -11,7 +19,7 @@ const LOG_VIEW = 400;
 const META_DEFAULTS = { rngState: null, uidSeq: null };
 const PLAYER_DEFAULTS = {
   favor: 60, mission: null, missionCooldown: 0, domActionTurn: 0, route: 'loyal',
-  talent: null, pacts: [], diploCooldown: {}, usurp: 0, legions: [],
+  talent: null, pacts: [], diploCooldown: {}, usurp: 0, legions: [], beseech: null,
 };
 const FACTION_DEFAULTS = {};
 const CITY_DEFAULTS = {
@@ -23,6 +31,7 @@ const CITY_DEFAULTS = {
 /** 人情账新字段（docs/HERO.md §1.2）。ambition 由公式算，这里只是兜底值 */
 const HERO_DEFAULTS = {
   ambition: 40, bond: 0, grievance: 0, idle: 0, lastAct: 0, warnTurn: 0, cd: {},
+  visits: {},                 // 定向登用：{ visit/gift/beseech: 上次回合, fails: 连败次数 }
 };
 
 const State = {
@@ -448,6 +457,25 @@ const State = {
   /** 势力月度科研产出（与研发推进口径一致） */
   playerRPIncome(G) {
     return TechSys.rate(G, G.player.factionId);
+  },
+
+  /** 各势力的治所（人口 + 城墙加权最高者）—— 规则层与视图层共用这一份口径 */
+  capitals(G) {
+    const best = {};
+    for (const c of Object.values(G.cities)) {
+      if (!c.owner || c.owner === 'free') continue;
+      const w = c.pop + c.wall * 60;
+      if (!best[c.owner] || w > best[c.owner].w) best[c.owner] = { w, id: c.id };
+    }
+    return new Set(Object.values(best).map(b => b.id));
+  },
+
+  /** 城池档次：2 都城（势力治所）/ 1 郡城 / 0 县城 —— 名望与渲染共用 */
+  cityLevel(G, c, capitals) {
+    const caps = capitals || State.capitals(G);
+    if (caps.has(c.id)) return 2;
+    if ((c.wallMax || 1) >= 3 || c.pop >= 140) return 1;
+    return 0;
   },
 
   neighbors(G, cityId, maxDist = 230) {

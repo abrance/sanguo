@@ -169,3 +169,97 @@ const Relations = {
       `${h.name}举${city.name}降${toName}，${mine ? '你痛失一城' : `${oldName}失一城`}。`);
   },
 };
+
+// ───────── 定向登用（docs/HERO.md §3） ─────────
+// 三档：拜访 / 送礼 / 三顾。成功率全透明，界面直接列出每一项。
+Relations.TIERS = {
+  visit:   { id: 'visit',   name: '拜访', gold: 60,  food: 0,   base: 0.12, cd: 2 },
+  gift:    { id: 'gift',    name: '送礼', gold: 260, food: 120, base: 0.28, cd: 4 },
+  beseech: { id: 'beseech', name: '三顾', gold: 900, food: 0,   base: 0.55, cd: 6 },
+};
+
+/** 在野将的招募成功率（返回分项，便于界面逐条显示） */
+Relations.recruitChance = function (G, hero, tierKey) {
+  const tier = Relations.TIERS[tierKey];
+  if (!tier) return { p: 0, parts: [] };
+  const p = G.player;
+  const bond = hero.bond || 0;
+  const rep = p.reputation || 0;
+  const ambition = hero.ambition == null ? 40 : hero.ambition;
+  const parts = [
+    ['基础', tier.base],
+    ['私交', bond * 0.005],
+    ['名望', rep / 800],
+    ['魅力', (p.mei || 0) / 400],
+    ['野心低', (100 - ambition) * 0.002],
+    ['智谋', -hero.zhi * 0.0015],
+  ];
+  const sum = parts.reduce((s, x) => s + x[1], 0);
+  const fails = (hero.visits && hero.visits.fails) || 0;
+  return {
+    p: U.clamp(sum, 0.03, 0.92),
+    parts,
+    burnt: fails >= 3,        // 连续三次失败后不再涨私交
+  };
+};
+
+/**
+ * 执行一次登用（在草稿上改状态）。返回 { ok, chance }。
+ * 失败：钱粮不退，私交 +3（连败三次后不再涨）；三顾失败另扣名望 -3。
+ */
+Relations.tryRecruit = function (G, hero, tierKey) {
+  const tier = Relations.TIERS[tierKey];
+  const chance = Relations.recruitChance(G, hero, tierKey);
+  hero.visits = hero.visits || {};
+  hero.visits[tierKey] = G.meta.turn;
+
+  const ok = RNG.chance(chance.p);
+  if (ok) {
+    hero.factionId = G.player.factionId;
+    hero.cityId = G.player.homeCityId;
+    hero.loyalty = U.clamp(45 + (hero.bond || 0) / 2, 0, 100);
+    hero.bond = Math.max(hero.bond || 0, 20);
+    hero.idle = 0;
+    hero.visits.fails = 0;
+    State.log(G, 'good', Relations._welcomeLine(G, hero, tier.name));
+    return { ok: true, chance };
+  }
+
+  hero.visits.fails = ((hero.visits.fails) || 0) + 1;
+  if (hero.visits.fails <= 3) hero.bond = U.clamp((hero.bond || 0) + 3, 0, 100);
+  if (tierKey === 'beseech') G.player.reputation = Math.max(0, G.player.reputation - 3);
+  State.log(G, 'note',
+    `${tier.name}${hero.name}不遇` + (hero.visits.fails <= 3 ? '，然其心稍感（私交 +3）。' : '，其已不堪其扰。'));
+  return { ok: false, chance };
+};
+
+/** 招来的将按五维给一句模板语（不做 130 条手写独白） */
+Relations._welcomeLine = function (G, hero, way) {
+  const line = hero.wu >= 85 ? '愿为明公执戟前驱'
+    : hero.zhi >= 85 ? '天下棋局，愿与明公共弈'
+    : hero.zheng >= 80 ? '愿为明公理民治粟'
+    : '蒙公不弃，敢不效死';
+  return `${way}既至，${hero.name}曰：「${line}。」遂入麾下。`;
+};
+
+/** 势力内非直辖城的「征辟」也走同一套成功率（不再必成功） */
+Relations.recruitFree = function (G, city) {
+  const free = Object.values(G.heroes)
+    .filter(h => h.alive && h.factionId === 'free')
+    .sort((a, b) => (b.zhi + b.tong) - (a.zhi + a.tong));
+  if (!free.length) throw new Error('在野无英才可辟');
+
+  const h = free[0];
+  const chance = Relations.recruitChance(G, h, 'beseech');
+  const ok = RNG.chance(chance.p);
+  if (ok) {
+    h.factionId = G.player.factionId;
+    h.cityId = city.id;
+    h.loyalty = 78;
+    h.bond = Math.max(h.bond || 0, 25);
+    State.log(G, 'good', `${city.name}征辟${h.name}（统 ${h.tong} / 智 ${h.zhi}），士族归心。`);
+  } else {
+    State.log(G, 'note', `${city.name}欲辟${h.name}，其人婉拒；士林称之。`);
+  }
+  return { ok, hero: h, chance };
+};

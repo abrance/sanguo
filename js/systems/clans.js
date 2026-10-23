@@ -89,35 +89,26 @@ const Clans = {
     State.log(G, 'good', `${c.name}设宴安抚士族，人心稍定。`);
   },
 
-  /** 玩家操作：征辟（招募在野英才，换士族支持） */
+  /** 玩家操作：征辟（士族通道，走统一成功率，不再 500 钱必成功） */
   recruit(G, c) {
     const cost = { gold: 500 };
     if (c.gold < cost.gold) throw new Error(`钱不足（需 ${cost.gold}）`);
 
-    const free = Object.values(G.heroes)
-      .filter(h => h.factionId === 'free' && h.alive)
-      .sort((a, b) => (b.zhi + b.tong) - (a.zhi + a.tong));
-
-    if (!free.length) throw new Error('在野无英才可辟');
-
-    const h = free[0];
     c.gold -= cost.gold;
-    h.factionId = G.player.factionId;
-    h.cityId = c.id;
-    h.loyalty = 78;
+    const r = Relations.recruitFree(G, c);   // 成功率与「三顾」同档；失败仍得士族好感
 
     for (const cl of c.clans) {
-      cl.sat = U.clamp(cl.sat + 7, 0, 100);
-      cl.inf = U.clamp(cl.inf + 3, 0, 100);
+      cl.sat = U.clamp(cl.sat + (r.ok ? 7 : 3), 0, 100);
+      cl.inf = U.clamp(cl.inf + (r.ok ? 3 : 1), 0, 100);
     }
 
-    // 能力高者可直接任守将
-    const cur = c.governor ? G.heroes[c.governor] : null;
-    if (!cur || h.tong > cur.tong) c.governor = h.id;
-
-    State.log(G, 'good',
-      `${c.name}征辟${h.name}（统 ${h.tong} / 智 ${h.zhi}），士族归心。`);
-    return h.name;
+    if (r.ok) {
+      // 能力高者可直接任守将
+      const cur = c.governor ? G.heroes[c.governor] : null;
+      if (!cur || r.hero.tong > cur.tong) c.governor = r.hero.id;
+      return r.hero.name;
+    }
+    return null;
   },
 
   /** 玩家操作：打压 */

@@ -580,6 +580,54 @@ const UI_CITY = {
 
       row.appendChild(box);
     }
+
+    // 在野名士：三档登用（拜访 / 送礼 / 三顾），成功率逐项列出
+    const free = Object.values(G.heroes)
+      .filter(h => h.alive && h.factionId === 'free')
+      .sort((a, b) => (b.tong + b.zhi) - (a.tong + a.zhi))
+      .slice(0, 6);
+    if (!free.length) return;
+
+    const sec = document.createElement('div');
+    sec.className = 'seclabel';
+    sec.textContent = '在野名士（可延揽）';
+    pane.appendChild(sec);
+
+    const tierDefs = ['visit', 'gift', 'beseech'];
+    for (const h of free) {
+      const box = document.createElement('div');
+      box.className = 'clan';
+
+      const ch = Relations.recruitChance(G, h, 'beseech');
+      const parts = ch.parts.map(([k, v]) => `${k}${v >= 0 ? '+' : ''}${Math.round(v * 100)}%`).join(' ');
+      box.innerHTML = `<div class="crow">
+        <span class="cname">${U.esc(h.name)}</span>
+        <span class="dim">武${h.wu} 统${h.tong} 智${h.zhi} 政${h.zheng} 魅${h.mei}</span>
+      </div>
+      <div class="dim fs-tiny">野心 ${Math.round(h.ambition || 0)} · 私交 ${Math.round(h.bond || 0)} · 三顾胜算 ${Math.round(ch.p * 100)}%<br>
+        <span class="fs-tiny">${parts}</span>${ch.burnt ? '<br>已连败三次，其意难回' : ''}</div>`;
+
+      const acts = document.createElement('div');
+      acts.className = 'actions';
+      for (const t of tierDefs) {
+        const def = Relations.TIERS[t];
+        const ch2 = Relations.recruitChance(G, h, t);
+        const last = (h.visits || {})[t] || 0;
+        const cool = last && G.meta.turn - last < def.cd
+          ? `尚需 ${def.cd - (G.meta.turn - last)} 月` : null;
+        const cost = `${def.gold}钱${def.food ? ` ${def.food}粮` : ''}`;
+        acts.appendChild(UI._btn(`${def.name} ${Math.round(ch2.p * 100)}%`, cost, () => {
+          try {
+            const r = Store.dispatch(t === 'visit' ? 'VISIT_HERO'
+              : t === 'gift' ? 'GIFT_HERO' : 'BESEECH_HERO', { heroId: h.id });
+            UI.toast(r && r.ok ? `${h.name}愿附明公` : `${h.name}未应（胜算 ${Math.round((r ? r.chance : 0) * 100)}%）`);
+          } catch (e) { UI.toast(e.message); }
+        }, cool || (c.gold < def.gold ? '钱不足'
+          : (def.food && c.food < def.food ? '粮不足' : null))));
+      }
+      box.appendChild(acts);
+      pane.appendChild(box);
+    }
   },
 
   panePolicy(G, c) {
