@@ -27,6 +27,39 @@ function mustOwnCity(G, cityId, verb) {
 }
 
 /** 人情账入口：该将属你势力、且就在你直辖城里（守将或驻将） */
+/** 定向登用：校验 → 扣钱粮 → 掷成功率（公式见 Relations.recruitChance） */
+function recruitHero(G, heroId, tierKey) {
+  const tier = Relations.TIERS[tierKey];
+  const h = G.heroes[heroId];
+  if (!h || !h.alive) throw new Error('无此武将');
+  if (h.factionId !== 'free') throw new Error(`${h.name}已仕${(G.factions[h.factionId] || {}).name || '他处'}`);
+  if (!State.demesne(G).length) throw new Error('你无直辖城，无处延揽');
+
+  const turn = G.meta.turn;
+  h.visits = h.visits || {};
+  const last = h.visits[tierKey] || 0;
+  if (last && turn - last < tier.cd) {
+    throw new Error(`${tier.name}${h.name}方毕，尚需 ${tier.cd - (turn - last)} 月再往`);
+  }
+  if (tierKey === 'beseech') {
+    const b = G.player.beseech;
+    if (b && b.heroId !== heroId && turn < b.until) {
+      throw new Error(`三顾之礼已许${(G.heroes[b.heroId] || {}).name || '他人'}，须待 ${b.until - turn} 月`);
+    }
+  }
+
+  const home = G.cities[G.player.homeCityId] || State.demesne(G)[0];
+  if (home.gold < tier.gold) throw new Error(`钱不足（需 ${tier.gold}）`);
+  if (tier.food && home.food < tier.food) throw new Error(`粮不足（需 ${tier.food}）`);
+
+  home.gold -= tier.gold;
+  if (tier.food) home.food -= tier.food;
+  if (tierKey === 'beseech') G.player.beseech = { heroId, until: turn + tier.cd };
+
+  const r = Relations.tryRecruit(G, h, tierKey);
+  return { ok: r.ok, chance: r.chance.p };
+}
+
 function mustHeroInDemesne(G, heroId, verb) {
   const h = G.heroes[heroId];
   if (!h || !h.alive) throw new Error('无此武将');
@@ -516,6 +549,12 @@ const COMMANDS = {
     State.log(G, 'good', `${c.name}：亲往${h.name}处劳问，其意稍解。`);
   },
 
+  // ─────── 定向登用（docs/HERO.md §3） ───────
+
+  VISIT_HERO(G, { heroId }) { return recruitHero(G, heroId, 'visit'); },
+  GIFT_HERO(G, { heroId }) { return recruitHero(G, heroId, 'gift'); },
+  BESEECH_HERO(G, { heroId }) { return recruitHero(G, heroId, 'beseech'); },
+
   CLAN_ACTION(G, { cityId, action }) {
     const c = mustOwnCity(G, cityId);
     if (!c.clans || !c.clans.length) throw new Error('此城无大族');
@@ -611,6 +650,7 @@ const COMMANDS = {
       `【自立】${p.name}不受${oldFaction.name}节制，据 ${p.demesne.length} 城举兵，号「${G.factions[newFid].name}」。`);
     if (State.factionCities(G, oldFid).length > 0) {
       State.log(G, 'bad', `${oldFaction.name}闻讯震怒，即日兴兵来讨。`);
+      p.reputation = Math.max(0, p.reputation - 20);   // 自立者失士林之望（HERO.md §2.1）
     } else {
       State.log(G, 'note', `${oldFaction.name}仅余你治下之城，自立之后名存实亡。`);
     }

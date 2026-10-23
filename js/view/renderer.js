@@ -521,13 +521,7 @@ const Renderer = {
 
   /** 每势力最大的城算治所 */
   capitals(G) {
-    const best = {};
-    for (const c of Object.values(G.cities)) {
-      if (!c.owner || c.owner === 'free') continue;
-      const w = c.pop + c.wall * 60;
-      if (!best[c.owner] || w > best[c.owner].w) best[c.owner] = { w, id: c.id };
-    }
-    return new Set(Object.values(best).map(b => b.id));
+    return State.capitals(G);   // 口径只有一份：State.capitals
   },
 
   /** 远景城池：只画一个色点（带直辖金环与选中反馈） */
