@@ -487,3 +487,5 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
 10. **上命类型偏少** —— 只有上贡 / 输兵 / 征讨三种，缺守土、离间、护送等；征讨目标按「邻接且最弱」机械选取，不看你实际能否打赢。
 11. **特技有一半是假文案** —— `TAODONG190_HERO_SKILLS` 声明 11 个特技，`combat.js` 只读 `atk / def / defenseCity`，`economy.js` 只读 `economy`；`cavalry / archer / infantry / navy / siege / morale / enemyDef / enemyAtk` 八项从未被读取（`byType` 用技能 id 去索引技能对象，键写错）。颜良文丑「突击」、太史慈「神射」当前不生效。**已修**（`feat/hero-skills-wiring`，8 个键全部接线，见 [docs/HERO.md](docs/HERO.md) §5.1；`verify.js` 新增「武将特技接线」板块 + 一条「效果键不许写了没人读」的静态守护）。
 12. **人物层与故事层缺位** —— 已知问题 5 的完整解法见 [docs/HERO.md](docs/HERO.md)（人情账/登用/宝物）与 [docs/EVENTS.md](docs/EVENTS.md)（事件/朝堂/结局）。
+13. **出兵时行军路线不清晰** —— 地图上只画「当前位置 → 目标城」一段浅虚线，出发地、方向、谁打谁、还剩几月全靠侧栏文字补；
+    同段多支军队重合，敌袭与我出征只有颜色上一点差别。重绘规格见 [docs/VISUAL.md](docs/VISUAL.md) §12（全程曲线 + 已走/未走分段 + 箭镞 + 语义色 + 流动行军纹，LOD 与验收口径同节）。
