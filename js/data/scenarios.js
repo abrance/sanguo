@@ -20,7 +20,25 @@ const SCENARIOS = {
     rivals: TAODONG190_RIVALS,
     // 可玩势力（小势力也开放，玩家可体验弱主开局）
     playable: TAODONG190_FACTION_ROWS.map(r => r[0]),
+    emperorCityId: 'luoyang',
     desc: '董卓挟天子迁都长安，关东诸侯会盟讨伐。你是乱世中的一城之主 —— 效忠一方、积攒战功、步步高升，或者……自立门户。',
+  },
+
+  guandu200: {
+    id: 'guandu200',
+    name: '官渡之战',
+    subtitle: '建安五年（200）· 曹袁相持于官渡',
+    year: 200,
+    month: 2,
+    cityRows: GUANDU200_CITY_ROWS,
+    heroSkills: TAODONG190_HERO_SKILLS,   // 特技表跨剧本共用
+    heroRows: GUANDU200_HERO_ROWS,
+    factionRows: GUANDU200_FACTION_ROWS,
+    ambitions: GUANDU200_AMBITIONS,
+    rivals: GUANDU200_RIVALS,
+    playable: GUANDU200_FACTION_ROWS.map(r => r[0]),
+    emperorCityId: 'xuchang',
+    desc: '曹操迎天子于许，袁绍并河北四州，两家相拒于官渡。你是乱世中的一城之主 —— 押注曹袁，或趁乱自立。',
   },
 };
 

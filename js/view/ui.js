@@ -423,7 +423,7 @@ const UI = {
 
   renderSlots() {
     const box = UI.$('slotList');
-    const list = Save.list(DEFAULT_SCENARIO);
+    const list = Save.list(UI.sc().id);
     const mode = UI._slotMode;
     box.innerHTML = '';
     if (!list.length) {

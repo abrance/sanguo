@@ -513,9 +513,75 @@ const EVENTS = {
     ],
   },
 
+  // ───────── 官渡剧本（200）专属锚点 ─────────
+  anchor_baima: {
+    id: 'anchor_baima', name: '白马之围', scope: 'world', weight: 1,
+    once: true, anchor: [1, 3], scenario: 'guandu200',
+    text: {
+      title: '白马被围',
+      body: () => '袁绍遣颜良围白马，东郡太守刘延告急。曹操欲救，荀攸言：声东击西。',
+      portrait: 'duel', source: '白马告急',
+    },
+    options: [
+      {
+        key: 'know', label: '观其成败', costText: '—',
+        fallback: true, cost: () => ({}),
+        apply: () => ({ logs: ['白马之围，天下侧目。'] }),
+      },
+      {
+        key: 'join', label: '助曹解围', costText: '战功 +25 · 与袁绍交战',
+        cost: () => ({}),
+        apply: (G) => {
+          G.player.merit += 25;
+          const pr = Diplo.pair(G, G.player.factionId, 'yuanshao');
+          pr.status = Diplo.WAR; pr.rel = -70; pr.until = 0;
+          return { logs: ['你助曹操解白马之围，与袁绍结怨。'] };
+        },
+      },
+    ],
+  },
+
+  anchor_wuchao: {
+    id: 'anchor_wuchao', name: '乌巢夜火', scope: 'world', weight: 1,
+    once: true, anchor: [16, 30], scenario: 'guandu200',
+    text: {
+      title: '乌巢夜火',
+      body: () => '许攸来奔，告袁军粮在乌巢。曹操亲率五千骑，夜行冒袁军旗号。',
+      portrait: 'nightraid', source: '许攸夜奔',
+    },
+    options: [
+      {
+        key: 'know', label: '知道了', costText: '—',
+        fallback: true, cost: () => ({}),
+        apply: (G) => {
+          const f = G.factions.yuanshao;
+          if (f && !f.dead) {
+            for (const c of State.factionCities(G, 'yuanshao')) c.morale = U.clamp((c.morale || 55) - 10, 0, 100);
+          }
+          return { logs: ['乌巢火起，袁军粮尽。'] };
+        },
+      },
+      {
+        key: 'help', label: '助曹焚粮', costText: '钱 −300 · 战功 +30',
+        cost: () => ({ gold: 300 }), why: '府库不足 300',
+        apply: (G) => {
+          const f = G.factions.yuanshao;
+          if (f && !f.dead) {
+            for (const c of State.factionCities(G, 'yuanshao')) {
+              c.morale = U.clamp((c.morale || 55) - 18, 0, 100);
+              c.food = Math.max(0, c.food - 300);
+            }
+          }
+          G.player.merit += 30;
+          return { logs: ['你助曹焚乌巢之粮，袁军大乱。'] };
+        },
+      },
+    ],
+  },
+
   // ───────── 历史锚点（B4）：到窗口必触发，忽略权重 ─────────
   anchor_huimeng: {
-    id: 'anchor_huimeng', name: '关东会盟', scope: 'world', weight: 1,
+    id: 'anchor_huimeng', name: '关东会盟', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [1, 2],
     text: {
       title: '关东会盟',
@@ -556,7 +622,7 @@ const EVENTS = {
   },
 
   anchor_relocate: {
-    id: 'anchor_relocate', name: '迁都长安', scope: 'world', weight: 1,
+    id: 'anchor_relocate', name: '迁都长安', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [4, 6],
     text: {
       title: '董卓迁都',
@@ -587,7 +653,7 @@ const EVENTS = {
   },
 
   anchor_sunjian: {
-    id: 'anchor_sunjian', name: '孙坚殒于岘山', scope: 'world', weight: 1,
+    id: 'anchor_sunjian', name: '孙坚殒于岘山', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [13, 20],
     text: {
       title: '孙坚殒于岘山',
@@ -625,7 +691,7 @@ const EVENTS = {
   },
 
   anchor_wangyun: {
-    id: 'anchor_wangyun', name: '王允诛董', scope: 'world', weight: 1,
+    id: 'anchor_wangyun', name: '王允诛董', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [25, 34],
     text: {
       title: '王允诛董',
@@ -650,7 +716,7 @@ const EVENTS = {
   },
 
   anchor_emperor_east: {
-    id: 'anchor_emperor_east', name: '献帝东归', scope: 'world', weight: 1,
+    id: 'anchor_emperor_east', name: '献帝东归', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [60, 74],
     text: {
       title: '车驾东归',
@@ -685,7 +751,7 @@ const EVENTS = {
   },
 
   anchor_caocao: {
-    id: 'anchor_caocao', name: '曹操迎驾', scope: 'world', weight: 1,
+    id: 'anchor_caocao', name: '曹操迎驾', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [75, 90],
     text: {
       title: '曹操迎驾',

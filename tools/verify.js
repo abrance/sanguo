@@ -2587,10 +2587,12 @@ section('事件池 / 历史锚点 / 朝堂 / 结局');
   {
     const { api, get } = h.boot({ seed: 7 });
     const G = get();
-    ok('事件池：18 条以上且 6 条历史锚点',
-      api.EVENT_KEYS.length >= 18
-      && api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor).length === 6,
-      `${api.EVENT_KEYS.length} 条 / 锚点 ${api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor).length}`);
+    const anchorsOf = sc => api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor
+      && (!api.EVENTS[k].scenario || api.EVENTS[k].scenario === sc));
+    ok('事件池：21 条以上，讨董 6 条锚点 / 官渡 2 条',
+      api.EVENT_KEYS.length >= 21
+      && anchorsOf('taodong190').length === 6 && anchorsOf('guandu200').length === 2,
+      `${api.EVENT_KEYS.length} 条 / 讨董 ${anchorsOf('taodong190').length} / 官渡 ${anchorsOf('guandu200').length}`);
     const bad = [];
     for (const k of api.EVENT_KEYS) {
       for (const o of api.EVENTS[k].options) {
@@ -2608,7 +2610,8 @@ section('事件池 / 历史锚点 / 朝堂 / 结局');
   {
     const { api, get } = h.boot({ seed: 7 });
     const G = get();
-    const anchors = api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor);
+    const anchors = api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor
+      && (!api.EVENTS[k].scenario || api.EVENTS[k].scenario === G.meta.scenarioId));
     const missed = [];
     for (const k of anchors) {
       const ev = api.EVENTS[k];
@@ -2714,6 +2717,64 @@ section('事件池 / 历史锚点 / 朝堂 / 结局');
     ok('身退：满足条件则收场「功成身退」',
       get().over && get().over.ending === 'shentui' && get().over.result === 'win',
       get().over ? get().over.title : '无结局');
+  }
+}
+
+// ─────────────────────────────────────────────
+section('剧本：官渡 200');
+{
+  const { api, get } = h.boot({ seed: 11, scenarioId: 'guandu200' });
+  const G = get();
+
+  // 1 注册表与开局数据
+  {
+    ok('剧本：注册了两个剧本且都能取到',
+      !!api.getScenario('taodong190') && !!api.getScenario('guandu200')
+      && api.getScenario('guandu200').year === 200,
+      `${api.getScenario('guandu200').name} ${api.getScenario('guandu200').year}`);
+    const fids = Object.keys(G.factions).filter(id => id !== 'free');
+    ok('官渡：十一家势力 / 70 城', fids.length === 11 && Object.keys(G.cities).length === 70,
+      `${fids.length} 家 / ${Object.keys(G.cities).length} 城`);
+    ok('官渡：没有无主之城以外的空缺（每城都有主）',
+      Object.values(G.cities).every(c => c.owner), '有城无主');
+    ok('官渡：帝都初在许（xuchang）', G.court.emperorCityId === 'xuchang', G.court.emperorCityId);
+  }
+
+  // 2 亡者除名 / 归属重排 / 补录
+  {
+    const ids = Object.keys(G.heroes);
+    ok('官渡：190 年的亡者不在册',
+      ['dongzhuo', 'lvbu', 'sunjian', 'yuanshu', 'gongsunzan', 'liuyan'].every(id => !G.heroes[id]),
+      ids.length + ' 人在册');
+    ok('官渡：主公易姓的将改属（太史慈→孙策军、孔融→曹操军）',
+      G.heroes.taishici && G.heroes.taishici.factionId === 'sunce'
+      && G.heroes.kongrong && G.heroes.kongrong.factionId === 'caocao',
+      `${G.heroes.taishici ? G.heroes.taishici.factionId : '—'} / ${G.heroes.kongrong ? G.heroes.kongrong.factionId : '—'}`);
+    ok('官渡：补录的新将在册（郭嘉 / 张辽 / 司马懿）',
+      G.heroes.guojia && G.heroes.zhangliao && G.heroes.simayi
+      && G.heroes.zhangliao.factionId === 'caocao');
+  }
+
+  // 3 事件分剧本：190 的锚点不该在官渡触发，官渡锚点该触发
+  {
+    const seen = new Set(Object.keys(G.events.seen));
+    G.meta.turn = 2;
+    G.events.queue.length = 0;
+    api.EventSys._anchors(G);
+    const queued = G.events.queue.map(q => q.eventId);
+    ok('官渡：190 的锚点不会入队', !queued.some(id => /^anchor_(huimeng|relocate)$/.test(id)),
+      queued.join(',') || '空');
+    ok('官渡：官渡自己的锚点会入队', queued.indexOf('anchor_baima') >= 0, queued.join(','));
+    void seen;
+  }
+
+  // 4 存档按剧本分开
+  {
+    const slots0 = api.Save.list('guandu200').length;
+    api.Save.save(G, 'guandu200-test');
+    ok('官渡：存档按剧本分开',
+      api.Save.list('guandu200').length === slots0 + 1
+      && !api.Save.list('taodong190').some(s => s.slot === 'guandu200-test'));
   }
 }
 
