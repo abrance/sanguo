@@ -624,6 +624,15 @@ const State = {
       }
     }
 
+    // 战斗中存档：挂起的攻城战（army.battle）本来就是纯数据，随档一起存。
+    // 这里只清理「战场城池已不存在」的孤儿战斗 —— 否则这支军会被 Army.advance 永久跳过。
+    for (const a of Object.values(G.armies || {})) {
+      if (!a.battle) continue;
+      if (!G.cities[a.battle.cityId] || !Array.isArray(a.battle.lines)) {
+        delete a.battle;
+      }
+    }
+
     if (!G.diplo) Diplo.init(G);
     Diplo.ensure(G);
     TechSys.refresh(G);
