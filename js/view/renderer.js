@@ -399,6 +399,7 @@ const Renderer = {
 
     Renderer.drawFx(ctx, G);
     Renderer.drawCompass(ctx, cw - 44, ch - 44);
+    if (z >= 0.8) Renderer.drawArmyKey(ctx, cw - 22, ch - 96);
     Renderer.drawMinimap(G);
   },
 
@@ -931,6 +932,33 @@ const Renderer = {
     ctx.closePath();
     ctx.fillStyle = color;
     ctx.fill();
+  },
+
+  /**
+   * 兵符图例：五种形状 + 单字，画在罗盘上方（屏幕坐标）。
+   * 形状直接复用 _armyPath —— 图例与地图上的符号只有一份几何。
+   */
+  drawArmyKey(ctx, right, y) {
+    const items = [['inf', '步'], ['arc', '弓'], ['cav', '骑'], ['nvy', '水'], ['siege', '器']];
+    const s = 4.6, gap = 26;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '9px "Noto Serif SC",serif';
+    items.forEach(([kind, label], i) => {
+      const cx = right - (items.length - 1 - i) * gap;
+      ctx.save();
+      ctx.translate(cx, y);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillStyle = 'rgba(201,162,39,0.55)';
+      ctx.beginPath();
+      Renderer._armyPath(ctx, kind, s);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = 'rgba(201,162,39,0.7)';
+      ctx.fillText(label, cx, y + 11);
+    });
+    ctx.restore();
   },
 
   /** 右下角罗盘：小幅地图仪器感，画在屏幕坐标系 */

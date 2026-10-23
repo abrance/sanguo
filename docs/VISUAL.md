@@ -16,7 +16,7 @@
 | 军队 | 兵符按**主兵种**换形（步=盾 / 弓=弓弧 / 骑=尖锋 / 水=帆 / 器=方车），大小随兵力（`6 + √兵数 × 0.22`，上限 16px），东南向软影 + 压暗底片做出厚度；行军月数跟随；按世界 y 与城池混排 | `renderer.js` `drawArmyMarker` / `armyKind` / `_armyPath` |
 | 势力标识 | 城头燕尾旗（势力色，zoom>0.72 时旗面写势力首字）；治所星标；势力色领地晕染（半分辨率缓存） | `drawFlag` / `capitals` / `territoryLayer` |
 | 关系表达 | 城池底部关系弧（红交战 / 黄停战 / 绿同盟）、在建城池城头微光、悬停高亮 | `renderer.js` 城池循环 |
-| 地图仪器 | 右下罗盘、左上操作提示、图例（势力/我方/在野/直辖/治所/三关系） | `drawCompass` + `index.html` |
+| 地图仪器 | 右下罗盘 + **兵符图例**（盾/弓/锋/帆/车，zoom≥0.8 才出现）、左上操作提示、HTML 图例（势力/我方/在野/直辖/治所/三关系） | `drawCompass` / `drawArmyKey` + `index.html` |
 | 信息层 | 悬停城池速览浮层（兵/兵额/墙/治安/士气/守将/地形/方针/在建）、浮层 toast（存档/读档/月份）、纪事逐条滑入、战报色条 | `ui.js` `showCityTip` / `flash` / `renderLog` |
 | 交互 | 键盘焦点环、按钮按下下沉、`prefers-reduced-motion` 关闭动效、存读档不再写纪事 | `style.css` 尾部 |
 | 视觉系统 | 颜色/圆角/字号全部收进 `:root`（规则区裸色值 0）、12 个内联 SVG 线性图标替代彩色圆点 | `style.css` `:root` + `index.html` `#icon-sprite`，规范见 [STYLE.md](STYLE.md) |
