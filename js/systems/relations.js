@@ -184,13 +184,13 @@ Relations.recruitChance = function (G, hero, tierKey) {
   if (!tier) return { p: 0, parts: [] };
   const p = G.player;
   const bond = hero.bond || 0;
-  const rep = p.reputation || 0;
+  const rep = State.playerReputation(G);
   const ambition = hero.ambition == null ? 40 : hero.ambition;
   const parts = [
     ['基础', tier.base],
     ['私交', bond * 0.005],
     ['名望', rep / 800],
-    ['魅力', (p.mei || 0) / 400],
+    ['魅力', State.heroStat(G, PLAYER_HERO_ID, 'mei') / 400],
     ['野心低', (100 - ambition) * 0.002],
     ['智谋', -hero.zhi * 0.0015],
   ];

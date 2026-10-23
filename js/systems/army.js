@@ -35,7 +35,9 @@ const Army = {
   create(G, { factionId, heroId, from, to, troops, mission }) {
     const fc = G.cities[from];
     const tc = G.cities[to];
-    const eta = Army.estimateEta(fc, tc, troops, Army.speedMul(G, factionId));
+    // 坐骑加速（只有主将有坐骑才算）
+    const mount = heroId ? 1 + State.treasureEff(G, heroId, 'speed') : 1;
+    const eta = Army.estimateEta(fc, tc, troops, Army.speedMul(G, factionId) * mount);
     const id = U.uid('army');
     const a = {
       id, factionId, heroId,
@@ -226,6 +228,16 @@ const Army = {
     }
 
     delete G.armies[a.id];
+
+    // 宝物：破城后每件 35% 留在本城（归新主），否则随败军撤往旧主治所
+    for (const tid of Object.keys(G.treasures || {})) {
+      const t = G.treasures[tid];
+      if (t.cityId !== city.id || t.holder) continue;
+      if (RNG.chance(0.35)) continue;
+      const caps = State.capitals(G);
+      const refuge = [...caps].find(id => G.cities[id] && G.cities[id].owner === oldOwner) || null;
+      t.cityId = refuge;
+    }
 
     // 玩家相关
     if (attackerFaction === G.player.factionId) {

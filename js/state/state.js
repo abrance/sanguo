@@ -32,6 +32,7 @@ const CITY_DEFAULTS = {
 const HERO_DEFAULTS = {
   ambition: 40, bond: 0, grievance: 0, idle: 0, lastAct: 0, warnTurn: 0, cd: {},
   visits: {},                 // 定向登用：{ visit/gift/beseech: 上次回合, fails: 连败次数 }
+  slots: {},                  // 宝物槽：{ weapon/armor/mount/book/seal: treasureId }
 };
 
 const State = {
@@ -74,6 +75,7 @@ const State = {
         legions: [],
       },
       factions: {},
+      treasures: {},     // 宝物登记表：id → { holder: heroId|null, cityId: 所在城|null }
       cities: {},
       heroes: {},
       armies: {},
@@ -168,6 +170,8 @@ const State = {
         lastAct: 0,
         warnTurn: 0,
         cd: {},
+        visits: {},
+        slots: {},
         alive: true,
       };
     }
@@ -188,6 +192,8 @@ const State = {
       lastAct: 0,
       warnTurn: 0,
       cd: {},
+      visits: {},
+      slots: {},
       alive: true,
     };
 
@@ -212,6 +218,15 @@ const State = {
     startCity.governor = PLAYER_HERO_ID;
     G.player.demesne = [opts.cityId];
     G.player.homeCityId = opts.cityId;
+
+    // 宝物登记：按剧本给几座城塞上（其余靠破城 / 赏赐 / 登用事件掉落）
+    const seedT = (typeof TAODONG190_TREASURE_CITIES === 'object' && sc.id === 'taodong190')
+      ? TAODONG190_TREASURE_CITIES : {};
+    for (const id of TREASURE_KEYS) G.treasures[id] = { holder: null, cityId: null };
+    for (const cid in seedT) {
+      if (!G.cities[cid]) continue;
+      for (const tid of seedT[cid]) G.treasures[tid] = { holder: null, cityId: cid };
+    }
 
     TechSys.refresh(G);
     Diplo.init(G);
@@ -459,6 +474,43 @@ const State = {
     return TechSys.rate(G, G.player.factionId);
   },
 
+  // ───────── 宝物（docs/HERO.md §4） ─────────
+
+  /** 某将身上宝物对某键的效果合计（五维与 speed/cav/defenseCity/reputation 都走这里） */
+  treasureEff(G, heroId, key) {
+    const h = G.heroes[heroId];
+    if (!h || !h.slots) return 0;
+    let v = 0;
+    for (const cat in h.slots) {
+      const def = TREASURES[h.slots[cat]];
+      if (def && def.eff && def.eff[key]) v += def.eff[key];
+    }
+    return v;
+  },
+
+  /** 派生属性 = 本体 + 宝物。战力/内政只准读这个，别再直接拿 h.wu / h.tong */
+  heroStat(G, heroId, key) {
+    const h = G.heroes[heroId];
+    if (!h) return 0;
+    return (h[key] || 0) + State.treasureEff(G, heroId, key);
+  },
+
+  /** 名望（玩家）：本体 + 印绶加成 —— 登用 / 外交 / 顶栏都用它 */
+  playerReputation(G) {
+    return Math.max(0, (G.player.reputation || 0) + State.treasureEff(G, PLAYER_HERO_ID, 'reputation'));
+  },
+
+  /** 某城府库里的宝物（未装备的） */
+  treasuresAt(G, cityId) {
+    return Object.keys(G.treasures || {})
+      .filter(id => G.treasures[id].cityId === cityId && !G.treasures[id].holder);
+  },
+
+  /** 无人持有的宝物 */
+  freeTreasures(G) {
+    return Object.keys(G.treasures || {}).filter(id => !G.treasures[id].holder);
+  },
+
   /** 各势力的治所（人口 + 城墙加权最高者）—— 规则层与视图层共用这一份口径 */
   capitals(G) {
     const best = {};
@@ -543,6 +595,18 @@ const State = {
 
     State._fillDefaults(G.player, PLAYER_DEFAULTS);
     State._fillDefaults(G.meta, META_DEFAULTS);
+
+    // 宝物：旧档补齐登记表与武将槽位
+    if (!G.treasures) G.treasures = {};
+    for (const id of TREASURE_KEYS) {
+      if (!G.treasures[id]) G.treasures[id] = { holder: null, cityId: null };
+    }
+    for (const h of Object.values(G.heroes || {})) {
+      if (!h.slots) h.slots = {};
+      for (const cat of TREASURE_CATS) {
+        if (h.slots[cat] && !TREASURES[h.slots[cat]]) h.slots[cat] = null;
+      }
+    }
 
     if (!G.diplo) Diplo.init(G);
     Diplo.ensure(G);

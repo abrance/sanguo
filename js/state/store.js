@@ -549,6 +549,54 @@ const COMMANDS = {
     State.log(G, 'good', `${c.name}：亲往${h.name}处劳问，其意稍解。`);
   },
 
+  // ─────── 宝物（docs/HERO.md §4） ───────
+
+  EQUIP_TREASURE(G, { heroId, treasureId }) {
+    const h = G.heroes[heroId];
+    const def = TREASURES[treasureId];
+    if (!h || !h.alive) throw new Error('无此武将');
+    if (h.factionId !== G.player.factionId) throw new Error(`${h.name}非你麾下`);
+    if (!def) throw new Error('无此宝物');
+
+    const t = G.treasures[treasureId];
+    if (!t) throw new Error('此宝不在你的府库');
+    if (t.holder && t.holder !== heroId) {
+      throw new Error(`此宝在${(G.heroes[t.holder] || {}).name || '他人'}身上，须先卸下`);
+    }
+    const holderCity = t.cityId ? G.cities[t.cityId] : null;
+    if (!t.holder && (!holderCity || holderCity.owner !== G.player.factionId)) {
+      throw new Error('此宝不在你治下之城');
+    }
+
+    h.slots = h.slots || {};
+    // 同槽替换：旧宝自动卸回该将所在城（设计如此，不必单独卸）
+    const old = h.slots[def.cat];
+    if (old && old !== treasureId) {
+      const ot = G.treasures[old];
+      if (ot) { ot.holder = null; ot.cityId = h.cityId || G.player.homeCityId; }
+    }
+    h.slots[def.cat] = treasureId;
+    t.holder = heroId;
+    t.cityId = null;
+    State.log(G, 'good', `${h.name}佩${def.name}（${TREASURE_CAT_NAME[def.cat]}）。`);
+    return { slot: def.cat };
+  },
+
+  UNEQUIP_TREASURE(G, { heroId, cat }) {
+    const h = G.heroes[heroId];
+    if (!h || !h.alive) throw new Error('无此武将');
+    const tid = h.slots && h.slots[cat];
+    if (!tid) throw new Error('此槽无宝');
+    h.slots[cat] = null;
+    const t = G.treasures[tid];
+    if (t) {
+      t.holder = null;
+      t.cityId = h.cityId || G.player.homeCityId;
+    }
+    State.log(G, 'note', `${h.name}解下${TREASURES[tid].name}，收入府库。`);
+    return { treasureId: tid };
+  },
+
   // ─────── 定向登用（docs/HERO.md §3） ───────
 
   VISIT_HERO(G, { heroId }) { return recruitHero(G, heroId, 'visit'); },

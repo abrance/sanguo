@@ -637,7 +637,7 @@ const UI = {
     UI.$('meritFill').style.width = shown + '%';
     UI.$('meritVal').textContent = G.player.merit;
     UI.$('meritNext').textContent = isFinite(need) ? need : '—';
-    const repNow = Math.round(G.player.reputation);
+    const repNow = Math.round(State.playerReputation(G));
     UI.$('repVal').textContent = repNow;
     UI.$('repVal').title = `名望 ${repNow}：${repTitle(repNow)}`
       + '（登用成功率受它影响；每 +8 点名望约提高 1%）';

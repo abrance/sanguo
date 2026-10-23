@@ -565,7 +565,7 @@ const Diplo = {
           .filter(id => {
             const x = Diplo.pair(G, f.id, id);
             // 名望能挡一点战祸：对玩家的有效关系按名望上调（名望 200 → +4）
-            const effRel = x ? x.rel + (id === G.player.factionId ? (G.player.reputation || 0) / 50 : 0) : 0;
+            const effRel = x ? x.rel + (id === G.player.factionId ? State.playerReputation(G) / 50 : 0) : 0;
             return x && x.border > 0 && effRel < -40
               && Diplo.statusOf(G, f.id, id) === Diplo.NEUTRAL
               && myStr > Diplo.strength(G, id) * 1.8;

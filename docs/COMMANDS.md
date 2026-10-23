@@ -168,6 +168,22 @@ Store.dispatch('BUILD', { cityId: 'chenliu', key: 'farm' })
 
 ---
 
+## 宝物（人物页）
+
+### `EQUIP_TREASURE` `{ heroId, treasureId }`
+把府库里的宝物装到本势力武将身上。槽位由宝物的 `cat` 决定（兵器/甲胄/坐骑/典籍/印绶）。
+
+- 目标必须是你麾下（`factionId === player.factionId`），宝物必须在**你治下之城**的府库里（`holder` 为空）
+- 同槽已有宝物：**自动卸下**旧宝并退回该将所在城府库
+- 一件宝同时只能在一个将身上（被别人拿着时抛「须先卸下」）
+
+### `UNEQUIP_TREASURE` `{ heroId, cat }`
+卸下该槽宝物，退回该将所在城（无城则回主城）府库。
+
+> 派生：五维读 `State.heroStat`（本体 + 宝物）；统帅影响战力、甲胄给守城 `+3~4%`、
+> 坐骑缩短行军月数、印绶加名望（`State.playerReputation`）。
+> 破城时府库中的宝物每件 35% 留在本城（归新主），否则随败军撤往旧主治所 —— 不会凭空消失。
+
 ## 定向登用（人物页 · 在野名士）
 
 三档都从「你的主城」扣钱粮，目标是 `factionId === 'free'` 的武将；成功率见 `Relations.recruitChance`：
