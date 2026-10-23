@@ -530,12 +530,57 @@ const Renderer = {
   },
 
   /** 远景城池：只画一个色点（带直辖金环与选中反馈） */
-  /** 军队标记：一枚三角 + 行军月数（按 y 混排进城池绘制流，见 draw） */
+  /** 军队主兵种 → 图示；看不出来（空编制/平手）就当骑（尖锋） */
+  armyKind(a) {
+    const t = a.troops || {};
+    let kind = 'cav', best = 0;
+    for (const k of TROOP_KEYS) {
+      const n = t[k] || 0;
+      if (n > best) { best = n; kind = k; }
+    }
+    return kind;
+  },
+
+  /** 兵种图示：前向 = 局部 +x（上层会整体旋到"北"），s 为尺寸 */
+  _armyPath(ctx, kind, s) {
+    if (kind === 'inf') {                       // 步：盾（上宽下尖）
+      ctx.moveTo(s * 0.95, -s * 0.12);
+      ctx.lineTo(s * 0.55, -s * 0.85);
+      ctx.lineTo(-s * 0.75, -s * 0.62);
+      ctx.lineTo(-s * 0.75, s * 0.62);
+      ctx.lineTo(s * 0.55, s * 0.85);
+      ctx.lineTo(s * 0.95, s * 0.12);
+    } else if (kind === 'arc') {                // 弓：弓臂 + 弦口内凹
+      ctx.moveTo(s * 0.85, -s * 0.85);
+      ctx.quadraticCurveTo(s * 0.05, 0, s * 0.85, s * 0.85);
+      ctx.lineTo(s * 0.5, s * 0.7);
+      ctx.quadraticCurveTo(-s * 0.35, 0, s * 0.5, -s * 0.7);
+    } else if (kind === 'nvy') {                // 水：帆（下缘斜切的三角）
+      ctx.moveTo(s * 0.9, 0);
+      ctx.lineTo(-s * 0.55, s * 0.8);
+      ctx.lineTo(-s * 0.55, -s * 0.3);
+    } else if (kind === 'siege') {              // 器：方车（梯形箱 + 前檐）
+      ctx.moveTo(s * 0.9, -s * 0.55);
+      ctx.lineTo(s * 0.9, s * 0.55);
+      ctx.lineTo(-s * 0.7, s * 0.75);
+      ctx.lineTo(-s * 0.7, -s * 0.75);
+    } else {                                    // 骑 / 缺省：尖锋
+      ctx.moveTo(s, 0);
+      ctx.lineTo(-s * 0.7, s * 0.75);
+      ctx.lineTo(-s * 0.7, -s * 0.75);
+    }
+    ctx.closePath();
+  },
+
+  /** 军队标记：兵种图示（大小随兵力）+ 行军月数；按 y 混排进城池绘制流，见 draw */
   drawArmyMarker(ctx, G, a, p, playerFid, z) {
     const f = G.factions[a.factionId];
     const color = f ? f.color : '#888';
     const isMine = a.factionId === playerFid;
-    const size = U.clamp(7 * Math.max(0.8, z), 6, 13);
+    const kind = Renderer.armyKind(a);
+    // 规模：兵越多越大（sqrt 压一压，免得大军把地图撑满）
+    const men = troopTotal(a.troops || {});
+    const size = U.clamp((6 + Math.sqrt(men) * 0.22) * Math.max(0.8, z), 6, 16);
 
     // 地面软影（与城池同一套光向：东南）
     ctx.beginPath();
@@ -543,16 +588,13 @@ const Renderer = {
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.fill();
 
-    // 主体三角：先画一枚压暗的底片（往东南错开一点），再压本色 —— 薄薄一层厚度
+    // 主体：先画一枚压暗的底片（往东南错开），再压本色 —— 薄薄一层厚度
     for (const pass of [0, 1]) {
       ctx.save();
       ctx.translate(p.x + (pass ? 0 : size * 0.16), p.y + (pass ? 0 : size * 0.22));
       ctx.rotate(-Math.PI / 2);
       ctx.beginPath();
-      ctx.moveTo(size, 0);
-      ctx.lineTo(-size * 0.7, size * 0.75);
-      ctx.lineTo(-size * 0.7, -size * 0.75);
-      ctx.closePath();
+      Renderer._armyPath(ctx, kind, size);
       ctx.fillStyle = pass ? color : shade(color, 0.45);
       ctx.fill();
       if (pass) {
