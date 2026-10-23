@@ -27,6 +27,39 @@ function mustOwnCity(G, cityId, verb) {
 }
 
 /** 人情账入口：该将属你势力、且就在你直辖城里（守将或驻将） */
+/** 定向登用：校验 → 扣钱粮 → 掷成功率（公式见 Relations.recruitChance） */
+function recruitHero(G, heroId, tierKey) {
+  const tier = Relations.TIERS[tierKey];
+  const h = G.heroes[heroId];
+  if (!h || !h.alive) throw new Error('无此武将');
+  if (h.factionId !== 'free') throw new Error(`${h.name}已仕${(G.factions[h.factionId] || {}).name || '他处'}`);
+  if (!State.demesne(G).length) throw new Error('你无直辖城，无处延揽');
+
+  const turn = G.meta.turn;
+  h.visits = h.visits || {};
+  const last = h.visits[tierKey] || 0;
+  if (last && turn - last < tier.cd) {
+    throw new Error(`${tier.name}${h.name}方毕，尚需 ${tier.cd - (turn - last)} 月再往`);
+  }
+  if (tierKey === 'beseech') {
+    const b = G.player.beseech;
+    if (b && b.heroId !== heroId && turn < b.until) {
+      throw new Error(`三顾之礼已许${(G.heroes[b.heroId] || {}).name || '他人'}，须待 ${b.until - turn} 月`);
+    }
+  }
+
+  const home = G.cities[G.player.homeCityId] || State.demesne(G)[0];
+  if (home.gold < tier.gold) throw new Error(`钱不足（需 ${tier.gold}）`);
+  if (tier.food && home.food < tier.food) throw new Error(`粮不足（需 ${tier.food}）`);
+
+  home.gold -= tier.gold;
+  if (tier.food) home.food -= tier.food;
+  if (tierKey === 'beseech') G.player.beseech = { heroId, until: turn + tier.cd };
+
+  const r = Relations.tryRecruit(G, h, tierKey);
+  return { ok: r.ok, chance: r.chance.p };
+}
+
 function mustHeroInDemesne(G, heroId, verb) {
   const h = G.heroes[heroId];
   if (!h || !h.alive) throw new Error('无此武将');
@@ -516,6 +549,81 @@ const COMMANDS = {
     State.log(G, 'good', `${c.name}：亲往${h.name}处劳问，其意稍解。`);
   },
 
+  // ─────── 攻城轮间：放一次战法或继续下一合（docs/HERO.md §5） ───────
+
+  BATTLE_STEP(G, { armyId, tactic }) {
+    const a = G.armies[armyId];
+    if (!a) throw new Error('无此军队');
+    const b = a.battle;
+    if (!b) throw new Error('此军并未在交战');
+    const city = G.cities[b.cityId];
+    if (!city) throw new Error('战场城池不存在');
+    const mine = a.factionId === G.player.factionId || city.grantedTo === PLAYER_HERO_ID;
+    if (!mine) throw new Error('此战非你指挥');
+
+    const done = Combat.step(G, a, city, tactic || null, '');
+    if (!done) return { done: false, round: b.round };
+
+    const rep = Combat.conclude(G, a, city, '');
+    delete a.battle;
+    Army._afterBattle(G, a, city, rep, '');
+    return { done: true, captured: rep.captured, round: b.round };
+  },
+
+  // ─────── 宝物（docs/HERO.md §4） ───────
+
+  EQUIP_TREASURE(G, { heroId, treasureId }) {
+    const h = G.heroes[heroId];
+    const def = TREASURES[treasureId];
+    if (!h || !h.alive) throw new Error('无此武将');
+    if (h.factionId !== G.player.factionId) throw new Error(`${h.name}非你麾下`);
+    if (!def) throw new Error('无此宝物');
+
+    const t = G.treasures[treasureId];
+    if (!t) throw new Error('此宝不在你的府库');
+    if (t.holder && t.holder !== heroId) {
+      throw new Error(`此宝在${(G.heroes[t.holder] || {}).name || '他人'}身上，须先卸下`);
+    }
+    const holderCity = t.cityId ? G.cities[t.cityId] : null;
+    if (!t.holder && (!holderCity || holderCity.owner !== G.player.factionId)) {
+      throw new Error('此宝不在你治下之城');
+    }
+
+    h.slots = h.slots || {};
+    // 同槽替换：旧宝自动卸回该将所在城（设计如此，不必单独卸）
+    const old = h.slots[def.cat];
+    if (old && old !== treasureId) {
+      const ot = G.treasures[old];
+      if (ot) { ot.holder = null; ot.cityId = h.cityId || G.player.homeCityId; }
+    }
+    h.slots[def.cat] = treasureId;
+    t.holder = heroId;
+    t.cityId = null;
+    State.log(G, 'good', `${h.name}佩${def.name}（${TREASURE_CAT_NAME[def.cat]}）。`);
+    return { slot: def.cat };
+  },
+
+  UNEQUIP_TREASURE(G, { heroId, cat }) {
+    const h = G.heroes[heroId];
+    if (!h || !h.alive) throw new Error('无此武将');
+    const tid = h.slots && h.slots[cat];
+    if (!tid) throw new Error('此槽无宝');
+    h.slots[cat] = null;
+    const t = G.treasures[tid];
+    if (t) {
+      t.holder = null;
+      t.cityId = h.cityId || G.player.homeCityId;
+    }
+    State.log(G, 'note', `${h.name}解下${TREASURES[tid].name}，收入府库。`);
+    return { treasureId: tid };
+  },
+
+  // ─────── 定向登用（docs/HERO.md §3） ───────
+
+  VISIT_HERO(G, { heroId }) { return recruitHero(G, heroId, 'visit'); },
+  GIFT_HERO(G, { heroId }) { return recruitHero(G, heroId, 'gift'); },
+  BESEECH_HERO(G, { heroId }) { return recruitHero(G, heroId, 'beseech'); },
+
   CLAN_ACTION(G, { cityId, action }) {
     const c = mustOwnCity(G, cityId);
     if (!c.clans || !c.clans.length) throw new Error('此城无大族');
@@ -611,6 +719,7 @@ const COMMANDS = {
       `【自立】${p.name}不受${oldFaction.name}节制，据 ${p.demesne.length} 城举兵，号「${G.factions[newFid].name}」。`);
     if (State.factionCities(G, oldFid).length > 0) {
       State.log(G, 'bad', `${oldFaction.name}闻讯震怒，即日兴兵来讨。`);
+      p.reputation = Math.max(0, p.reputation - 20);   // 自立者失士林之望（HERO.md §2.1）
     } else {
       State.log(G, 'note', `${oldFaction.name}仅余你治下之城，自立之后名存实亡。`);
     }

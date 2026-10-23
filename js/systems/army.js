@@ -32,10 +32,12 @@ const Army = {
   },
 
   /** 创建一支军队 */
-  create(G, { factionId, heroId, from, to, troops, mission }) {
+  create(G, { factionId, heroId, from, to, troops, mission, delay }) {
     const fc = G.cities[from];
     const tc = G.cities[to];
-    const eta = Army.estimateEta(fc, tc, troops, Army.speedMul(G, factionId));
+    // 坐骑加速（只有主将有坐骑才算）
+    const mount = heroId ? 1 + State.treasureEff(G, heroId, 'speed') : 1;
+    const eta = Army.estimateEta(fc, tc, troops, Army.speedMul(G, factionId) * mount);
     const id = U.uid('army');
     const a = {
       id, factionId, heroId,
@@ -44,6 +46,9 @@ const Army = {
       x: fc.x, y: fc.y,
       eta, totalEta: eta,
       morale: Army._initialMorale(G, factionId, heroId),
+      createdTurn: G.meta.turn,
+      // 延迟出发（月）：AI 会攻时用它把几路军的抵达月对齐，合并成一战
+      delay: delay || 0,
       mission: mission || 'attack',
     };
     G.armies[id] = a;
@@ -79,6 +84,10 @@ const Army = {
     const arrived = [];
 
     for (const a of Object.values(G.armies)) {
+      // 交战挂起（等玩家点「继续」或放战法）：原地不动，也不参与合攻合并
+      if (a.battle) continue;
+      // 待发：原地不动（会攻的同步抵达就靠它）
+      if (a.delay > 0) { a.delay -= 1; continue; }
       a.eta -= 1;
       const prog = U.clamp(1 - a.eta / a.totalEta, 0, 1);
       const from = G.cities[a.from];
@@ -92,8 +101,52 @@ const Army = {
       if (a.eta <= 0) arrived.push(a);
     }
 
+    // 会攻：同月抵达同一座敌城的同势力攻军先合成一路再打
+    // （不合并的话，第一支先撞死，第二支抵达时城已属于我方 → 只是"合兵"，等于分头送）
+    const groups = new Map();
     for (const a of arrived) {
+      if (a.mission !== 'attack') continue;
+      const t = G.cities[a.to];
+      if (!t || t.owner === a.factionId) continue;
+      const k = a.factionId + '|' + a.to;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(a);
+    }
+    for (const list of groups.values()) {
+      if (list.length >= 2) Army._mergeAttack(G, list);
+    }
+
+    for (const a of arrived) {
+      if (!G.armies[a.id]) continue;   // 已被合并掉
       Army.arrive(G, a, stamp);
+    }
+  },
+
+  /** 合攻：多路并一路，主将由统率最高者担任，其余将回本城待命 */
+  _mergeAttack(G, list) {
+    const target = G.cities[list[0].to];
+    const lead = list.slice().sort((a, b) => {
+      const ta = a.heroId && G.heroes[a.heroId] ? G.heroes[a.heroId].tong : -1;
+      const tb = b.heroId && G.heroes[b.heroId] ? G.heroes[b.heroId].tong : -1;
+      return tb - ta;
+    })[0];
+
+    let extra = 0;
+    for (const a of list) {
+      if (a.id === lead.id) continue;
+      for (const k of TROOP_KEYS) lead.troops[k] = (lead.troops[k] || 0) + (a.troops[k] || 0);
+      extra += troopTotal(a.troops);
+      if (a.heroId && G.heroes[a.heroId] && a.heroId !== lead.heroId) {
+        const home = G.cities[a.from];
+        G.heroes[a.heroId].cityId = home && home.owner === G.player.factionId ? home.id : null;
+      }
+      delete G.armies[a.id];
+    }
+
+    if (lead.factionId === G.player.factionId || target.grantedTo === PLAYER_HERO_ID) {
+      const leadName = lead.heroId && G.heroes[lead.heroId] ? G.heroes[lead.heroId].name : '我军';
+      State.log(G, 'note',
+        `${list.length} 路合攻${target.name}，${leadName}统一指挥（合兵 ${U.num(extra)}）。`);
     }
   },
 
@@ -150,8 +203,24 @@ const Army = {
     }
 
     // 敌军城：开战
-    const rep = Combat.resolve(G, a, target, stamp);
+    // 玩家亲自指挥的仗逐轮推进（轮间可放一次战法），其余一次打完
+    const interactive = a.factionId === G.player.factionId || target.grantedTo === PLAYER_HERO_ID;
+    if (interactive) {
+      Combat.begin(G, a, target, stamp);
+      if (Combat.step(G, a, target, null, stamp)) {
+        const rep = Combat.conclude(G, a, target, stamp);
+        delete a.battle;
+        Army._afterBattle(G, a, target, rep, stamp);
+      }
+      return;
+    }
 
+    const rep = Combat.resolve(G, a, target, stamp);
+    Army._afterBattle(G, a, target, rep, stamp);
+  },
+
+  /** 一场攻城打完之后的处理：下城 / 班师 / 全灭 */
+  _afterBattle(G, a, target, rep, stamp) {
     if (rep.captured) {
       Army._capture(G, a, target, rep, stamp);
       return;
@@ -186,6 +255,8 @@ const Army = {
   /** 攻克城池 */
   _capture(G, a, city, rep, stamp) {
     const oldOwner = city.owner;
+    // 城档按「打下来之前」算：拿下之后它可能变成我的治所，名望不该因此翻倍
+    const tierBefore = State.cityLevel(G, city);
     const attackerFaction = a.factionId;
 
     // 守将或被俘、或逃
@@ -225,12 +296,26 @@ const Army = {
 
     delete G.armies[a.id];
 
+    // 宝物：破城后每件 35% 留在本城（归新主），否则随败军撤往旧主治所
+    for (const tid of Object.keys(G.treasures || {})) {
+      const t = G.treasures[tid];
+      if (t.cityId !== city.id || t.holder) continue;
+      if (RNG.chance(0.35)) continue;
+      const caps = State.capitals(G);
+      const refuge = [...caps].find(id => G.cities[id] && G.cities[id].owner === oldOwner) || null;
+      t.cityId = refuge;
+    }
+
     // 玩家相关
     if (attackerFaction === G.player.factionId) {
       G.stats.citiesTaken++;
       G.player.merit += 25;
-      G.player.reputation += 8;
-      State.log(G, 'good', `我军克${city.name}。战功 +25，声望 +8。`);
+      // 名望按城档：县城 +4 / 郡城 +6 / 都城 +12（docs/HERO.md §2.1）
+      const tier = tierBefore;
+      const rep = tier === 2 ? 12 : tier === 1 ? 6 : 4;
+      G.player.reputation += rep;
+      State.log(G, 'good',
+        `我军克${city.name}${tier === 2 ? '（都城）' : tier === 1 ? '（郡城）' : ''}。战功 +25，名望 +${rep}。`);
       Rank.onCapture(G, city, stamp);
       Mission.onCapture(G, city.id);
       if (a.legionId) {

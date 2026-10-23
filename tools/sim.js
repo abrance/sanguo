@@ -31,6 +31,22 @@ const get = () => api.Store.get();
 
 /* ── 主动玩家策略 ── */
 function botStep() {
+  // 0 挂起的攻城先打完（真人会立刻点「继续」/放战法；推演也照做，否则白丢一个月）
+  let guard = 0;
+  while (guard++ < 10) {
+    const g0 = get();
+    const ag = Object.values(g0.armies).find(a => a.battle);
+    if (!ag) break;
+    let tactic = null;
+    try {
+      const city = g0.cities[ag.battle.cityId];
+      const list = api.Combat.tacticsFor(g0, ag, city);
+      const pick = list.find(t => t.ok);
+      if (pick) tactic = pick.key;
+      api.Store.dispatch('BATTLE_STEP', { armyId: ag.id, tactic });
+    } catch (e) { break; }
+  }
+
   const x = get();
   const p = x.player;
 
@@ -73,6 +89,15 @@ function botStep() {
     if (pred.win && pred.remain > api.troopTotal(plan) * 0.5) {
       try { api.Store.dispatch('DISPATCH', { fromId: c.id, toId: best.id, ratio: 0.85 }); } catch (e) { }
     }
+  }
+
+  // 6 人情账：忠诚低的守将及时赏赐、有积怨就抚慰（不维护会被叛将带走城池）
+  const z = get();
+  for (const c of api.State.demesne(z)) {
+    const h = c.governor && c.governor !== 'PLAYER' ? z.heroes[c.governor] : null;
+    if (!h) continue;
+    if ((h.loyalty || 0) < 65) { try { api.Store.dispatch('REWARD_HERO', { heroId: h.id }); } catch (e) { } }
+    if ((h.grievance || 0) > 0) { try { api.Store.dispatch('CONSOLE_HERO', { heroId: h.id }); } catch (e) { } }
   }
 }
 

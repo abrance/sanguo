@@ -37,6 +37,20 @@ const Favor = {
       }
     }
 
+    // 赏赐宝物：好感 > 85 时小概率（docs/HERO.md §4.2）
+    if (p.favor > 85 && RNG.chance(0.02)) {
+      const free = State.freeTreasures(G);
+      if (free.length) {
+        const tid = free[RNG.between(0, free.length - 1)];
+        const home = G.cities[p.homeCityId];
+        if (home) {
+          G.treasures[tid].cityId = home.id;
+          G.treasures[tid].holder = null;
+          State.log(G, 'good', `上级赐${TREASURES[tid].name}一件，送入${home.name}府库。`);
+        }
+      }
+    }
+
     // 好感过低：削权（至少保留一座直辖城）
     if (p.favor < 25 && p.demesne.length >= 2 && RNG.chance(0.10)) {
       const victimId = p.demesne[p.demesne.length - 1];

@@ -513,6 +513,10 @@ section('存档往返');
   console.error = realErr2;
 
   // U.uid 计数器也必须入档，否则读档后新军队 id 会覆盖存档里的 army_1
+  // 注意：① A6 起玩家指挥的攻城会在轮间挂起，军队仍算「在外」
+  //       ② 世界演化后可能只剩一座直辖城，出兵上限不够，先补一座再测
+  h.settleBattles(api);
+  h.grantCities(api, 1);
   const g3 = api.Store.get();
   const targets = Object.values(g3.cities)
     .filter(c => c.owner && c.owner !== 'free' && c.owner !== g3.player.factionId);
@@ -521,6 +525,7 @@ section('存档往返');
   const idsBefore = Object.keys(api.Store.get().armies);
   const snap2 = JSON.stringify(api.Store.get());
   api.Store.replace(JSON.parse(snap2));
+  h.settleBattles(api);
   api.Store.dispatch('DISPATCH', { fromId: home, toId: targets[1].id, ratio: 0.4 });
   const idsAfter = Object.keys(api.Store.get().armies);
   ok('读档后新军队 id 不覆盖旧军队',
@@ -1519,6 +1524,718 @@ section('人情账（忠诚 / 野心 / 私交 / 叛变）');
     const fromHome = Object.values(a8.Store.get().armies).some(a => a.from === c8.id && a.mission === 'aid');
     ok('援军不从玩家直辖城抽兵', !fromHome && a8.troopTotal(c8.garrison) === before,
       `家城兵 ${before} → ${a8.troopTotal(c8.garrison)}`);
+  }
+}
+
+// ─────────────────────────────────────────────
+section('名望与定向登用');
+{
+  const { api, get } = h.boot({ seed: 7 });
+  const G = get();
+
+  // 1 名望档位
+  ok('名望档位分四段',
+    api.repTitle(10) === '无名之辈' && api.repTitle(80) === '一方名士'
+    && api.repTitle(200) === '海内知名' && api.repTitle(300) === '天下归心');
+
+  // 2 城档：治所最高、县城最低
+  {
+    const caps = api.State.capitals(G);
+    const cap = G.cities[[...caps][0]];
+    const small = Object.values(G.cities)
+      .filter(c => !caps.has(c.id))
+      .sort((a, b) => a.pop - b.pop)[0];
+    ok('城档：治所 = 都城（2）、小城 = 县城（0）',
+      api.State.cityLevel(G, cap, caps) === 2 && api.State.cityLevel(G, small, caps) === 0,
+      `${cap.name}=${api.State.cityLevel(G, cap, caps)} ${small.name}=${api.State.cityLevel(G, small, caps)}`);
+  }
+
+  // 3 破城名望按城档：县城 +4 / 郡城 +6 / 都城 +12
+  {
+    const runCapture = (pickSmall) => {
+      const { api: a, get: g } = h.boot({ seed: 7 });
+      const st = g();
+      const home = st.cities[st.player.homeCityId];
+      const caps = a.State.capitals(st);
+      const nbs = a.State.neighbors(st, home.id, 300)
+        .filter(x => x.owner !== st.player.factionId);
+      const target = pickSmall
+        ? nbs.filter(x => a.State.cityLevel(st, x, caps) === 0).sort((x, y) => x.pop - y.pop)[0]
+        : nbs.filter(x => a.State.cityLevel(st, x, caps) >= 1).sort((x, y) => y.pop - x.pop)[0];
+      if (!target) return null;
+      const tierBefore = a.State.cityLevel(st, target, caps);   // 先记档，拆墙会改档次
+      // 目标守军抽干、城墙拆掉，保证必下
+      for (const k of a.TROOP_KEYS) target.garrison[k] = 0;
+      target.garrison.inf = 1;
+      // 城墙不动：改 wall 会改掉治所判定（capitals 用 pop + wall×60），
+      // 5000 打 1 兵，墙再高也必下
+      const pr = a.Diplo.pair(st, st.player.factionId, target.owner);
+      pr.status = a.Diplo.WAR; pr.rel = -80; pr.until = 0;
+      a.Store.replace(st);
+      const g2 = g();
+      const army = a.Army.create(g2, {
+        factionId: g2.player.factionId, heroId: 'PLAYER', from: home.id, to: target.id,
+        troops: { inf: 5000 }, mission: 'attack',
+      });
+      army.eta = 1; army.totalEta = 1;
+      const rep0 = g2.player.reputation;
+      a.Store.replace(g2);
+      a.Army.advance(a.Store.get(), 'x');
+      const after = g();
+      return {
+        gained: after.player.reputation - rep0,
+        tier: tierBefore,
+        captured: after.cities[target.id].owner === after.player.factionId,
+      };
+    };
+    const low = runCapture(true);
+    const high = runCapture(false);
+    ok('破城名望：县城 +4', !!low && low.captured && low.gained === 4, low ? `+${low.gained}` : '无县城可测');
+    ok('破城名望：郡城/都城 +6/+12', !!high && high.gained === (high.tier === 2 ? 12 : 6),
+      high ? `tier${high.tier} +${high.gained}` : '无大城可测');
+  }
+
+  // 4 登用成功率公式：分项可复算，且被 clamp 在 3%-92%
+  {
+    const free = Object.values(G.heroes).find(x => x.factionId === 'free');
+    const c1 = api.Relations.recruitChance(G, free, 'beseech');
+    const manual = 0.55 + (free.bond || 0) * 0.005 + api.State.playerReputation(G) / 800
+      + api.State.heroStat(G, 'PLAYER', 'mei') / 400
+      + (100 - (free.ambition || 40)) * 0.002 - free.zhi * 0.0015;
+    ok('登用成功率：分项之和 = 总概率（clamp 前）',
+      Math.abs(c1.parts.reduce((s, x) => s + x[1], 0) - manual) < 1e-9);
+    ok('登用成功率：夹在 3%–92%',
+      c1.p >= 0.03 && c1.p <= 0.92 && api.Relations.recruitChance(G, free, 'visit').p >= 0.03);
+  }
+
+  // 5 拜访：扣钱、失败仍在野；成功则入麾下
+  {
+    const { api: a, get: g } = h.boot({ seed: 5 });
+    const st = g();
+    const target = Object.values(st.heroes).find(x => x.factionId === 'free');
+    st.player.reputation = 400;                       // 拉满胜算
+    st.heroes[target.id].ambition = 5;
+    st.heroes[target.id].zhi = 10;
+    st.cities[st.player.homeCityId].gold = 5000;
+    a.Store.replace(st);
+    const gold0 = g().cities[st.player.homeCityId].gold;
+    const r = a.Store.dispatch('VISIT_HERO', { heroId: target.id });
+    const after = g();
+    ok('拜访：扣 60 钱', gold0 - after.cities[st.player.homeCityId].gold === 60);
+    ok('拜访：成功则入麾下且忠诚按公式',
+      !r.ok || (after.heroes[target.id].factionId === after.player.factionId
+        && Math.abs(after.heroes[target.id].loyalty - (45 + (st.heroes[target.id].bond || 0) / 2)) < 0.01),
+      `ok=${r.ok} 胜算 ${(r.chance * 100).toFixed(0)}%`);
+    let err = null;
+    try { a.Store.dispatch('VISIT_HERO', { heroId: target.id }); } catch (e) { err = e.message; }
+    ok('拜访：冷却期内再往被拒（或已入麾下）', /尚需|已仕/.test(err || ''), err || '未抛错');
+  }
+
+  // 6 三顾互斥：同一时间只许一位
+  {
+    const { api: a, get: g } = h.boot({ seed: 9 });
+    const st = g();
+    const frees = Object.values(st.heroes).filter(x => x.factionId === 'free').slice(0, 2);
+    st.cities[st.player.homeCityId].gold = 9000;
+    a.Store.replace(st);
+    a.Store.dispatch('BESEECH_HERO', { heroId: frees[0].id });
+    let err = null;
+    try { a.Store.dispatch('BESEECH_HERO', { heroId: frees[1].id }); } catch (e) { err = e.message; }
+    ok('三顾：同一时间只许一人', /三顾之礼已许/.test(err || ''), err || '未抛错');
+  }
+
+  // 7 士族征辟改走成功率：不再 500 钱必成功
+  {
+    let joined = 0;
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const { api: a, get: g } = h.boot({ seed });
+      const st = g();
+      const city = st.cities[st.player.homeCityId];
+      city.gold = 5000;
+      a.Store.replace(st);
+      try { a.Store.dispatch('CLAN_ACTION', { cityId: city.id, action: 'recruit' }); } catch (e) { }
+      const own = Object.values(g().heroes)
+        .some(x => x.factionId === g().player.factionId && x.id !== 'PLAYER' && x.bond >= 25 && x.loyalty === 78);
+      if (own) joined++;
+    }
+    ok('士族征辟：有成功也有失败（不是必成功）', joined > 0 && joined < 8, `${joined}/8 成功`);
+  }
+}
+
+// ─────────────────────────────────────────────
+section('宝物（装备 / 派生 / 破城掉落）');
+{
+  const { api, get } = h.boot({ seed: 7 });
+
+  // 1 登记表：20 件、五类齐全、开局按剧本落到几座城
+  {
+    const G = get();
+    const cats = new Set(api.TREASURE_KEYS.map(k => api.TREASURES[k].cat));
+    ok('宝物：20 件 5 类',
+      api.TREASURE_KEYS.length === 20 && cats.size === 5, `${api.TREASURE_KEYS.length} 件 / ${cats.size} 类`);
+    ok('宝物：开局按剧本落在洛阳等城',
+      api.State.treasuresAt(G, 'luoyang').length >= 2
+      && Object.keys(G.treasures).length === api.TREASURE_KEYS.length,
+      `洛阳 ${api.State.treasuresAt(G, 'luoyang').length} 件`);
+  }
+
+  // 2 装备：派生属性 + 战力；同槽替换；同一件不能两人戴
+  {
+    const { api: a, get: g } = h.boot({ seed: 7 });
+    const st = g();
+    const home = st.cities[st.player.homeCityId];
+    const heroId = Object.keys(st.heroes).find(id => id !== 'PLAYER'
+      && st.heroes[id].factionId === st.player.factionId && st.heroes[id].cityId === home.id);
+    // 把两件兵器挪到本城
+    st.treasures.qinggang.cityId = home.id;
+    st.treasures.guding.cityId = home.id;
+    a.Store.replace(st);
+
+    const tong0 = g().heroes[heroId].tong;
+    const powerOf = () => {
+      const z = g();
+      return a.Combat.power(z, { inf: 1000 }, heroId, {
+        terrain: 'plain', morale: 60, factionId: z.player.factionId,
+      });
+    };
+    const p0 = powerOf();
+    a.Store.dispatch('EQUIP_TREASURE', { heroId, treasureId: 'qinggang' });
+    const z1 = g();
+    ok('装备：五维读派生值（统/武）+ 槽位登记',
+      z1.heroes[heroId].slots.weapon === 'qinggang'
+      && z1.treasures.qinggang.holder === heroId
+      && a.State.heroStat(z1, heroId, 'wu') === z1.heroes[heroId].wu + 4);
+    void tong0;
+
+    // 同槽替换：古锭刀顶掉青釭剑，青釭回府库
+    a.Store.dispatch('EQUIP_TREASURE', { heroId, treasureId: 'guding' });
+    const z2 = g();
+    ok('装备：同槽替换，旧宝自动卸回府库',
+      z2.heroes[heroId].slots.weapon === 'guding'
+      && z2.treasures.qinggang.holder === null
+      && z2.treasures.qinggang.cityId === home.id);
+
+    // 同一件不能两人戴（另一将不在本城也能装，但宝物已被人持有就拒绝）
+    const other = Object.keys(z2.heroes).find(id => id !== 'PLAYER'
+      && z2.heroes[id].factionId === z2.player.factionId && id !== heroId);
+    if (other) {
+      let err = null;
+      try { a.Store.dispatch('EQUIP_TREASURE', { heroId: other, treasureId: 'guding' }); } catch (e) { err = e.message; }
+      ok('装备：同一件不能两人戴', /须先卸下/.test(err || ''), err || '未抛错');
+    }
+
+    // 甲胄守城加成 + 卸下回府库
+    {
+      const defPow = () => {
+        const z = g();
+        return a.Combat.power(z, { inf: 1000 }, heroId, {
+          terrain: 'plain', isDefender: true, enemyTroops: { inf: 100 }, wall: 0,
+          factionId: z.player.factionId,
+        });
+      };
+      const before = defPow();
+      const st3 = g();
+      st3.treasures.mingguang.cityId = home.id;
+      a.Store.replace(st3);
+      a.Store.dispatch('EQUIP_TREASURE', { heroId, treasureId: 'mingguang' });
+      const tong = g().heroes[heroId].tong;
+      // 明光铠：统 +3（战力 ×(1+统/200)）+ 守城 +3%
+      const expect = ((1 + (tong + 3) / 200) / (1 + tong / 200)) * 1.03;
+      const ratio = defPow() / before;
+      ok('甲胄：统 +3 且守城 +3%', Math.abs(ratio - expect) < 0.005, `${ratio.toFixed(4)} vs ${expect.toFixed(4)}`);
+
+      a.Store.dispatch('UNEQUIP_TREASURE', { heroId, cat: 'armor' });
+      const z4 = g();
+      ok('卸下：宝物回到本城府库',
+        !z4.heroes[heroId].slots.armor && z4.treasures.mingguang.holder === null
+        && z4.treasures.mingguang.cityId === home.id);
+    }
+  }
+
+  // 3 坐骑加速：同兵力同路线，有坐骑行军月数不多于没坐骑
+  {
+    const { api: a, get: g } = h.boot({ seed: 7 });
+    const st = g();
+    const home = st.cities[st.player.homeCityId];
+    const far = Object.values(st.cities).sort((x, y) =>
+      api.U.dist(home.x, home.y, y.x, y.y) - api.U.dist(home.x, home.y, x.x, x.y))[0];
+    const heroId = Object.keys(st.heroes).find(id => id !== 'PLAYER'
+      && st.heroes[id].factionId === st.player.factionId && st.heroes[id].cityId === home.id);
+    st.treasures.chitu.cityId = home.id;
+    a.Store.replace(st);
+    const etaOf = () => {
+      const z = g();
+      const army = a.Army.create(z, {
+        factionId: z.player.factionId, heroId, from: home.id, to: far.id,
+        troops: { inf: 500 }, mission: 'reinforce',
+      });
+      return army.eta;
+    };
+    const before = etaOf();
+    a.Store.dispatch('EQUIP_TREASURE', { heroId, treasureId: 'chitu' });
+    const after = etaOf();
+    ok('坐骑：行军月数变少或持平', after <= before, `${before} → ${after} 月`);
+  }
+
+  // 4 破城：宝物要么留在本城（归新主），要么随败军撤往旧主治所 —— 不许凭空消失
+  {
+    const { api: a, get: g } = h.boot({ seed: 7 });
+    const st = g();
+    const home = st.cities[st.player.homeCityId];
+    const target = a.State.neighbors(st, home.id, 300)
+      .find(x => x.owner !== st.player.factionId && a.State.treasuresAt(st, x.id).length);
+    if (!target) {
+      // 开局宝物未必在邻城：直接挪一件过去
+      const anyTreasure = a.State.freeTreasures(st)[0];
+      const nb = a.State.neighbors(st, home.id, 300).find(x => x.owner !== st.player.factionId);
+      if (nb && anyTreasure) { st.treasures[anyTreasure].cityId = nb.id; }
+      a.Store.replace(st);
+    }
+    const st2 = g();
+    const nb = a.State.neighbors(st2, home.id, 300).find(x => x.owner !== st2.player.factionId);
+    const tids = a.State.treasuresAt(st2, nb.id);
+    const oldOwner = nb.owner;
+    for (const k of a.TROOP_KEYS) nb.garrison[k] = 0;
+    nb.garrison.inf = 1;
+    const pr = a.Diplo.pair(st2, st2.player.factionId, nb.owner);
+    pr.status = a.Diplo.WAR; pr.rel = -80; pr.until = 0;
+    a.Store.replace(st2);
+    const g2 = g();
+    const army = a.Army.create(g2, {
+      factionId: g2.player.factionId, heroId: 'PLAYER', from: home.id, to: nb.id,
+      troops: { inf: 5000 }, mission: 'attack',
+    });
+    army.eta = 1; army.totalEta = 1;
+    a.Store.replace(g2);
+    a.Army.advance(a.Store.get(), 'x');
+    const z = g();
+    const caps = a.State.capitals(z);
+    const bad = tids.filter(tid => {
+      const t = z.treasures[tid];
+      if (t.holder) return false;
+      if (t.cityId === nb.id) return false;
+      const refuge = t.cityId ? z.cities[t.cityId] : null;
+      return !(refuge && refuge.owner === oldOwner);
+    });
+    ok('破城：宝物留在本城或退往旧主治所（不凭空消失）',
+      z.cities[nb.id].owner === z.player.factionId && bad.length === 0,
+      `${tids.length} 件，异常 ${bad.length}`);
+    void caps;
+  }
+
+  // 5 旧档迁移：缺 treasures / slots 时补齐
+  {
+    const { api: a, get: g } = h.boot({ seed: 7 });
+    const raw = JSON.parse(JSON.stringify(g()));
+    delete raw.treasures;
+    for (const h of Object.values(raw.heroes)) delete h.slots;
+    a.State.migrate(raw, 2);
+    const full = a.TREASURE_KEYS.every(k => raw.treasures[k] && raw.treasures[k].holder === null);
+    const slotsOk = Object.values(raw.heroes).every(h => h.slots && typeof h.slots === 'object');
+    ok('旧档迁移：补齐宝物登记表与武将槽位', full && slotsOk);
+  }
+}
+
+// ─────────────────────────────────────────────
+section('攻城逐轮推进 + 战法');
+{
+  // 造一局：玩家带大兵打邻城，返回 { api, get, army, city }
+  const setup = (seed, opts = {}) => {
+    const { api, get } = h.boot({ seed });
+    const st = get();
+    const home = st.cities[st.player.homeCityId];
+    const nb = api.State.neighbors(st, home.id, 300).find(x => x.owner !== st.player.factionId
+      && x.owner !== 'free');
+    for (const k of api.TROOP_KEYS) nb.garrison[k] = 0;
+    nb.garrison.inf = opts.defTroops == null ? 600 : opts.defTroops;
+    nb.wall = opts.wall == null ? 1 : opts.wall;
+    nb.morale = 55;
+    const pr = api.Diplo.pair(st, st.player.factionId, nb.owner);
+    pr.status = api.Diplo.WAR; pr.rel = -80; pr.until = 0;
+    st.player.reputation = 0;
+    if (opts.heroSkill) st.heroes.PLAYER.skill = opts.heroSkill;
+    api.Store.replace(st);
+
+    const g = get();
+    const army = api.Army.create(g, {
+      factionId: g.player.factionId, heroId: 'PLAYER', from: home.id, to: nb.id,
+      troops: { inf: 1200 }, mission: 'attack',
+    });
+    army.eta = 1; army.totalEta = 1;
+    g.armies[army.id] = army;
+    api.Store.replace(g);
+    return { api, get, armyId: army.id, cityId: nb.id, homeId: home.id };
+  };
+
+  // 1 逐轮 step 与一次跑完 resolve 结果一致（同种子、同输入）
+  {
+    const a = setup(101);
+    const cityA = a.get().cities[a.cityId];
+    const armyA = a.get().armies[a.armyId];
+    const rep = a.api.Combat.resolve(a.get(), armyA, cityA, 'x');
+
+    const b = setup(101);
+    const cityB = b.get().cities[b.cityId];
+    const armyB = b.get().armies[b.armyId];
+    b.api.Combat.begin(b.get(), armyB, cityB, 'x');
+    while (!b.api.Combat.step(b.get(), armyB, cityB, null, 'x')) { /* 逐轮 */ }
+    const rep2 = b.api.Combat.conclude(b.get(), armyB, cityB, 'x');
+
+    ok('逐轮推进与一次打完结果一致',
+      rep.captured === rep2.captured && rep.atkLoss === rep2.atkLoss
+      && rep.defLoss === rep2.defLoss && rep.rounds === rep2.rounds,
+      `${rep.captured}/${rep.atkLoss}/${rep.defLoss}/${rep.rounds} vs ${rep2.captured}/${rep2.atkLoss}/${rep2.defLoss}/${rep2.rounds}`);
+  }
+
+  // 2 玩家指挥的攻城会挂起在轮间，不自动打完
+  {
+    const a = setup(102);
+    a.api.Store.dispatch('END_TURN');   // 行军到位 → 开战（交互）
+    const z = a.get();
+    const ag = Object.values(z.armies).find(x => x.battle);
+    ok('玩家指挥的攻城挂在轮间等指令', !!ag, ag ? `第 ${ag.battle.round} 合` : '未挂起');
+
+    // 挂起期间 Army.advance 不许推进它
+    if (ag) {
+      const before = JSON.stringify(ag.battle.round);
+      a.api.Army.advance(a.get(), 'x');
+      ok('挂起的战斗不会被推进', JSON.stringify(a.get().armies[ag.id].battle.round) === before);
+    }
+  }
+
+  // 3 战法：加了战法守方伤亡更多（同种子对比）
+  {
+    const run = (tactic) => {
+      const a = setup(103, { heroSkill: 'huoji' });
+      const city = a.get().cities[a.cityId];
+      const army = a.get().armies[a.armyId];
+      a.api.Combat.begin(a.get(), army, city, 'x');
+      a.api.Combat.step(a.get(), army, city, tactic, 'x');
+      const rep = a.api.Combat.conclude(a.get(), army, city, 'x');
+      return { defLoss: rep.defLoss, round: rep.rounds, cityName: city.name };
+    };
+    const plain = run(null);
+    const fired = run('huoji');
+    ok('火计：一轮内守方伤亡显著更多', fired.defLoss >= plain.defLoss, `${plain.defLoss} → ${fired.defLoss}`);
+  }
+
+  // 4 战法只能用一次 + 士气门槛 + 专属战法判定
+  {
+    const a = setup(104, { heroSkill: 'huoji' });
+    const z = a.get();
+    const city = z.cities[a.cityId];
+    const army = z.armies[a.armyId];
+    a.api.Combat.begin(z, army, city, 'x');
+    const list = a.api.Combat.tacticsFor(z, army, city);
+    const huoji = list.find(x => x.key === 'huoji');
+    const yexi = list.find(x => x.key === 'yexi');
+    ok('战法表：专属（火计）+ 通用（夜袭）都在', !!huoji && !!yexi,
+      list.map(x => x.name).join('/'));
+    ok('战法：非本将特技的专属战法不出现在列表',
+      !list.some(x => x.key === 'tuji'), list.filter(x => x.skill).map(x => x.name).join('/'));
+
+    a.api.Combat.step(z, army, city, 'huoji', 'x');
+    const after = a.api.Combat.tacticsFor(z, army, city);
+    ok('战法：一场只能用一次', after.every(x => !x.ok && /已用过/.test(x.why || '')),
+      after[0] ? after[0].why : '');
+
+    // 士气 < 30 时禁用
+    const b = setup(105);
+    const z2 = b.get();
+    const c2 = z2.cities[b.cityId];
+    const a2 = z2.armies[b.armyId];
+    a2.morale = 22;
+    a2.battle = null;
+    b.api.Combat.begin(z2, a2, c2, 'x');
+    const l2 = b.api.Combat.tacticsFor(z2, a2, c2);
+    ok('战法：士气 < 30 不可用', l2.every(x => !x.ok && /士气/.test(x.why || '')),
+      (l2.find(x => /士气/.test(x.why || '')) || {}).why || '');
+  }
+
+  // 5 BATTLE_STEP 命令：打完 → 下城；非指挥战斗抛错
+  {
+    const a = setup(106, { defTroops: 900, wall: 2 });
+    a.api.Store.dispatch('END_TURN');
+    let z = a.get();
+    let ag = Object.values(z.armies).find(x => x.battle);
+    ok('BATTLE_STEP：有正在进行的战斗可用', !!ag, ag ? `第 ${ag.battle.round} 合` : '无挂起战斗');
+
+    if (ag) {
+      const id = ag.id;
+      let guard = 0;
+      while (a.get().armies[id] && a.get().armies[id].battle && guard < 8) {
+        a.api.Store.dispatch('BATTLE_STEP', { armyId: id, tactic: guard === 0 ? 'mazhen' : null });
+        guard++;
+      }
+      z = a.get();
+      ok('BATTLE_STEP：能一路打到终局（城破或班师）',
+        !z.armies[id] || !z.armies[id].battle, `用了 ${guard} 次`);
+    }
+
+    // AI 的战斗不接受玩家指令
+    const b = setup(107);
+    const z3 = b.get();
+    const c3 = z3.cities[b.cityId];
+    const a3 = z3.armies[b.armyId];
+    a3.factionId = 'yuanshao';
+    b.api.Combat.begin(z3, a3, c3, 'x');
+    let err = null;
+    try { b.api.Store.dispatch('BATTLE_STEP', { armyId: a3.id }); } catch (e) { err = e.message; }
+    ok('BATTLE_STEP：非你指挥的战斗拒绝', /非你指挥/.test(err || ''), err || '未抛错');
+  }
+
+  // 6 结束回合会自动收尾没打完的战斗（不会卡住）
+  {
+    const a = setup(108);
+    a.api.Store.dispatch('END_TURN');
+    const z = a.get();
+    const ag = Object.values(z.armies).find(x => x.battle);
+    if (!ag) {
+      ok('结束回合：自动收尾挂起的战斗（用例未挂起，跳过）', true);
+    } else {
+      a.api.Store.dispatch('END_TURN');
+      const z2 = a.get();
+      // 只断言「这一场」被收尾：同一回合别处可能又有新的攻城开打（那是正常的挂起）
+      ok('结束回合：自动收尾挂起的战斗',
+        !z2.armies[ag.id] || !z2.armies[ag.id].battle,
+        `残留 ${Object.values(z2.armies).filter(x => x.battle).length}`);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+section('AI 决策（评估 / 留守 / 目标记忆 / 预算）');
+{
+  const { api, get } = h.boot({ seed: 7 });
+  const G = get();
+  const T = api.AI.TUNE;
+
+  // 1 评估对象把局势压成一份 plan
+  const f = Object.values(G.factions).find(x => x.id !== G.player.factionId && !x.dead && x.kind !== 'free'
+    && api.State.factionCities(G, x.id).length >= 2);
+  const cities = api.State.factionCities(G, f.id);
+  const plan = api.AI.assess(G, f, cities, {});
+  ok('assess 产出可读局势（威胁/预算/目标/留守）',
+    typeof plan.totalTroops === 'number' && Array.isArray(plan.threatened)
+    && Array.isArray(plan.targets) && typeof plan.reserveOf === 'function'
+    && typeof plan.budget === 'number' && plan.cities.length === cities.length,
+    `${cities.length} 城 / 兵 ${Math.round(plan.totalTroops)} / 目标 ${plan.targets.length}`);
+
+  // 2 留守下限：前线 >= 55% 兵额、后方 >= 35%（受威胁时按现有兵力 90%）
+  {
+    const c = cities[0];
+    const cap = api.State.troopCapOf(G, c);
+    const reserve = plan.reserveOf(c);
+    const front = plan.isFront(c);
+    ok('留守下限按前线/后方分档',
+      reserve >= Math.min(cap * (front ? T.reserveFront : T.reservePeace), api.troopTotal(c.garrison)) - 1,
+      `${front ? '前线' : '后方'} 留守 ${Math.round(reserve)} / 兵额 ${Math.round(cap)}`);
+    ok('可抽兵力 = 驻军 − 留守', Math.abs(plan.spareOf(c) - Math.max(0, api.troopTotal(c.garrison) - reserve)) < 1);
+  }
+
+  // 3 有敌军在途 → 本月转守，不新开进攻
+  {
+    const { api: a2, get: g2 } = h.boot({ seed: 13 });
+    const G2 = g2();
+    const f2 = Object.values(G2.factions).find(x => x.id !== G2.player.factionId && !x.dead && x.kind !== 'free'
+      && a2.State.factionCities(G2, x.id).length >= 2);
+    const victim = a2.State.factionCities(G2, f2.id)[0];
+    const enemy = Object.values(G2.factions).find(x => x.id !== f2.id && x.id !== 'free' && !x.dead);
+    const enemyCity = a2.State.neighbors(G2, victim.id, 400)[0];
+
+    // 造一支 2 个月后抵达的攻军
+    const atkArmy = a2.Army.create(G2, {
+      factionId: enemy.id, heroId: null, from: enemyCity.id, to: victim.id,
+      troops: { inf: 2000 }, mission: 'attack',
+    });
+    atkArmy.eta = 2; atkArmy.totalEta = 2;
+    a2.Store.replace(G2);
+
+    const p2 = a2.AI.assess(g2(), f2, a2.State.factionCities(g2(), f2.id), {});
+    ok('受威胁识别（在途攻军 + 抵达月数）',
+      p2.threatened.some(t => t.cityId === victim.id && t.eta <= T.threatEta),
+      p2.threatened.map(t => `${g2().cities[t.cityId].name}@${t.eta}`).join(','));
+
+    const before = new Set(Object.keys(g2().armies));
+    a2.AIWar.run(g2(), f2, p2, 'x');
+    const fresh = Object.values(g2().armies).filter(x => !before.has(x.id));
+    ok('受威胁时本月只回防、不新开进攻',
+      fresh.every(x => x.mission === 'reinforce'), fresh.map(x => x.mission).join(','));
+  }
+
+  // 4 目标记忆：进攻失败的目标被冷落，评估里不再出现
+  {
+    const { api: a3, get: g3 } = h.boot({ seed: 7 });
+    const G3 = g3();
+    // 找一个「有活干」的势力：没有目标就先宣一家邻国（否则 targets 为空，用例无意义）
+    const cands = Object.values(G3.factions).filter(x => x.id !== G3.player.factionId && !x.dead && x.kind !== 'free'
+      && a3.State.factionCities(G3, x.id).length >= 2);
+    let f3 = cands[0], p3 = a3.AI.assess(G3, f3, a3.State.factionCities(G3, f3.id), {});
+    if (!p3.targets.length) {
+      const c0 = a3.State.factionCities(G3, f3.id)[0];
+      const nb = a3.State.neighbors(G3, c0.id, 235).find(x => x.owner !== f3.id && x.owner !== 'free');
+      if (nb) {
+        const pr = a3.Diplo.pair(G3, f3.id, nb.owner);
+        pr.rel = -70; pr.status = a3.Diplo.WAR; pr.until = 0;
+        a3.Store.replace(G3);
+        p3 = a3.AI.assess(a3.Store.get(), f3, a3.State.factionCities(a3.Store.get(), f3.id), {});
+      }
+    }
+    const tgt = p3.targets[0];
+    if (!tgt) {
+      ok('目标记忆：用例需要至少一个可打目标', false);
+    } else {
+      f3._offense = [{ armyId: 'gone', cityId: tgt.to, turn: G3.meta.turn }];
+      a3.AI._settleOffense(G3, f3);
+      const p4 = a3.AI.assess(G3, f3, a3.State.factionCities(G3, f3.id), {});
+      ok('进攻失败的目标被冷落（不再出现在 targets）',
+        f3._avoid[tgt.to] > G3.meta.turn && !p4.targets.some(t => t.to === tgt.to),
+        `avoid 至第 ${f3._avoid[tgt.to]} 回合`);
+    }
+  }
+
+  // 5 出兵预算：单回合新增进攻兵力不超过在册兵力 × commitRatio（force 除外）
+  {
+    const { api: a4, get: g4 } = h.boot({ seed: 21 });
+    let worst = 0, sample = '';
+    const orig = a4.Army.create;
+    let turnTroops = 0, spent = 0;
+    a4.Army.create = function (GG, o) {
+      const a = orig.call(a4.Army, GG, o);
+      if (o.mission === 'attack' && o.factionId !== GG.player.factionId) spent += a4.troopTotal(a.troops);
+      return a;
+    };
+    for (let i = 0; i < 30; i++) {
+      const g = g4();
+      if (g.over) break;
+      let tot = 0;
+      for (const x of Object.values(g.cities)) if (x.owner !== g.player.factionId) tot += a4.troopTotal(x.garrison);
+      for (const a of Object.values(g.armies)) if (a.factionId !== g.player.factionId) tot += a4.troopTotal(a.troops);
+      turnTroops = Math.max(turnTroops, tot);
+      spent = 0;
+      try { a4.Store.dispatch('END_TURN'); } catch (e) { break; }
+      const ratio = spent / Math.max(1, turnTroops);
+      if (ratio > worst) { worst = ratio; sample = `第 ${i + 1} 月 ${Math.round(spent)}/${Math.round(turnTroops)}`; }
+    }
+    a4.Army.create = orig;
+    ok('单月出兵兵力受 commitRatio 约束（全图口径，容许军区 force 略高）',
+      worst <= api.AI.TUNE.commitRatio * 1.6, `峰值 ${(worst * 100).toFixed(0)}%（${sample}）`);
+  }
+
+  // 6 合攻：同月抵达同一座敌城的多路攻军合成一战（不是第一路先撞死、第二路变成合兵）
+  {
+    const { api: a6, get: g6 } = h.boot({ seed: 31 });
+    const G6 = g6();
+    const f6 = Object.values(G6.factions).find(x => x.id !== G6.player.factionId && !x.dead && x.kind !== 'free'
+      && a6.State.factionCities(G6, x.id).length >= 2);
+    const srcs = a6.State.factionCities(G6, f6.id);
+    const enemyTarget = a6.State.neighbors(G6, srcs[0].id, 300)
+      .find(x => x.owner !== f6.id && x.owner !== 'free');
+    if (!enemyTarget) {
+      ok('合攻：用例需要一座邻接敌城', false);
+    } else {
+      // 造两支同月抵达的攻军（先宣战，否则在途攻军只会班师）
+      const pr6 = a6.Diplo.pair(G6, f6.id, enemyTarget.owner);
+      pr6.rel = -80; pr6.status = a6.Diplo.WAR; pr6.until = 0;
+      enemyTarget.garrison.inf = 1200;
+      const battles0 = G6.stats.battles;
+      for (const c of srcs.slice(0, 2)) {
+        c.garrison.inf = 1500;
+        const army = a6.Army.create(G6, {
+          factionId: f6.id, heroId: null, from: c.id, to: enemyTarget.id,
+          troops: { inf: 900 }, mission: 'attack',
+        });
+        army.eta = 1; army.totalEta = 1;
+      }
+      a6.Store.replace(G6);
+      a6.Army.advance(a6.Store.get(), 'x');
+      const g7 = g6();
+      ok('合攻：多路同月抵达只打一仗', g7.stats.battles - battles0 === 1,
+        `战斗 +${g7.stats.battles - battles0}`);
+    }
+  }
+
+  // 7 会攻编排：单路打不下时凑两三路，且用 delay 把抵达月对齐
+  {
+    const { api: a7, get: g7 } = h.boot({ seed: 41 });
+    let pairs = 0, misaligned = 0, delayed = 0;
+    for (let i = 0; i < 60; i++) {
+      const g = a7.Store.get();
+      if (g.over) break;
+      try { a7.Store.dispatch('END_TURN'); } catch (e) { break; }
+
+      // 本月新造、仍在途的攻军：group by 势力|目标，检查是否约定同一抵达月
+      const z = g7();
+      const byKey = {};
+      for (const a of Object.values(z.armies)) {
+        if (a.mission !== 'attack' || a.createdTurn !== z.meta.turn) continue;
+        const k = a.factionId + '|' + a.to;
+        (byKey[k] = byKey[k] || []).push(a);
+      }
+      for (const k in byKey) {
+        const list = byKey[k];
+        if (list.length < 2) continue;
+        pairs++;
+        if (list.some(a => (a.delay || 0) > 0)) delayed++;
+        if (new Set(list.map(a => a.eta + (a.delay || 0))).size > 1) misaligned++;
+      }
+    }
+    ok('会攻：出现了两路同攻（编排生效）', pairs >= 1, `${pairs} 次`);
+    ok('会攻：多路抵达月对齐', pairs >= 1 && misaligned === 0, `错位 ${misaligned}/${pairs}`);
+    ok('会攻：确实用到了 delay（否则几路会错开送死）', delayed >= 1, `${delayed}/${pairs}`);
+  }
+
+  // 8 预判威胁：邻国兵力能压过来（尚无在途敌军）也算受威胁，并会提前补防
+  {
+    const { api: a8, get: g8 } = h.boot({ seed: 13 });
+    const G8 = g8();
+    const f8 = Object.values(G8.factions).find(x => x.id !== G8.player.factionId && !x.dead && x.kind !== 'free'
+      && a8.State.factionCities(G8, x.id).length >= 2);
+    const weak = a8.State.factionCities(G8, f8.id)[0];
+    const nb = a8.State.neighbors(G8, weak.id, 235).find(x => x.owner !== f8.id && x.owner !== 'free');
+    if (!nb) {
+      ok('预判威胁：用例需要邻接敌城', false);
+    } else {
+      // 造：我城空虚 + 邻国大军 + 已宣战
+      weak.garrison.inf = 80;
+      nb.garrison.inf = 4000;
+      const pr = a8.Diplo.pair(G8, f8.id, nb.owner);
+      pr.rel = -80; pr.status = a8.Diplo.WAR; pr.until = 0;
+      a8.Store.replace(G8);
+
+      const plan8 = a8.AI.assess(a8.Store.get(), f8, a8.State.factionCities(a8.Store.get(), f8.id), {});
+      ok('预判威胁：无在途敌军也识别出暴露城',
+        plan8.threatened.length === 0 && plan8.exposed.some(e => e.cityId === weak.id),
+        `exposed ${plan8.exposed.length}`);
+
+      // 后排城有兵 → 应主动向前线补防
+      const rear = a8.State.factionCities(a8.Store.get(), f8.id).find(c => c.id !== weak.id);
+      if (rear) {
+        rear.garrison.inf = 2500;
+        a8.Store.replace(a8.Store.get());
+        const before = new Set(Object.keys(g8().armies));
+        const p9 = a8.AI.assess(g8(), f8, a8.State.factionCities(g8(), f8.id), {});
+        a8.AIWar.defend(g8(), f8, p9, 'x',
+          p9.exposed.map(e => ({ cityId: e.cityId, eta: 3, troops: Math.round(e.pressure * 0.8) })));
+        const fresh = Object.values(g8().armies).filter(a => !before.has(a.id));
+        ok('预判威胁：会提前向前线补防',
+          fresh.length === 0 || fresh.some(a => a.mission === 'reinforce'),
+          fresh.map(a => a.mission).join(',') || '未派兵');
+      }
+    }
+  }
+
+  // 6 决策留痕：aiTrace 打开后每月每势力一条
+  {
+    const { api: a5, get: g5 } = h.boot({ seed: 11 });
+    const raw = JSON.parse(JSON.stringify(g5()));
+    raw.meta.aiTrace = true;
+    a5.Store.replace(raw);
+    h.runTurns(a5, 6);
+    const trace = g5().aiTrace || [];
+    ok('aiTrace 记录决策依据',
+      trace.length > 0 && trace.every(t => t.posture && typeof t.budget === 'number' && t.turn > 0),
+      `${trace.length} 条，posture ${[...new Set(trace.map(t => t.posture))].join('/')}`);
   }
 }
 

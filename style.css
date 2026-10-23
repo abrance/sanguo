@@ -39,6 +39,11 @@
   --ink-warm:#b8a888;      /* 注释里的强调 */
   --ink-locked:#5f574a;    /* 未解锁 */
 
+  /* ── 宝物稀有度（边框，docs/HERO.md §4.5） ── */
+  --rare-1:#6f6558;
+  --rare-2:#8a7a3a;
+  --rare-3:#a5762a;
+
   /* ── 金 / 强调 ── */
   --gold:#c9a227;
   --gold-bright:#e0b93a;
@@ -320,6 +325,28 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
 .bar.inf>div{background:linear-gradient(90deg,var(--inf-deep),var(--inf))}
 .barbox{display:flex;gap:8px;align-items:center}
 .barbox>div{flex:1}
+
+/* ---------- 正在进行的攻城（纪事页顶部） ---------- */
+.livebattle{
+  border:1px solid var(--gold-deep);border-radius:var(--r-sm);
+  padding:6px 8px;margin:4px 0 8px;background:var(--surface-3);
+}
+.livebattle .lb-head{font-size:var(--fs-body);color:var(--gold-pale);margin-bottom:2px}
+.livebattle .lb-line{margin-bottom:4px}
+.livebattle .lb-acts{display:flex;flex-wrap:wrap;gap:4px}
+
+/* ---------- 宝物槽（人物页） ---------- */
+.tslots{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.tslot{
+  font-size:var(--fs-tiny);padding:1px 6px;border-radius:var(--r-sm);
+  border:1px solid var(--rare-1);color:var(--ink-dim);cursor:pointer;background:transparent;
+}
+.tslot.on{border-color:var(--gold);color:var(--ink)}
+.tslot.on.r1{border-color:var(--rare-1)}
+.tslot.on.r2{border-color:var(--rare-2)}
+.tslot.on.r3{border-color:var(--rare-3);color:var(--gold-pale)}
+.tslot:hover{border-color:var(--gold)}
+.tpool{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
 
 /* ---------- tech ---------- */
 .tbranch{margin-bottom:7px}

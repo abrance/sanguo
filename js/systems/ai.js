@@ -1,225 +1,270 @@
-// 规则型 AI：征税 → 营造 → 征兵 → 集结 → 多路出兵
+// AI 编排层：每个势力每月走一遍「评估 → 内政 → 军事」
+//
+// 分工（改代码前先看这里）：
+//   AI.assess  —— 把局势压成一个可读对象：威胁 / 留守下限 / 可抽兵力 / 带胜算的目标 / 预算
+//   AIEcon     —— 税 → 募兵 → 营造（ai-econ.js，按战时/平时改比例与顺序）
+//   AIWar      —— 防守 > 进攻 > 集结，三选一（ai-war.js，不再同月互相抽兵）
+//
+// 设计口径见 docs/AI.md。调平衡优先改 AI.TUNE 与两张表（buildOrder / ratioFor），
+// 不要在流程里塞零散判断 —— 以前就是那样长成一团的。
 const AI = {
 
-  /** 按侵略性决定营造优先级 */
-  _buildOrder(f) {
-    if (f.aggression > 0.55) return ['barracks', 'farm', 'drill', 'stable', 'wall', 'ironworks', 'academy', 'office'];
-    if (f.aggression > 0.35) return ['farm', 'market', 'barracks', 'wall', 'office', 'academy', 'drill', 'granary'];
-    return ['farm', 'market', 'academy', 'office', 'granary', 'wall', 'barracks', 'customs'];
+  /** 全部旋钮集中一处 */
+  TUNE: {
+    commitRatio: 0.75,      // 单回合最多抽走全势力在册兵力的比例
+    reservePeace: 0.25,     // 非前线城留守（占现有兵力）
+    reserveFront: 0.40,     // 前线城（邻接敌国）留守（占现有兵力）
+    reserveThreat: 0.90,    // 已有敌军在途指向此城：按现有兵力保留
+    reserveForce: 0.15,     // 硬底：任何情况下留在城里不低于兵额的 15%
+    threatEta: 2,           // 几回合内会挨打 → 本月转守
+    maxRoutesPeace: 1,      // 平时每月最多开几路（其余精力用于集结）
+    maxRoutesWar: 8,        // 战时每月最多开几路（仍受 commitRatio 与留守下限限制）
+    avoidMonths: 6,         // 打不下来的目标冷落几个月
+    minSpare: 120,          // 可抽兵少于这个数就不折腾
+    minArmy: 150,           // 成军下限（与其送人头不如囤着）
+    attackMargin: 0.55,     // 出兵要求：预测能赢且剩兵 ≥ 该比例（守军会在行军途中补兵）
+    maxReinforce: 2,        // 单次 defend 最多造几支援军
+    maxReinforceInTransit: 3, // 在途援军超过这个数就不再抽调
+    convergeCooldown: 4,    // 两次合攻之间至少隔几个月
+    convergeMaxWall: 3,     // 城墙超过这个等级就不指望合攻
+    frontRange: 235,        // 判定「前线」与「邻接目标」的半径
   },
 
   run(G, stamp) {
     for (const f of Object.values(G.factions)) {
-      if (f.kind === 'free') continue;
-      if (f.dead) continue;
+      if (f.kind === 'free' || f.dead) continue;
 
       f.momentum = State.momentum(G, f.id);
 
-      if (f.id === G.player.factionId) {
-        AI._support(G, f, stamp);
-        continue;
-      }
-
-      const cities = State.factionCities(G, f.id);
+      let cities = State.factionCities(G, f.id);
       if (!cities.length) continue;
 
-      AI._tax(G, f, cities);
-      AI._build(G, f, cities);
-      AI._recruit(G, f, cities, stamp);
-      AI._mass(G, f, cities, stamp);
-      AI._attack(G, f, cities, stamp);
+      // 玩家直辖城不归 AI 调度（与 Diplo.sendAid 的同一条不变量）
+      let exclude = null;
+      if (f.id === G.player.factionId) {
+        exclude = new Set(State.demesne(G).map(c => c.id));
+        cities = cities.filter(c => !exclude.has(c.id));
+        if (!cities.length) continue;
+      }
+
+      AI._settleOffense(G, f);
+      const plan = AI.assess(G, f, cities, { exclude });
+      AIEcon.run(G, f, plan);
+      AIWar.run(G, f, plan, stamp);
+      AI._trace(G, plan);
     }
   },
 
   /**
-   * 玩家所属势力：与 AI 势力同样发展扩张（否则全图只有你这家长不大），
-   * 但玩家直辖的城池不参与，避免把玩家自己的兵调走。
+   * 局势评估：所有决策都从这一个对象读数据，不再各自散布 State 查询。
    */
-  _support(G, f, stamp) {
-    const all = State.factionCities(G, f.id);
-    const mine = new Set(State.demesne(G).map(c => c.id));
-    const managed = all.filter(c => !mine.has(c.id));
-    if (!managed.length) return;
+  assess(G, f, cities, opts = {}) {
+    const T = AI.TUNE;
+    const turn = G.meta.turn;
+    const avoid = f._avoid || {};
+    const exclude = opts.exclude || null;
 
-    AI._tax(G, f, managed);
-    AI._build(G, f, managed);
-    AI._recruit(G, f, managed, stamp);
-    AI._mass(G, f, managed, stamp, mine);
-    AI._attack(G, f, managed, stamp, mine);
-  },
-
-  _tax(G, f, cities) {
-    for (const c of cities) {
-      const up = c.gold * 0.12;
-      c.gold -= up;
-      f.treasury += up;
-    }
-    f.treasury = Math.min(f.treasury, cities.length * 1100);
-  },
-
-  /** 营造：按优先级挑一个能负担的项目，府库不足时补贴 */
-  _build(G, f, cities) {
-    const order = AI._buildOrder(f);
-    for (const c of cities) {
-      if (!Build.queueFree(c)) continue;
-      if (c.mat < 40 && c.iron < 10) continue;
-
-      for (const key of order) {
-        const chk = Build.reqCheck(G, c, key);
-        if (!chk.ok) continue;
-        const cost = Build.costOf(G, c, key);
-
-        // 府库补贴（只补钱，建材铁料靠本地）
-        if (c.gold < cost.gold) {
-          const take = Math.min(f.treasury, cost.gold - c.gold);
-          c.gold += take;
-          f.treasury -= take;
-        }
-        if (c.gold < cost.gold || c.mat < cost.mat || c.iron < cost.iron) continue;
-
-        try { Build.start(G, c, key, true); } catch (e) { }
-        break;
-      }
-    }
-  },
-
-  _recruit(G, f, cities, stamp) {
-    const ratio = 0.45 + f.aggression * 0.30;
-    for (const c of cities) {
-      const cap = State.troopCapOf(G, c);
-      const cur = troopTotal(c.garrison);
-      const target = cap * ratio;
-      if (cur >= target * 0.97) continue;
-      const want = Math.min(Math.round(target - cur), Math.round(c.pop * 1.6));
-      if (want < 20) continue;
-
-      // 府库补贴
-      const before = c.gold;
-      const added = Recruit.autoFill(G, c, want, true);
-      if (added > 0) {
-        const spent = before - c.gold;
-        // 若本次把城库花光，府库回补一部分
-        if (c.gold < 60) {
-          const take = Math.min(f.treasury, 120);
-          c.gold += take;
-          f.treasury -= take;
-        }
-      }
-    }
-  },
-
-  /** 集中兵力：向好打的前线城市输送，形成局部优势 */
-  _mass(G, f, cities, stamp, exclude, filter, force) {
-    if (cities.length < 2) return;
-    if (!force && !RNG.chance(0.16 + f.aggression * 0.20 + (f.momentum - 1) * 0.35)) return;
-
-    let best = null;
-    for (const c of cities) {
-      const plan = Army.previewDispatch(c, 0.70);
-      if (troopTotal(plan) < 150) continue;
-      for (const nb of State.neighbors(G, c.id, 235)) {
-        if (nb.owner === f.id) continue;
-        if (filter && !filter(nb)) continue;
-        const edge = Combat.attackScore(G, plan, c.governor, c.terrain) - Combat.defenseScore(G, nb);
-        if (!best || edge > best.edge) best = { edge, staging: c, target: nb };
-      }
-    }
-    if (!best) return;
-    const staging = best.staging;
-
-    // 集结上限：堆到兵额 1.6 倍就打住，否则一城养不起（会成片断粮）
-    const stagingCap = State.troopCapOf(G, staging);
-    let inbound = 0;
+    // ── 在途敌军：指向我方城的 attack 军 ──
+    const incoming = {};
     for (const a of Object.values(G.armies)) {
-      if (a.to === staging.id && a.factionId === f.id) inbound += troopTotal(a.troops);
+      if (a.factionId === f.id || a.mission !== 'attack') continue;
+      const to = G.cities[a.to];
+      if (!to || to.owner !== f.id) continue;
+      (incoming[to.id] = incoming[to.id] || []).push(a);
     }
-    if (troopTotal(staging.garrison) + inbound > stagingCap * 1.15) return;
+    const threatened = Object.keys(incoming).map(id => ({
+      cityId: id,
+      eta: Math.min(...incoming[id].map(a => a.eta)),
+      troops: incoming[id].reduce((s, a) => s + troopTotal(a.troops), 0),
+      by: incoming[id][0].factionId,
+    })).filter(t => t.eta <= T.threatEta);
 
-    const donors = cities
-      .filter(c => c.id !== staging.id)
-      .filter(c => !exclude || !exclude.has(c.id))
-      .filter(c => U.dist(c.x, c.y, staging.x, staging.y) <= 460)
-      .map(c => ({ c, t: troopTotal(c.garrison) - State.troopCapOf(G, c) * 0.35 }))
-      .filter(o => o.t > 120)
-      .sort((a, b) => b.t - a.t)
-      .slice(0, 3);
+    // ── 前线判定：邻接活着的敌国（在野城不算威胁）──
+    const isFront = c => State.neighbors(G, c.id, T.frontRange).some(nb =>
+      nb.owner !== f.id && nb.owner !== 'free'
+      && !(G.factions[nb.owner] && G.factions[nb.owner].dead));
 
-    for (const { c: src } of donors) {
-      const troops = Army.takeFromGarrison(src.garrison, 0.60);
-      if (troopTotal(troops) < 100) {
-        for (const k of TROOP_KEYS) src.garrison[k] += troops[k] || 0;
-        continue;
+    const garrison = c => troopTotal(c.garrison);
+
+    // ── 留守下限：按「现有兵力」留，而不是按兵额留 ──
+    // 按兵额留会在城市只填到 6 成时把可抽兵压到 2 成，AI 于是永远打不动（旧版直接抽 80% 走，才扩张得动）
+    // 现在改成「留 30-40% 现有兵力 + 兵额 15% 的硬底」，既不至于裸城，也不至于打不出手。
+    const reserveOf = c => {
+      const g = garrison(c);
+      if (incoming[c.id]) return Math.round(g * T.reserveThreat);
+      const cap = State.troopCapOf(G, c);
+      const keep = isFront(c) ? T.reserveFront : T.reservePeace;
+      return Math.round(Math.max(cap * T.reserveForce, g * keep));
+    };
+    const spareOf = c => Math.max(0, garrison(c) - reserveOf(c));
+
+    // ── 兵力账目 ──
+    let totalTroops = 0, totalCap = 0, spareTotal = 0;
+    for (const c of cities) {
+      totalTroops += garrison(c);
+      totalCap += State.troopCapOf(G, c);
+      if (!exclude || !exclude.has(c.id)) spareTotal += spareOf(c);
+    }
+    const myArmies = Object.values(G.armies).filter(a => a.factionId === f.id);
+    for (const a of myArmies) totalTroops += troopTotal(a.troops);
+    const attackArmies = myArmies.filter(a => a.mission === 'attack');
+    const outgoing = attackArmies.length;
+    // 已经在路上的目标不再重复派兵（以前会从另一座城再打一遍同一座城，纯送）
+    const pendingTargets = new Set(attackArmies.map(a => a.to));
+
+    const wars = Object.keys(G.factions)
+      .filter(id => id !== f.id && id !== 'free'
+        && !(G.factions[id] && G.factions[id].dead)
+        && Diplo.statusOf(G, f.id, id) === Diplo.WAR);
+
+    // ── 预判威胁：还没看到敌军，但邻国驻军足以压过来 → 提前补防 ──
+    // 只看已交战的邻国，免得把「和平邻居的守军」当威胁，导致到处乱补兵
+    const pressureOf = c => {
+      let best = 0;
+      for (const nb of State.neighbors(G, c.id, T.frontRange).slice(0, 6)) {
+        if (nb.owner === f.id || nb.owner === 'free') continue;
+        if (!Diplo.canAttack(G, nb.owner, f.id)) continue;
+        best = Math.max(best, Combat.attackScore(G, nb.garrison, nb.governor, nb.terrain, nb.owner));
       }
-      Army.create(G, {
-        factionId: f.id, heroId: null, from: src.id, to: staging.id,
-        troops, mission: 'reinforce',
-      });
+      return best;
+    };
+    const exposed = cities
+      .filter(c => !incoming[c.id] && isFront(c))
+      .map(c => {
+        const pressure = pressureOf(c);
+        if (pressure <= 0) return null;
+        const def = Combat.defenseScore(G, c);
+        return { cityId: c.id, pressure, defense: def, ratio: def / Math.max(1, pressure) };
+      })
+      .filter(e => e && e.ratio < 1.0)
+      .sort((a, b) => a.ratio - b.ratio)
+      .slice(0, 2);
+
+    // ── 目标清单：能打的、算得出胜算的、不在冷落期的 ──
+    const targets = [];
+    for (const from of cities) {
+      if (exclude && exclude.has(from.id)) continue;
+      const spare = spareOf(from);
+      if (spare < T.minSpare) continue;
+
+      for (const nb of State.neighbors(G, from.id, T.frontRange)) {
+        if (nb.owner === f.id) continue;
+        if (opts.filter && !opts.filter(nb)) continue;
+        if (!Diplo.canAttack(G, f.id, nb.owner)) continue;
+        // 新手保护（与旧版一致）：别在第 3 年前后就把玩家按死
+        if (nb.owner === G.player.factionId && turn < 36) continue;
+        if (nb.grantedTo === PLAYER_HERO_ID && turn < 54) continue;
+        if (nb.grantedTo === PLAYER_HERO_ID && Diplo.hasPact(G, f.id)) continue;
+        if (pendingTargets.has(nb.id)) continue;
+        if (avoid[nb.id] && turn < avoid[nb.id]) continue;
+
+        const ratio = spare / Math.max(1, garrison(from));
+        const troops = Army.previewDispatch(from, ratio);
+        const size = troopTotal(troops);
+        if (size < T.minArmy) continue;
+
+        const drill = State.bld(from, 'drill');
+        // 守军会在行军的这几个月里补兵/增援 —— 按每月 +10%（上限 +40%）预估，
+        // 否则「预测能赢」的仗有一半会打输（实测败仗率 40% vs 19%）
+        const eta = Army.estimateEta(from, nb, troops, Army.speedMul(G, f.id));
+        const grow = 1 + Math.min(0.40, 0.10 * eta);
+        // 取较大者：现在守军 / 现守军×行军增幅 / 兵额×0.8（战时对手会在你路上补兵）
+        const capDef = State.troopCapOf(G, nb) * 0.80;
+        const projTroops = {};
+        for (const k of TROOP_KEYS) {
+          projTroops[k] = Math.max(
+            Math.round((nb.garrison[k] || 0) * grow),
+            Math.round(capDef * ((nb.garrison[k] || 0) / Math.max(1, troopTotal(nb.garrison)))));
+        }
+        const proj = { ...nb, garrison: projTroops };
+        const pred = Combat.predict(G, troops, from.governor, proj, f.id, drill);
+        const atk = Combat.attackScore(G, troops, from.governor, from.terrain, f.id, drill);
+        const def = Combat.defenseScore(G, nb);
+        targets.push({
+          from: from.id, to: nb.id,
+          troops, size,
+          edge: atk / Math.max(1, def),      // >1 表示我方战力占优
+          pred,
+          dist: U.dist(from.x, from.y, nb.x, nb.y),
+          owner: nb.owner,
+        });
+      }
     }
+    // 排序要跟「实际能不能打赢」一致：先按预测结果（赢 & 剩兵多），再按战力比与距离。
+    // 旧版按 edge 排序、再拿 pred 过滤，会把前面一堆打不下来的目标排在最前，结果一个月一路都出不去。
+    const score = t => (t.pred.win ? t.pred.remain / Math.max(1, t.size) : -1);
+    targets.sort((a, b) => (score(b) - score(a)) || (b.edge - a.edge) || (a.dist - b.dist));
+
+    return {
+      turn, faction: f, cities, exclude,
+      atWar: wars.length > 0, wars,
+      threatened, incoming, exposed,
+      isFront, garrison, reserveOf, spareOf,
+      totalTroops, totalCap, spareTotal, outgoing,
+      targets,
+      // 战线数随摊子大小扩张，但设上限：摊得越大越该多路推进，而不是一城一路全上
+      maxRoutes: wars.length
+        ? Math.min(T.maxRoutesWar, Math.max(2, Math.ceil(cities.length / 2)))
+        : T.maxRoutesPeace,
+      budget: Math.max(0, Math.round(totalTroops * T.commitRatio) - AI._committedTroops(G, f)),
+    };
+  },
+
+  /** 本回合已投入进攻的兵力（含军区，避免 AI 与军区两边抢兵） */
+  _committedTroops(G, f) {
+    let n = 0;
+    for (const a of Object.values(G.armies)) {
+      if (a.factionId !== f.id || a.mission !== 'attack') continue;
+      if (a.createdTurn !== G.meta.turn) continue;
+      n += troopTotal(a.troops);
+    }
+    return n;
+  },
+
+  /** 结算上一轮进攻：部队没了而目标仍在敌手 → 冷落该目标几个月（别再送） */
+  _settleOffense(G, f) {
+    const list = f._offense || [];
+    if (!list.length) { f._offense = []; return; }
+    f._avoid = f._avoid || {};
+    const keep = [];
+    for (const rec of list) {
+      if (G.armies[rec.armyId]) { keep.push(rec); continue; }   // 还在路上
+      const city = G.cities[rec.cityId];
+      if (city && city.owner !== f.id) {
+        f._avoid[rec.cityId] = Math.max(f._avoid[rec.cityId] || 0, G.meta.turn + AI.TUNE.avoidMonths);
+      }
+    }
+    f._offense = keep;
+  },
+
+  /** 决策可观测：G.meta.aiTrace 打开时，把每月每势力的判断理由留痕 */
+  _trace(G, plan) {
+    if (!G.meta.aiTrace) return;
+    const f = plan.faction;
+    const tgt = plan.targets[0];
+    const nm = id => (G.cities[id] ? G.cities[id].name : id);
+    (G.aiTrace = G.aiTrace || []).push({
+      turn: G.meta.turn, fid: f.id,
+      atWar: plan.atWar, wars: plan.wars.length,
+      threatened: plan.threatened.map(t => `${nm(t.cityId)}(${t.eta}月/${U.num(t.troops)})`),
+      spareTotal: Math.round(plan.spareTotal), budget: Math.round(plan.budget),
+      routes: plan.outgoing,
+      best: tgt
+        ? `${nm(tgt.from)}→${nm(tgt.to)} 胜${Math.round((1 - tgt.pred.atkLossPct) * 100)}%`
+        : '无',
+      posture: plan.threatened.length ? 'defend' : (plan.targets.length ? 'attack' : 'mass'),
+    });
+    if (G.aiTrace.length > 400) G.aiTrace.splice(0, G.aiTrace.length - 400);
+  },
+
+  // ─────── 兼容旧入口（军区 legion.js 传 filter / force） ───────
+  _mass(G, f, cities, stamp, exclude, filter, force) {
+    const plan = AI.assess(G, f, cities, { exclude, filter });
+    AIWar.mass(G, f, plan, stamp, { force });
   },
 
   _attack(G, f, cities, stamp, exclude, filter, force) {
-    // force：玩家点了名的征讨，不掷骰子，也不按"半军区"限军数
-    const maxArmies = force ? Math.max(2, cities.length) : Math.max(1, Math.ceil(cities.length / 2));
-    let outgoing = Object.values(G.armies).filter(a => a.factionId === f.id).length;
-    if (outgoing >= maxArmies) return;
-
-    if (!force) {
-      const chances = (outgoing === 0 ? 0.10 + f.aggression * 0.30 : 0.04 + f.aggression * 0.15)
-        + (f.momentum - 1) * 0.25;
-      if (!RNG.chance(chances)) return;
-    }
-
-    const sources = cities
-      .map(c => ({ c, score: Combat.attackScore(G, c.garrison, c.governor, c.terrain) }))
-      .sort((a, b) => b.score - a.score);
-
-    for (const { c: from } of sources) {
-      if (outgoing >= maxArmies) break;
-      if (exclude && exclude.has(from.id)) continue;
-      if (troopTotal(from.garrison) < 180) continue;
-
-      const plan = Army.previewDispatch(from, 0.80);
-      if (troopTotal(plan) < 120) continue;
-
-      const overstacked = troopTotal(from.garrison) > State.troopCapOf(G, from) * 1.25;
-
-      let picked = null;
-      for (const nb of State.neighbors(G, from.id, 235)) {
-        if (nb.owner === f.id) continue;
-        if (filter && !filter(nb)) continue;
-        if (!Diplo.canAttack(G, f.id, nb.owner)) continue;
-        if (nb.grantedTo === PLAYER_HERO_ID && Diplo.hasPact(G, f.id)) continue;
-        if (nb.owner === G.player.factionId && G.meta.turn < 36) continue;
-        if (nb.grantedTo === PLAYER_HERO_ID && G.meta.turn < 54) continue;
-
-        const pred = Combat.predict(G, plan, from.governor, nb, f.id, State.bld(from, 'drill'));
-        // 一般 AI 只打胜算够的仗；玩家点了名的征讨（force）是命令，胜算不足也照打，
-        // 否则「征讨」会让军区整月按兵不动，玩家以为号令失效。
-        if (!pred.win && !overstacked && !force) continue;
-        if (!force && pred.remain < troopTotal(plan) * (overstacked ? 0.15 : 0.45)) continue;
-
-        const d = U.dist(from.x, from.y, nb.x, nb.y);
-        if (!picked || d < picked.d) picked = { nb, d };
-      }
-      if (!picked) continue;
-
-      const troops = Army.takeFromGarrison(from.garrison, 0.80);
-      let heroId = from.governor;
-      if (!heroId || !G.heroes[heroId]) {
-        const cand = Object.values(G.heroes).find(h => h.factionId === f.id && h.cityId === from.id);
-        heroId = cand ? cand.id : null;
-      }
-
-      const a = Army.create(G, {
-        factionId: f.id, heroId, from: from.id, to: picked.nb.id,
-        troops, mission: 'attack',
-      });
-      outgoing++;
-
-      if (picked.nb.owner === G.player.factionId || picked.nb.grantedTo === PLAYER_HERO_ID) {
-        State.log(G, 'bad',
-          `${f.name}${heroId && G.heroes[heroId] ? G.heroes[heroId].name : '兵马'}自${from.name}发兵${U.num(troopTotal(troops))}，直指${picked.nb.name}！约${a.eta}月可至。`);
-      }
-    }
+    const plan = AI.assess(G, f, cities, { exclude, filter });
+    AIWar.attack(G, f, plan, stamp, { force });
   },
 };

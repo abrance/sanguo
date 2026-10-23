@@ -52,6 +52,8 @@ const Recruit = {
   /** 按缺口自动配兵（步 62 / 弓 26 / 骑 15 / 水 / 器），太守与 AI 用 */
   autoFill(G, c, want, silent) {
     if (want <= 0) return 0;
+    // 围城中无法征兵（攻城战挂起时城内不会再冒出守军）
+    if (State.besieged(G, c.id)) return 0;
     // 粮草护栏：存粮不足三个月开销就不再加兵
     const upkeep = troopFood(c.garrison) + c.pop * 0.32;
     if (c.food < upkeep * 3) return 0;

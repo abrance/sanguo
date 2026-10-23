@@ -131,4 +131,22 @@ function scanNaN(api) {
   return bad;
 }
 
-module.exports = { boot, grantCities, runTurns, scanNaN, scriptList, ROOT, DOM_FREE_SKIP };
+/** 把玩家指挥的挂起战斗全部打完（有战法就顺手放一个）—— 测试里推进回合前后都可以先调它 */
+function settleBattles(api, rounds = 40) {
+  for (let i = 0; i < rounds; i++) {
+    const G = api.Store.get();
+    const army = Object.values(G.armies).find(a => a.battle);
+    if (!army) return true;
+    let tactic = null;
+    try {
+      const list = api.Combat.tacticsFor(G, army, G.cities[army.battle.cityId]);
+      const pick = list.find(t => t.ok && t.key === 'mazhen');
+      if (pick) tactic = pick.key;
+    } catch (e) { /* 拿不到战法就硬打 */ }
+    try { api.Store.dispatch('BATTLE_STEP', { armyId: army.id, tactic }); }
+    catch (e) { return false; }
+  }
+  return false;
+}
+
+module.exports = { boot, grantCities, runTurns, settleBattles, scanNaN, scriptList, ROOT, DOM_FREE_SKIP };
