@@ -18,7 +18,11 @@ const CITY_DEFAULTS = {
   mat: 100, iron: 40, food: 0, gold: 0,
   order: 70, morale: 70, unrest: 0,
   policy: null, rallyTo: null, rallyRatio: 0.5, rallyFill: 1.2,
-  clanActionTurn: 0, buildQueue: [],
+  clanActionTurn: 0, buildQueue: [], promoteTurn: 0,
+};
+/** 人情账新字段（docs/HERO.md §1.2）。ambition 由公式算，这里只是兜底值 */
+const HERO_DEFAULTS = {
+  ambition: 40, bond: 0, grievance: 0, idle: 0, lastAct: 0, warnTurn: 0, cd: {},
 };
 
 const State = {
@@ -148,6 +152,13 @@ const State = {
         factionId: fid,
         cityId: null,
         loyalty: fid === 'free' ? 0 : RNG.between(60, 95),
+        ambition: State._ambitionOf({ id, wu, tong, zhi, zheng, mei }, RNG.between(-8, 8)),
+        bond: fid === 'free' ? 0 : (fid === opts.factionId ? 30 : 5),
+        grievance: 0,
+        idle: 0,
+        lastAct: 0,
+        warnTurn: 0,
+        cd: {},
         alive: true,
       };
     }
@@ -161,6 +172,13 @@ const State = {
       factionId: G.player.factionId,
       cityId: opts.cityId,
       loyalty: 100,
+      ambition: State._ambitionOf({ zhi: 66, wu: 62, mei: 62 }, 0),
+      bond: 100,
+      grievance: 0,
+      idle: 0,
+      lastAct: 0,
+      warnTurn: 0,
+      cd: {},
       alive: true,
     };
 
@@ -489,6 +507,12 @@ const State = {
       State._fillDefaults(f, FACTION_DEFAULTS);
     }
 
+    // 武将：旧档没有 ambition 时按同一公式补（用 id 哈希代替 RNG，保证同档多次迁移一致）
+    for (const h of Object.values(G.heroes || {})) {
+      if (h.ambition == null) h.ambition = State._ambitionOf(h, State._idJitter(h.id));
+      State._fillDefaults(h, HERO_DEFAULTS);
+    }
+
     State._fillDefaults(G.player, PLAYER_DEFAULTS);
     State._fillDefaults(G.meta, META_DEFAULTS);
 
@@ -496,6 +520,20 @@ const State = {
     Diplo.ensure(G);
     TechSys.refresh(G);
     return G;
+  },
+
+  /** 野心：智勇高、人缘差的将更有野心（docs/HERO.md §1.2） */
+  _ambitionOf(h, jitter) {
+    const raw = (h.zhi || 0) * 0.45 + (h.wu || 0) * 0.35 - (h.mei || 0) * 0.30 + (jitter || 0);
+    return U.clamp(Math.round(raw), 5, 95);
+  },
+
+  /** 由 id 得到稳定的 [-8, 8] 抖动：旧档迁移不能依赖已被消耗的 RNG 状态 */
+  _idJitter(id) {
+    const s = String(id || '');
+    let x = 0;
+    for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) % 997;
+    return (x % 17) - 8;
   },
 
   /** 只补 null / undefined，不覆盖已有值（含 false、0） */

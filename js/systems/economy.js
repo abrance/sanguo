@@ -8,7 +8,10 @@ const Economy = {
       const bonus = (f && f.bonus) || techMultipliers({});
       const gov = c.governor ? G.heroes[c.governor] : null;
       const ecoMul = State.legionMul(G, c);
-      const ecoBonus = ((gov && skillOf(G, gov).economy) || 1) * (ecoMul ? ecoMul.eco : 1);
+      // 守将私交加成（只对玩家直辖城，docs/HERO.md §1.5）：私交 100 → 产出 +10%
+      const bondMul = State.isPlayerCity(G, c) && gov && gov.bond
+        ? 1 + gov.bond / 1000 : 1;
+      const ecoBonus = ((gov && skillOf(G, gov).economy) || 1) * (ecoMul ? ecoMul.eco : 1) * bondMul;
       const clanMul = State.clanEconMul(c);
 
       const popFactor = 0.55 + c.pop / 240;

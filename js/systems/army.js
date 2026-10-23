@@ -23,6 +23,14 @@ const Army = {
     return talentOf(G).speed || 1;
   },
 
+  /** 建军初士气：基础 60 + 主将忠诚修正 + 玩家天赋（docs/HERO.md §1.5） */
+  _initialMorale(G, factionId, heroId) {
+    const h = heroId ? G.heroes[heroId] : null;
+    const loy = h && h.loyalty != null ? h.loyalty : 70;
+    const talent = factionId === G.player.factionId ? (talentOf(G).armyMorale || 0) : 0;
+    return U.clamp(60 + (loy - 70) * 0.20 + talent, 20, 100);
+  },
+
   /** 创建一支军队 */
   create(G, { factionId, heroId, from, to, troops, mission }) {
     const fc = G.cities[from];
@@ -35,7 +43,7 @@ const Army = {
       from, to,
       x: fc.x, y: fc.y,
       eta, totalEta: eta,
-      morale: 60 + (factionId === G.player.factionId ? (talentOf(G).armyMorale || 0) : 0),
+      morale: Army._initialMorale(G, factionId, heroId),
       mission: mission || 'attack',
     };
     G.armies[id] = a;
