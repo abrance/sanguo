@@ -549,6 +549,26 @@ const COMMANDS = {
     State.log(G, 'good', `${c.name}：亲往${h.name}处劳问，其意稍解。`);
   },
 
+  /** 功成身退：不等统一，主动请辞（丞相 + 忠臣 + 名望 ≥200） */
+  RETIRE(G) {
+    const p = G.player;
+    if (p.rank < 7) throw new Error('官未至丞相，无可请辞');
+    if (p.route !== 'loyal') throw new Error('非忠臣之路，退无所归');
+    if (State.playerReputation(G) < 200) throw new Error('名望不足 200，请辞无光');
+    G.over = {
+      result: 'win', ending: 'shentui', title: '功成身退',
+      text: `${p.name}上表请辞，泛舟五湖。天下犹在争战，而此人已不问世事。`,
+    };
+    State.log(G, 'good', '【终】功成身退。');
+    return { ending: 'shentui' };
+  },
+
+  // ─────── 朝堂（docs/EVENTS.md §9） ───────
+
+  IMPERIAL_EDICT(G, { aFid, bFid }) { return Court.edict(G, aFid, bFid); },
+  IMPERIAL_APPOINT(G, { heroId }) { return Court.appoint(G, heroId); },
+  SUMMON_SCHOLAR(G) { return Court.summon(G); },
+
   // ─────── 事件（docs/EVENTS.md） ───────
 
   EVENT_CHOICE(G, { optionKey }) {

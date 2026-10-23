@@ -48,6 +48,8 @@ const Turn = {
     Turn.cleanupFactions(G);
     // 12.5 事件：兑现到期后果 → 抽新事件（放在最后，不能影响本月已算完的经济）
     EventSys.tick(G);
+    // 12.6 朝堂：帝都易主 → 矫诏权随之转移
+    Court.refresh(G);
     // 13 胜负
     State.checkEnd(G);
   },

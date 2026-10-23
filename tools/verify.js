@@ -2581,6 +2581,143 @@ section('事件层（抽取 / 选项 / 延迟 / 连锁）');
 }
 
 // ─────────────────────────────────────────────
+section('事件池 / 历史锚点 / 朝堂 / 结局');
+{
+  // 1 事件池：条数、锚点齐备、每个选项都写了代价
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    ok('事件池：18 条以上且 6 条历史锚点',
+      api.EVENT_KEYS.length >= 18
+      && api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor).length === 6,
+      `${api.EVENT_KEYS.length} 条 / 锚点 ${api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor).length}`);
+    const bad = [];
+    for (const k of api.EVENT_KEYS) {
+      for (const o of api.EVENTS[k].options) {
+        if (!o.costText) bad.push(`${k}.${o.key}`);
+      }
+    }
+    ok('事件池：每个选项都写明代价', !bad.length, bad.slice(0, 4).join(','));
+    ok('事件池：锚点都有必选兜底（fallback）',
+      api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor)
+        .every(k => api.EVENTS[k].options.some(o => o.fallback)));
+    void G;
+  }
+
+  // 2 历史锚点：到窗口必触发（忽略权重）
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    const anchors = api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor);
+    const missed = [];
+    for (const k of anchors) {
+      const ev = api.EVENTS[k];
+      G.meta.turn = ev.anchor[0];
+      G.events.queue.length = 0;
+      G.events.seen[k] = undefined;
+      delete G.events.seen[k];
+      api.EventSys._anchors(G);
+      if (!G.events.queue.some(q => q.eventId === k)) missed.push(k);
+    }
+    ok('历史锚点：进入窗口即入队', !missed.length, missed.join(','));
+  }
+
+  // 3 朝堂：控制帝都才有矫诏权；矫诏令两家开战
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    G.cities.luoyang.owner = G.player.factionId;
+    G.court.emperorCityId = 'luoyang';
+    api.Court.refresh(G);
+    api.Store.replace(G);
+    const acc = api.Court.access(get());
+    ok('朝堂：占有帝都即得矫诏权', acc.mine === true, `帝在${acc.emperorAt}`);
+
+    const factions = Object.keys(get().factions).filter(id => id !== 'free'
+      && id !== get().player.factionId && !get().factions[id].dead);
+    const [a, b] = factions;
+    const rep0 = get().player.reputation;
+    api.Store.dispatch('IMPERIAL_EDICT', { aFid: a, bFid: b });
+    const z = get();
+    ok('朝堂：矫诏令两家开战且扣名望',
+      api.Diplo.statusOf(z, a, b) === api.Diplo.WAR && z.player.reputation === Math.max(0, rep0 - 10),
+      `${a} vs ${b}`);
+
+    let err = null;
+    try { api.Store.dispatch('IMPERIAL_EDICT', { aFid: a, bFid: b }); } catch (e) { err = e.message; }
+    ok('朝堂：诏书有冷却', /尚需/.test(err || ''), err || '未抛错');
+
+    // 帝国易主 → 玩家失去矫诏权且名望 -20
+    const z2 = get();
+    z2.cities.luoyang.owner = 'yuanshao';
+    api.Store.replace(z2);
+    const rep2 = get().player.reputation;
+    const g3 = get();
+    api.Court.refresh(g3);
+    api.Store.replace(g3);
+    ok('朝堂：帝都易主则矫诏权转移且名望 −20',
+      api.Court.access(get()).mine === false
+      && get().player.reputation === Math.max(0, rep2 - 20),
+      `controller=${get().court.controller}`);
+
+    let err2 = null;
+    try { api.Store.dispatch('SUMMON_SCHOLAR'); } catch (e) { err2 = e.message; }
+    ok('朝堂：无权者不得征辟', /不得矫诏/.test(err2 || ''), err2 || '未抛错');
+  }
+
+  // 4 朝堂：征辟上限 3 次
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    G.cities.luoyang.owner = G.player.factionId;
+    api.Court.refresh(G);
+    api.Store.replace(G);
+    let made = 0;
+    for (let i = 0; i < 5; i++) {
+      try { api.Store.dispatch('SUMMON_SCHOLAR'); made++; } catch (e) { break; }
+    }
+    ok('朝堂：征辟名士每局上限 3 次', made === api.Court.MAX_SUMMONS, `实际 ${made} 次`);
+  }
+
+  // 5 结局分类：四种收场都能取到
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    const mk = (mut) => {
+      const raw = JSON.parse(JSON.stringify(G));
+      mut(raw);
+      return api.State.classifyEnding(raw).key;
+    };
+    const held = g => { g.cities.luoyang.owner = g.player.factionId; g.court.emperorCityId = 'luoyang'; };
+    ok('结局：忠臣 → 辅政中兴', mk(g => { g.player.route = 'loyal'; held(g); }) === 'fuzheng');
+    ok('结局：权臣 + 三公 + 帝都 → 摄政篡汉',
+      mk(g => { g.player.route = 'dominant'; g.player.rank = 6; held(g); }) === 'shezheng');
+    ok('结局：自立 + 名望 300 + 帝都 → 受禅称帝',
+      mk(g => { g.player.route = 'independent'; g.player.reputation = 320; held(g); }) === 'shanyi');
+    ok('结局：其余 → 功业盖世',
+      mk(g => { g.player.route = 'dominant'; g.player.rank = 3; }) === 'gongye');
+  }
+
+  // 6 功成身退：条件与收场
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    let err = null;
+    try { api.Store.dispatch('RETIRE'); } catch (e) { err = e.message; }
+    ok('身退：官未至丞相时拒绝', /丞相/.test(err || ''), err || '未抛错');
+
+    const G = get();
+    G.player.rank = 7;
+    G.player.route = 'loyal';
+    G.player.reputation = 220;
+    api.Store.replace(G);
+    api.Store.dispatch('RETIRE');
+    ok('身退：满足条件则收场「功成身退」',
+      get().over && get().over.ending === 'shentui' && get().over.result === 'win',
+      get().over ? get().over.title : '无结局');
+  }
+}
+
+// ─────────────────────────────────────────────
 console.log(`\n${fail === 0 ? '全部通过' : '有失败'}：${pass} 通过 / ${fail} 失败`);
 if (fail) {
   console.log('\n失败项：');

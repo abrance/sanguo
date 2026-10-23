@@ -33,6 +33,11 @@ const CITY_DEFAULTS = {
 /** 事件层（docs/EVENTS.md §1）：只存纯数据，函数一律回查 EVENTS */
 const EVENTS_DEFAULTS = { seen: {}, queue: [], pending: [], history: [], chain: { depth: 0 } };
 
+/** 朝堂（docs/EVENTS.md §9）：谁控制帝都谁就有矫诏之权 */
+const COURT_DEFAULTS = {
+  emperorCityId: 'luoyang', controller: null, edictTurn: 0, summons: 0, abdication: null,
+};
+
 const HERO_DEFAULTS = {
   ambition: 40, bond: 0, grievance: 0, idle: 0, lastAct: 0, warnTurn: 0, cd: {},
   visits: {},                 // 定向登用：{ visit/gift/beseech: 上次回合, fails: 连败次数 }
@@ -80,6 +85,7 @@ const State = {
       },
       factions: {},
       events: U.clone(EVENTS_DEFAULTS),
+      court: U.clone(COURT_DEFAULTS),
       treasures: {},     // 宝物登记表：id → { holder: heroId|null, cityId: 所在城|null }
       cities: {},
       heroes: {},
@@ -577,6 +583,42 @@ const State = {
     if (G.log.length > LOG_MAX) G.log.splice(0, G.log.length - LOG_MAX);
   },
 
+  /**
+   * 统一之后的收场（docs/EVENTS.md §10）：看路线 / 名望 / 帝都控制权
+   *   shanyi 受禅称帝 · fuzheng 辅政中兴 · shezheng 摄政篡汉 · gongye 功业（默认）
+   */
+  classifyEnding(G) {
+    const p = G.player;
+    const fid = p.factionId;
+    const court = G.court || {};
+    const emperorCity = court.emperorCityId ? G.cities[court.emperorCityId] : null;
+    const holdEmperor = !!emperorCity && emperorCity.owner === fid;
+    const rep = State.playerReputation ? State.playerReputation(G) : p.reputation;
+
+    if (p.route !== 'loyal' && rep >= 300 && (holdEmperor || p.seal)) {
+      return {
+        key: 'shanyi', title: '受禅称帝',
+        text: `${p.name}受禅于汉，改元开国。自此天下无汉，史称一代雄主。`,
+      };
+    }
+    if (p.route === 'loyal') {
+      return {
+        key: 'fuzheng', title: '辅政中兴',
+        text: `汉祚不绝，赖${p.name}之力。四海既定，天子赐九锡而不受，退居其次。`,
+      };
+    }
+    if (p.route === 'dominant' && p.rank >= 6 && holdEmperor) {
+      return {
+        key: 'shezheng', title: '摄政篡汉',
+        text: `${p.name}挟天子以令诸侯，终代汉而立。后世史笔，称其为国贼。`,
+      };
+    }
+    return {
+      key: 'gongye', title: '功业盖世',
+      text: `${G.factions[fid].name}一统天下。${p.name}以${rankOf(p.rank).name}之身，位列开国元勋。`,
+    };
+  },
+
   // ───────── 旧存档迁移 ─────────
   /** 新增状态字段时只需往这三张表加一行；迁移无需再手写 if */
   migrate(G, fromVersion) {
@@ -615,6 +657,10 @@ const State = {
 
     State._fillDefaults(G.player, PLAYER_DEFAULTS);
     State._fillDefaults(G.meta, META_DEFAULTS);
+
+    // 朝堂：旧档补默认值
+    if (!G.court) G.court = U.clone(COURT_DEFAULTS);
+    State._fillDefaults(G.court, COURT_DEFAULTS);
 
     // 事件层：旧档没有就补空容器（从下一回合开始抽）
     if (!G.events) G.events = U.clone(EVENTS_DEFAULTS);
@@ -686,11 +732,14 @@ const State = {
     }
 
     if (myCities.length === total) {
+      const ending = State.classifyEnding(G);
       G.over = {
         result: 'win',
-        text: `${G.factions[myFid].name}一统天下。${G.player.name}以${rankOf(G.player.rank).name}之身，位列开国元勋。`,
+        ending: ending.key,
+        title: ending.title,
+        text: ending.text,
       };
-      State.log(G, 'good', '【胜】天下一统。');
+      State.log(G, 'good', `【胜】${ending.title}。`);
       return G.over;
     }
 

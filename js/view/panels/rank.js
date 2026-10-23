@@ -39,6 +39,8 @@ const UI_RANK = {
       `路线 <b class="c" style="--c:${route.color}">${route.name}</b>`,
     ].map(x => `<span>${x}</span>`).join('');
 
+    UI.renderCourt(G);
+
     // 官阶阶梯
     UI.$('rankLadder').innerHTML = RANKS.map(r => {
       const cls = r.lvl === p.rank ? 'cur' : r.lvl < p.rank ? 'past' : '';
@@ -170,6 +172,59 @@ const UI_RANK = {
           catch (e) { UI.toast(e.message); }
         };
       }
+    }
+  },
+  /** 朝堂：帝在何城、矫诏权在谁手、三条诏令 */
+  renderCourt(G) {
+    const box = UI.$('courtBox');
+    if (!box) return;
+    const acc = Court.access(G);
+    const fids = Object.keys(G.factions)
+      .filter(id => id !== 'free' && id !== G.player.factionId && !G.factions[id].dead);
+
+    const head = `帝在 <b>${U.esc(acc.emperorAt)}</b>`
+      + ` · 矫诏权 <b class="${acc.mine ? 'sat-good' : 'sat-bad'}">${acc.mine ? '在你手' : (acc.controllerName || '无主')}</b>`
+      + (acc.mine ? ` · 诏书冷却 ${acc.cooldown} 月` : '');
+
+    const selA = fids.map(id => `<option value="${id}">${U.esc(G.factions[id].name)}</option>`).join('');
+    const targets = [];
+    for (const c of State.demesne(G)) {
+      if (c.governor && c.governor !== PLAYER_HERO_ID) {
+        const h = G.heroes[c.governor];
+        if (h) targets.push({ id: h.id, label: `${h.name}（我·${c.name}）` });
+      }
+      for (const nb of State.neighbors(G, c.id, 235)) {
+        if (nb.owner === G.player.factionId) continue;
+        const h = nb.governor ? G.heroes[nb.governor] : null;
+        if (h && !targets.some(t => t.id === h.id)) targets.push({ id: h.id, label: `${h.name}（${nb.name}）` });
+      }
+    }
+    const selH = targets.slice(0, 24).map(t => `<option value="${t.id}">${U.esc(t.label)}</option>`).join('');
+
+    box.innerHTML = `<div class="dim lh-17">${head}</div>`
+      + (acc.mine ? `
+        <div class="court-row">
+          <select id="edictA">${selA}</select>
+          <select id="edictB">${selA}</select>
+          <button id="btnEdict" ${acc.cooldown > 0 ? 'disabled' : ''}>矫诏令其相攻</button>
+        </div>
+        <div class="court-row">
+          <select id="appointH">${selH}</select>
+          <button id="btnAppoint" ${acc.cooldown > 0 || !selH ? 'disabled' : ''}>以诏授职</button>
+          <button id="btnSummon" ${acc.summons >= Court.MAX_SUMMONS ? 'disabled' : ''}>征辟名士（${acc.summons}/${Court.MAX_SUMMONS}）</button>
+        </div>`
+      : `<div class="dim lh-17">帝不在你手，不得矫诏。夺取 ${U.esc(acc.emperorAt)} 可获此权。</div>`);
+
+    const run = (fn) => { try { fn(); } catch (e) { UI.toast(e.message); } };
+    if (acc.mine) {
+      const be = UI.$('btnEdict');
+      if (be) be.onclick = () => run(() => Store.dispatch('IMPERIAL_EDICT', {
+        aFid: UI.$('edictA').value, bFid: UI.$('edictB').value,
+      }));
+      const ba = UI.$('btnAppoint');
+      if (ba) ba.onclick = () => run(() => Store.dispatch('IMPERIAL_APPOINT', { heroId: UI.$('appointH').value }));
+      const bs = UI.$('btnSummon');
+      if (bs) bs.onclick = () => run(() => Store.dispatch('SUMMON_SCHOLAR'));
     }
   },
 };

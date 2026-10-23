@@ -40,7 +40,7 @@ const UI_END = {
     body.innerHTML = `
       <div class="end-seal">${win ? '天下一统' : '覆亡'}</div>
       <div class="end-eyebrow">${U.esc(G.meta.scenarioName)} · ${G.meta.year}年${G.meta.month}月</div>
-      <h1 class="end-title">${win ? '天 下 一 统' : '势 力 覆 亡'}</h1>
+      <h1 class="end-title">${U.esc(G.over.title || (win ? '天 下 一 统' : '势 力 覆 亡'))}</h1>
       <div class="end-text">${U.esc(G.over.text)}</div>
       <div class="end-stats">
         ${stats.map(([v, k], i) =>
@@ -49,8 +49,10 @@ const UI_END = {
       <div class="end-acts">
         <button class="primary" data-end="map">览  图</button>
         <button data-end="log">看  纪  事</button>
+        <button data-end="history">战  史</button>
         <button data-end="new">重  开  一  局</button>
-      </div>`;
+      </div>
+      <pre id="endHistory" class="end-history hidden"></pre>`;
 
     box.classList.remove('hidden');
 
@@ -72,6 +74,17 @@ const UI_END = {
         UI.syncTabs();
         return;
       }
+      if (act === 'history') {
+        const pre = UI.$('endHistory');
+        const txt = UI.endHistoryText(G);
+        if (pre) {
+          pre.textContent = txt;
+          pre.classList.remove('hidden');
+          if (navigator.clipboard) navigator.clipboard.writeText(txt).catch(() => { });
+        }
+        UI.toast('战史已生成' + (navigator.clipboard ? '并复制' : ''));
+        return;
+      }
       if (act === 'new') {
         box.classList.add('hidden');
         UI.$('startOverlay').classList.remove('hidden');
@@ -79,5 +92,34 @@ const UI_END = {
       }
       box.classList.add('hidden');           // 览图：退出弹窗，地图留着看
     };
+  },
+
+  /** 纯文本战史：结局 + 三段史评 + 本局数据 + 大事记（docs/EVENTS.md §10） */
+  endHistoryText(G) {
+    const p = G.player;
+    const f = G.factions[p.factionId] || {};
+    const dead = Object.values(G.factions).filter(x => x.kind !== 'free' && x.dead).map(x => x.name);
+    const events = (G.events && G.events.history) || [];
+    const lines = [];
+    lines.push(`《${G.meta.scenarioName}》战史 —— ${p.name}`);
+    lines.push('');
+    lines.push(`结局：${G.over.title || (G.over.result === 'win' ? '功业盖世' : '势力覆亡')}`);
+    lines.push(G.over.text || '');
+    lines.push('');
+    lines.push(`共 ${G.meta.turn - 1} 月 · 城 ${State.factionCities(G, p.factionId).length}`
+      + ` · 战功 ${p.merit} · 名望 ${Math.round(State.playerReputation ? State.playerReputation(G) : p.reputation)}`
+      + ` · 官阶 ${rankOf(p.rank).name} · 仕途 ${ROUTES[p.route] ? ROUTES[p.route].name : '—'}`);
+    lines.push(`攻取 ${G.stats.citiesTaken || 0} 城 · 失守 ${G.stats.citiesLost || 0} 城`
+      + ` · 会战 ${G.stats.battles || 0} 次 · 覆灭势力 ${dead.length} 家`);
+    if (events.length) {
+      lines.push('');
+      lines.push('大事记：');
+      for (const e of events.slice(-12)) {
+        lines.push(`  ${G.meta.scenarioName}第 ${e.turn} 月 · ${e.name} · ${e.label}`);
+      }
+    }
+    lines.push('');
+    lines.push(`势力：${f.name || '—'}`);
+    return lines.join('\n');
   },
 };

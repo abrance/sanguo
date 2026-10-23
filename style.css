@@ -326,6 +326,15 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
 .barbox{display:flex;gap:8px;align-items:center}
 .barbox>div{flex:1}
 
+/* ---------- 朝堂（官阶台） ---------- */
+.court-row{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center}
+.court-row select{background:var(--btn-bg);color:var(--ink);border:1px solid var(--line);border-radius:var(--r-sm);padding:3px 6px;font-size:var(--fs-body)}
+.end-history{
+  margin-top:10px;max-height:34vh;overflow:auto;white-space:pre-wrap;
+  font-size:var(--fs-tiny);line-height:1.7;color:var(--ink-dim);
+  border-top:1px solid var(--line);padding-top:8px;
+}
+
 /* ---------- 事件卡 ---------- */
 .event-box{max-width:560px}
 .ev-head{display:flex;gap:12px;align-items:center;margin-bottom:10px}
