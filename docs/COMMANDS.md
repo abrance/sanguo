@@ -168,6 +168,19 @@ Store.dispatch('BUILD', { cityId: 'chenliu', key: 'farm' })
 
 ---
 
+## 攻城轮间：`BATTLE_STEP` `{ armyId, tactic? }`
+
+玩家指挥的攻城战会在轮与轮之间**挂起**（`army.battle`），每次调用推进一合：
+
+- `tactic` 为空：直接打下一合
+- `tactic` 非空：本场先用一次战法（每场只能用一次，消耗己方士气 `cost`）
+- 战法清单与可用性由 `Combat.tacticsFor` 给出（专属战法要本将有对应特技；伏兵需山林、水战需临水；
+  士气 < 30 或已用过战法则全部不可用）
+- 战斗结束时自动走「下城 / 班师 / 全灭」流程并写战报
+
+> 一仗打完就不再挂起。玩家若一直不点，**下一个回合开始时**（`Turn.advance` 推进月份之前）
+> 自动收尾，因此不会卡住回合；围城期间该城不能征兵、不修城墙。
+
 ## 宝物（人物页）
 
 ### `EQUIP_TREASURE` `{ heroId, treasureId }`

@@ -31,6 +31,22 @@ const get = () => api.Store.get();
 
 /* ── 主动玩家策略 ── */
 function botStep() {
+  // 0 挂起的攻城先打完（真人会立刻点「继续」/放战法；推演也照做，否则白丢一个月）
+  let guard = 0;
+  while (guard++ < 10) {
+    const g0 = get();
+    const ag = Object.values(g0.armies).find(a => a.battle);
+    if (!ag) break;
+    let tactic = null;
+    try {
+      const city = g0.cities[ag.battle.cityId];
+      const list = api.Combat.tacticsFor(g0, ag, city);
+      const pick = list.find(t => t.ok);
+      if (pick) tactic = pick.key;
+      api.Store.dispatch('BATTLE_STEP', { armyId: ag.id, tactic });
+    } catch (e) { break; }
+  }
+
   const x = get();
   const p = x.player;
 

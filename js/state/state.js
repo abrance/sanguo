@@ -500,6 +500,14 @@ const State = {
     return Math.max(0, (G.player.reputation || 0) + State.treasureEff(G, PLAYER_HERO_ID, 'reputation'));
   },
 
+  /** 该城是否正在被攻打（有挂起的攻城战）—— 围城中不许修墙、不许征兵 */
+  besieged(G, cityId) {
+    for (const a of Object.values(G.armies || {})) {
+      if (a.battle && a.battle.cityId === cityId && !a.battle.done) return true;
+    }
+    return false;
+  },
+
   /** 某城府库里的宝物（未装备的） */
   treasuresAt(G, cityId) {
     return Object.keys(G.treasures || {})

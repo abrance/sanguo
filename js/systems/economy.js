@@ -86,9 +86,11 @@ const Economy = {
         c.pop = Math.max(pmax, c.pop - (c.pop - pmax) * 0.1);
       }
 
-      // 城防自然修复（未在建城墙时）
+      // 城防自然修复（未在建城墙时）；围城中不修 —— 否则攻城战被拖到下一回合时城墙又长回来
       const wmax = State.wallMaxOf(c);
-      if (c.wall < wmax) c.wall = Math.min(wmax, c.wall + 0.12);
+      if (c.wall < wmax && !State.besieged(G, c.id)) {
+        c.wall = Math.min(wmax, c.wall + 0.12);
+      }
     }
   },
 

@@ -330,6 +330,11 @@ treasure.holder = heroId | null      // 全局唯一持有者
 
 ## 5. 战法（Tactics）
 
+> **✅ Step 1 + Step 2 都已实现**（2026-10，`feat/hero-renown`）：
+> 12 个战法、`Combat.begin/step/conclude` 逐轮推进、玩家指挥的战斗在轮间挂起（`army.battle`）、
+> 纪事页顶部出「进行中的战斗」卡片（战法按钮 + 继续）、结束回合自动收尾。
+> 未做：AI 不放战法（只有玩家能用，见 §10）、战斗中存档（靠结束回合自动收尾规避）。
+
 ### 5.1 先修一个真 bug（Step 1，半天，不新增任何东西）
 
 > **✅ 已实现**（2026-10）：`feat/hero-skills-wiring`，新增 13 条断言（`verify.js`「武将特技接线」板块）。

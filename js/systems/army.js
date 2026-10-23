@@ -81,6 +81,8 @@ const Army = {
     const arrived = [];
 
     for (const a of Object.values(G.armies)) {
+      // 交战挂起（等玩家点「继续」或放战法）：原地不动
+      if (a.battle) continue;
       a.eta -= 1;
       const prog = U.clamp(1 - a.eta / a.totalEta, 0, 1);
       const from = G.cities[a.from];
@@ -152,8 +154,24 @@ const Army = {
     }
 
     // 敌军城：开战
-    const rep = Combat.resolve(G, a, target, stamp);
+    // 玩家亲自指挥的仗逐轮推进（轮间可放一次战法），其余一次打完
+    const interactive = a.factionId === G.player.factionId || target.grantedTo === PLAYER_HERO_ID;
+    if (interactive) {
+      Combat.begin(G, a, target, stamp);
+      if (Combat.step(G, a, target, null, stamp)) {
+        const rep = Combat.conclude(G, a, target, stamp);
+        delete a.battle;
+        Army._afterBattle(G, a, target, rep, stamp);
+      }
+      return;
+    }
 
+    const rep = Combat.resolve(G, a, target, stamp);
+    Army._afterBattle(G, a, target, rep, stamp);
+  },
+
+  /** 一场攻城打完之后的处理：下城 / 班师 / 全灭 */
+  _afterBattle(G, a, target, rep, stamp) {
     if (rep.captured) {
       Army._capture(G, a, target, rep, stamp);
       return;
