@@ -42,11 +42,16 @@ const Combat = {
     // 武将
     const h = heroId ? G.heroes[heroId] : null;
     if (h) {
-      p *= 1 + h.tong / 200;
+      p *= 1 + State.heroStat(G, heroId, 'tong') / 200;
       const sk = skillOf(G, h);
       if (sk.atk) p *= sk.atk;
       if (isDef && sk.def) p *= sk.def;
       if (isDef && sk.defenseCity) p *= sk.defenseCity;
+      // 甲胄（守城 +）：宝物效果走 State.treasureEff，与特技叠加
+      if (isDef) {
+        const armor = State.treasureEff(G, heroId, 'defenseCity');
+        if (armor) p *= 1 + armor;
+      }
       // 守将忠诚影响守城战力（docs/HERO.md §1.5）：100 → ×1.10，0 → ×0.90
       if (isDef) p *= 0.90 + (h.loyalty == null ? 70 : h.loyalty) / 500;
       // 兵种特技：突击 / 神射 / 陷阵 / 水战（按该兵种兵力占比加权）

@@ -237,6 +237,8 @@ const UI_CITY = {
       ['建材', U.num(c.mat)],
       ['铁料', U.num(c.iron)],
       ['驻军', `${U.num(total)} / ${U.num(capTotal)}`],
+      ['城内宝物', State.treasuresAt(G, c.id).length
+        ? `${State.treasuresAt(G, c.id).length} 件` : '—'],
       ['月产粮', U.num(State.bld(c, 'farm') * 50 * season.food)],
       ['月产钱', U.num(State.bld(c, 'market') * 20 * season.tax)],
     ];
@@ -579,6 +581,94 @@ const UI_CITY = {
           : (cool('console', 3) || (c.food < 60 ? '粮不足' : null))));
 
       row.appendChild(box);
+
+      // 宝物槽：已装备的点击即卸下（回到本城府库）
+      const slotBox = document.createElement('div');
+      slotBox.className = 'tslots';
+      for (const cat of TREASURE_CATS) {
+        const tid = h.slots && h.slots[cat];
+        const def = tid ? TREASURES[tid] : null;
+        const btn = document.createElement('button');
+        btn.className = 'tslot' + (def ? ` on r${def.rare}` : '');
+        btn.textContent = def ? `${TREASURE_CAT_NAME[cat]}·${def.name}` : `${TREASURE_CAT_NAME[cat]}·空`;
+        btn.title = def ? `${def.about}（点击卸下）` : `${TREASURE_CAT_NAME[cat]}槽未装`;
+        if (def) btn.onclick = () => {
+          try { Store.dispatch('UNEQUIP_TREASURE', { heroId: h.id, cat }); }
+          catch (e) { UI.toast(e.message); }
+        };
+        else btn.disabled = true;
+        slotBox.appendChild(btn);
+      }
+      row.appendChild(slotBox);
+
+      // 本城府库里能装的东西
+      const avail = State.treasuresAt(G, c.id)
+        .filter(tid => !(h.slots || {})[TREASURES[tid].cat]);
+      if (avail.length) {
+        const pool = document.createElement('div');
+        pool.className = 'tpool';
+        for (const tid of avail) {
+          const def = TREASURES[tid];
+          const b = document.createElement('button');
+          b.className = 'tslot';
+          b.textContent = `装 ${def.name}`;
+          b.title = `${TREASURE_CAT_NAME[def.cat]}：${def.about}`;
+          b.onclick = () => {
+            try { Store.dispatch('EQUIP_TREASURE', { heroId: h.id, treasureId: tid }); }
+            catch (e) { UI.toast(e.message); }
+          };
+          pool.appendChild(b);
+        }
+        row.appendChild(pool);
+      }
+    }
+
+    // 在野名士：三档登用（拜访 / 送礼 / 三顾），成功率逐项列出
+    const free = Object.values(G.heroes)
+      .filter(h => h.alive && h.factionId === 'free')
+      .sort((a, b) => (b.tong + b.zhi) - (a.tong + a.zhi))
+      .slice(0, 6);
+    if (!free.length) return;
+
+    const sec = document.createElement('div');
+    sec.className = 'seclabel';
+    sec.textContent = '在野名士（可延揽）';
+    pane.appendChild(sec);
+
+    const tierDefs = ['visit', 'gift', 'beseech'];
+    for (const h of free) {
+      const box = document.createElement('div');
+      box.className = 'clan';
+
+      const ch = Relations.recruitChance(G, h, 'beseech');
+      const parts = ch.parts.map(([k, v]) => `${k}${v >= 0 ? '+' : ''}${Math.round(v * 100)}%`).join(' ');
+      box.innerHTML = `<div class="crow">
+        <span class="cname">${U.esc(h.name)}</span>
+        <span class="dim">武${h.wu} 统${h.tong} 智${h.zhi} 政${h.zheng} 魅${h.mei}</span>
+      </div>
+      <div class="dim fs-tiny">野心 ${Math.round(h.ambition || 0)} · 私交 ${Math.round(h.bond || 0)} · 三顾胜算 ${Math.round(ch.p * 100)}%<br>
+        <span class="fs-tiny">${parts}</span>${ch.burnt ? '<br>已连败三次，其意难回' : ''}</div>`;
+
+      const acts = document.createElement('div');
+      acts.className = 'actions';
+      for (const t of tierDefs) {
+        const def = Relations.TIERS[t];
+        const ch2 = Relations.recruitChance(G, h, t);
+        const last = (h.visits || {})[t] || 0;
+        const cool = last && G.meta.turn - last < def.cd
+          ? `尚需 ${def.cd - (G.meta.turn - last)} 月` : null;
+        const cost = `${def.gold}钱${def.food ? ` ${def.food}粮` : ''}`;
+        acts.appendChild(UI._btn(`${def.name} ${Math.round(ch2.p * 100)}%`, cost, () => {
+          try {
+            const r = Store.dispatch(t === 'visit' ? 'VISIT_HERO'
+              : t === 'gift' ? 'GIFT_HERO' : 'BESEECH_HERO', { heroId: h.id });
+            UI.toast(r && r.ok ? `${h.name}愿附明公` : `${h.name}未应（胜算 ${Math.round((r ? r.chance : 0) * 100)}%）`);
+          } catch (e) { UI.toast(e.message); }
+        }, cool || (c.gold < def.gold ? '钱不足'
+          : (def.food && c.food < def.food ? '粮不足' : null))));
+      }
+      box.appendChild(acts);
+      pane.appendChild(box);
     }
   },
 

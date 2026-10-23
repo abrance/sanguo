@@ -35,7 +35,9 @@ const Army = {
   create(G, { factionId, heroId, from, to, troops, mission }) {
     const fc = G.cities[from];
     const tc = G.cities[to];
-    const eta = Army.estimateEta(fc, tc, troops, Army.speedMul(G, factionId));
+    // 坐骑加速（只有主将有坐骑才算）
+    const mount = heroId ? 1 + State.treasureEff(G, heroId, 'speed') : 1;
+    const eta = Army.estimateEta(fc, tc, troops, Army.speedMul(G, factionId) * mount);
     const id = U.uid('army');
     const a = {
       id, factionId, heroId,
@@ -186,6 +188,8 @@ const Army = {
   /** 攻克城池 */
   _capture(G, a, city, rep, stamp) {
     const oldOwner = city.owner;
+    // 城档按「打下来之前」算：拿下之后它可能变成我的治所，名望不该因此翻倍
+    const tierBefore = State.cityLevel(G, city);
     const attackerFaction = a.factionId;
 
     // 守将或被俘、或逃
@@ -225,12 +229,26 @@ const Army = {
 
     delete G.armies[a.id];
 
+    // 宝物：破城后每件 35% 留在本城（归新主），否则随败军撤往旧主治所
+    for (const tid of Object.keys(G.treasures || {})) {
+      const t = G.treasures[tid];
+      if (t.cityId !== city.id || t.holder) continue;
+      if (RNG.chance(0.35)) continue;
+      const caps = State.capitals(G);
+      const refuge = [...caps].find(id => G.cities[id] && G.cities[id].owner === oldOwner) || null;
+      t.cityId = refuge;
+    }
+
     // 玩家相关
     if (attackerFaction === G.player.factionId) {
       G.stats.citiesTaken++;
       G.player.merit += 25;
-      G.player.reputation += 8;
-      State.log(G, 'good', `我军克${city.name}。战功 +25，声望 +8。`);
+      // 名望按城档：县城 +4 / 郡城 +6 / 都城 +12（docs/HERO.md §2.1）
+      const tier = tierBefore;
+      const rep = tier === 2 ? 12 : tier === 1 ? 6 : 4;
+      G.player.reputation += rep;
+      State.log(G, 'good',
+        `我军克${city.name}${tier === 2 ? '（都城）' : tier === 1 ? '（郡城）' : ''}。战功 +25，名望 +${rep}。`);
       Rank.onCapture(G, city, stamp);
       Mission.onCapture(G, city.id);
       if (a.legionId) {
