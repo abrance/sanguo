@@ -30,6 +30,7 @@ const UI = {
     UI.bindRankHall();
     UI.bindDiplo();
     UI.bindPeace();
+    UI.bindEvent();
     Bus.on('combat', e => Renderer.addFx(e));
     UI.buildStart();
     UI.resizeCanvasSoon();
@@ -667,6 +668,7 @@ const UI = {
 
     if (!UI.$('rankOverlay').classList.contains('hidden')) UI.renderRankHall(G);
     UI.renderPeace(G);
+    UI.renderEvent(G);
     UI.renderEnd(G);
   },
 
@@ -755,4 +757,4 @@ const UI = {
 };
 
 Object.assign(UI,
-  UI_START, UI_RANK, UI_PEACE, UI_DIPLO, UI_CITY, UI_ARMY, UI_TECH, UI_LOG, UI_LEGION, UI_END);
+  UI_START, UI_RANK, UI_PEACE, UI_EVENT, UI_DIPLO, UI_CITY, UI_ARMY, UI_TECH, UI_LOG, UI_LEGION, UI_END);

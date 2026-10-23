@@ -549,6 +549,12 @@ const COMMANDS = {
     State.log(G, 'good', `${c.name}：亲往${h.name}处劳问，其意稍解。`);
   },
 
+  // ─────── 事件（docs/EVENTS.md） ───────
+
+  EVENT_CHOICE(G, { optionKey }) {
+    return EventSys.choose(G, optionKey);
+  },
+
   // ─────── 攻城轮间：放一次战法或继续下一合（docs/HERO.md §5） ───────
 
   BATTLE_STEP(G, { armyId, tactic }) {

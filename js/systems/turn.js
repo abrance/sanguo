@@ -7,6 +7,8 @@ const Turn = {
     if (typeof Combat !== 'undefined') {
       Combat.finishOpen(G, `${G.meta.year}年${G.meta.month}月`);
     }
+    // 事件卡没选就结束回合：替他拍板（优先「置之不理」这类 fallback 选项）
+    if (typeof EventSys !== 'undefined') EventSys.autoResolve(G);
     G.meta.turn++;
     G.meta.month++;
     if (G.meta.month > 12) { G.meta.month = 1; G.meta.year++; }
@@ -44,6 +46,8 @@ const Turn = {
     Turn.playerFate(G);
     // 12 势力存亡
     Turn.cleanupFactions(G);
+    // 12.5 事件：兑现到期后果 → 抽新事件（放在最后，不能影响本月已算完的经济）
+    EventSys.tick(G);
     // 13 胜负
     State.checkEnd(G);
   },

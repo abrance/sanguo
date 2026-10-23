@@ -40,6 +40,22 @@ section('静态检查（无需开局）');
   const orphan = onDisk.filter(f => !declared.includes(f));
   ok('js/ 下无未引用的孤儿脚本', !orphan.length, orphan.join(', '));
 
+  // 2.5) 视图面板都必须装配进 UI（写了文件没 Object.assign → 运行时 `UI.xxx is not a function`）
+  {
+    const uiSrc = fs.readFileSync(path.join(h.ROOT, 'js/view/ui.js'), 'utf8');
+    const assign = /Object\.assign\(UI,\s*([\s\S]*?)\);/.exec(uiSrc);
+    const listed = assign ? assign[1] : '';
+    const panels = [];
+    for (const f of declared.filter(x => /^js\/view\/panels\//.test(x))) {
+      const src = fs.readFileSync(path.join(h.ROOT, f), 'utf8');
+      const m = /^const (UI_[A-Z_]+)\s*=/m.exec(src);
+      if (m) panels.push({ file: f, name: m[1] });
+    }
+    const orphan = panels.filter(p2 => listed.indexOf(p2.name) < 0)
+      .map(p2 => `${p2.name} (${p2.file})`);
+    ok('面板都装配进 UI（Object.assign）', !orphan.length, orphan.join(', '));
+  }
+
   // 3) 全局作用域撞名：无模块系统，顶层重名会静默覆盖前一个
   const decl = /^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/;
   const owner = new Map();
@@ -2432,6 +2448,135 @@ section('战斗中存档');
     let err = null;
     try { c.api.State.migrate(raw, 2); } catch (e) { err = e.message; }
     ok('战斗中存档：旧档（无 battle 字段）照常迁移', !err, err || '');
+  }
+}
+
+// ─────────────────────────────────────────────
+section('事件层（抽取 / 选项 / 延迟 / 连锁）');
+{
+  // 1 抽取：同种子可复现、队列不超过上限、抽到的事件必然满足 cond
+  {
+    const run = (seed) => {
+      const { api, get } = h.boot({ seed });
+      h.runTurns(api, 40);
+      return get();
+    };
+    const a = run(7), b = run(7);
+    ok('事件抽取：同种子可复现',
+      a.events.history.map(x => x.eventId).join(',') === b.events.history.map(x => x.eventId).join(','),
+      `${a.events.history.length} 条`);
+    ok('事件队列不超过上限', a.events.queue.length <= api0(7).EventSys.MAX_QUEUE);
+
+    function api0(seed) { return h.boot({ seed }).api; }
+  }
+
+  // 2 队列里有事件时：选项必须带代价说明；不可选要有原因
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    // 手工塞一条蝗灾（保证有卡）
+    G.events.queue.push({ eventId: 'locust', cityId: G.player.homeCityId, turn: G.meta.turn });
+    G.cities[G.player.homeCityId].buildings.farm = 4;
+    api.Store.replace(G);
+    const z = get();
+    const opts = api.EventSys.options(z);
+    ok('事件选项：每条都有代价说明', opts.length >= 2 && opts.every(o => typeof o.costText === 'string' && o.costText.length));
+    const relief = opts.find(o => o.key === 'relief');
+    z.cities[z.player.homeCityId].food = 10;
+    api.Store.replace(z);
+    const opts2 = api.EventSys.options(get());
+    const relief2 = opts2.find(o => o.key === 'relief');
+    ok('事件选项：条件不足时不可选且写原因',
+      !!relief2 && relief2.ok === false && /粮/.test(relief2.why || ''), relief2 ? relief2.why : '没有该选项');
+    void relief;
+  }
+
+  // 3 选择：扣代价 → 立刻效果 → 记历史 → 出队
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    const city = G.cities[G.player.homeCityId];
+    city.buildings.farm = 4;
+    city.food = 2000;
+    city.order = 50;
+    G.events.queue.push({ eventId: 'locust', cityId: city.id, turn: G.meta.turn });
+    api.Store.replace(G);
+    const before = get().cities[city.id];
+    const food0 = before.food, order0 = before.order;
+    api.Store.dispatch('EVENT_CHOICE', { optionKey: 'relief' });
+    const z = get();
+    // 蝗灾带连锁：选完会把「流民」塞进队列，所以队列不一定是 0
+    ok('事件选择：扣代价且立刻生效',
+      z.cities[city.id].food === food0 - 800 && z.cities[city.id].order === order0 + 6
+      && !z.events.queue.some(q => q.eventId === 'locust') && z.events.history.length === 1,
+      `队列 ${z.events.queue.map(q => q.eventId).join(',') || '空'}`);
+    ok('事件选择：留下一条纪事', z.log.some(e => /开仓赈济/.test(e.text)));
+  }
+
+  // 4 延迟后果：3 回合后精确兑现，且到期必写纪事
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    const city = G.cities[G.player.homeCityId];
+    city.buildings.farm = 4;
+    city.food = 2000;
+    G.events.queue.push({ eventId: 'locust', cityId: city.id, turn: G.meta.turn });
+    api.Store.replace(G);
+    api.Store.dispatch('EVENT_CHOICE', { optionKey: 'relief' });
+    const z = get();
+    const due = z.events.pending[0];
+    ok('延迟后果：入队且到期回合正确', !!due && due.due === z.meta.turn + 3 && due.eventId === 'locust',
+      due ? `第 ${due.due} 回合` : '无延迟');
+
+    let hit = null;
+    for (let i = 0; i < 6; i++) {
+      h.runTurns(api, 1);
+      const g = get();
+      if (g.log.some(e => /赈粮告罄/.test(e.text)) && !hit) hit = g.meta.turn;
+    }
+    ok('延迟后果：到期兑现且留纪事', hit === due.due, `实际第 ${hit} 回合（预期 ${due && due.due}）`);
+  }
+
+  // 5 结束回合自动拍板：不选也能推进，且不会卡住队列
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    G.events.queue.push({ eventId: 'locust', cityId: G.player.homeCityId, turn: G.meta.turn });
+    api.Store.replace(G);
+    const t0 = get().meta.turn;
+    api.Store.dispatch('END_TURN');
+    const z = get();
+    ok('事件：结束回合时自动拍板并推进',
+      z.meta.turn === t0 + 1 && z.events.queue.length <= api.EventSys.MAX_QUEUE
+      && z.events.history.length >= 1,
+      `历史 ${z.events.history.length} 条`);
+  }
+
+  // 6 连锁：蝗灾选完把流民塞进队列（且同一事件不重复链）
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    const city = G.cities[G.player.homeCityId];
+    city.buildings.farm = 4;
+    city.food = 2000;
+    G.events.queue.push({ eventId: 'locust', cityId: city.id, turn: G.meta.turn });
+    api.Store.replace(G);
+    api.Store.dispatch('EVENT_CHOICE', { optionKey: 'relief' });
+    ok('连锁：蝗灾之后接流民', get().events.queue.some(q => q.eventId === 'refugee'),
+      get().events.queue.map(q => q.eventId).join(',') || '空');
+  }
+
+  // 7 存档：事件队列 / 延迟后果随档保存
+  {
+    const { api, get } = h.boot({ seed: 7 });
+    const G = get();
+    G.events.queue.push({ eventId: 'locust', cityId: G.player.homeCityId, turn: G.meta.turn });
+    G.events.pending.push({ due: G.meta.turn + 2, eventId: 'locust', optionKey: 'relief', cityId: G.player.homeCityId, turns: 2 });
+    api.Store.replace(G);
+    const back = api.Save.decode(api.Save.encode(get()));
+    ok('事件：队列与延迟后果随存档往返',
+      back.events.queue.length === 1 && back.events.pending.length === 1
+      && back.events.pending[0].due === G.meta.turn + 2);
   }
 }
 
