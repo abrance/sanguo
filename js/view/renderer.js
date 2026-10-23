@@ -320,9 +320,9 @@ const Renderer = {
           cz * Renderer.ISO.flagLift);
       }
 
-      // 治所：城头一颗小星（近景才画）
-      if (lod >= 2 && Renderer._capitals && Renderer._capitals.has(c.id)) {
-        Renderer._star(ctx, p.x, p.y - r * 1.15, Math.max(2.6, r * 0.28), 'rgba(240,223,168,0.9)');
+      // 治所：城头一颗小星（中景也画 —— 2~3px 的亮点比一排雉堞更能读出"这是治所"）
+      if (Renderer._capitals && Renderer._capitals.has(c.id)) {
+        Renderer._star(ctx, p.x, p.y - r * 1.15 - cz * 0.55, Math.max(2.2, r * 0.28), 'rgba(240,223,168,0.9)');
       }
 
       // 关系弧（对我方势力的态度）：红交战 / 黄停战 / 绿同盟
