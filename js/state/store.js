@@ -26,6 +26,27 @@ function mustOwnCity(G, cityId, verb) {
   return c;
 }
 
+/** 人情账入口：该将属你势力、且就在你直辖城里（守将或驻将） */
+function mustHeroInDemesne(G, heroId, verb) {
+  const h = G.heroes[heroId];
+  if (!h || !h.alive) throw new Error('无此武将');
+  if (h.factionId !== G.player.factionId) throw new Error(`${h.name}非你麾下`);
+  let city = h.cityId ? G.cities[h.cityId] : null;
+  if (!city || !State.isPlayerCity(G, city)) {
+    city = State.demesne(G).find(c => c.governor === heroId) || null;
+  }
+  if (!city) throw new Error(`${h.name}不在你直辖城` + (verb ? '，无从' + verb : ''));
+  return { h, c: city };
+}
+
+/** 同一将的同一命令冷却（每种命令各算各的，互不阻塞） */
+function mustCooldown(h, kind, months, turn) {
+  const last = h.cd ? h.cd[kind] : 0;
+  if (last && turn - last < months) {
+    throw new Error(`${h.name}此事初定，尚需 ${months - (turn - last)} 月方可再办`);
+  }
+}
+
 /** 自立取色：在色相环上均匀取样（暗调，与原势力配色风格一致），挑离现有势力色最远的一个 */
 const INDEP_CANDIDATES = (() => {
   const out = [];
@@ -415,6 +436,86 @@ const COMMANDS = {
   },
 
   // ───────── 士族 ─────────
+  // ─────── 人情账（docs/HERO.md §1.4） ───────
+
+  REWARD_HERO(G, { heroId }) {
+    const { h, c } = mustHeroInDemesne(G, heroId, '赏赐');
+    const turn = G.meta.turn;
+    h.cd = h.cd || {};
+    mustCooldown(h, 'reward', 3, turn);
+    const cost = 80 * (1 + G.player.rank);
+    if (c.gold < cost) throw new Error(`钱不足（需 ${cost}）`);
+
+    c.gold -= cost;
+    h.loyalty = U.clamp((h.loyalty || 0) + 6, 0, 100);
+    h.bond = U.clamp((h.bond || 0) + 10, 0, 100);
+    h.grievance = Math.max(0, (h.grievance || 0) - 1);
+    h.cd.reward = turn;
+    h.lastAct = turn;
+    State.log(G, 'good', `${c.name}：赏${h.name}钱 ${cost}，忠诚 ${Math.round(h.loyalty)}。`);
+    return { cost };
+  },
+
+  PROMOTE_HERO(G, { heroId, cityId }) {
+    const { h, c } = mustHeroInDemesne(G, heroId, '提拔');
+    const city = cityId ? mustOwnCity(G, cityId, '任命') : c;
+    const turn = G.meta.turn;
+    if (city.promoteTurn && turn - city.promoteTurn < 6) {
+      throw new Error(`此城人事初定，尚需 ${6 - (turn - city.promoteTurn)} 月方可再任`);
+    }
+    if (city.governor === heroId) throw new Error(`${h.name}已是此城守将`);
+    if (G.player.merit < 5) throw new Error('战功不足（需 5）');
+
+    const prev = city.governor && G.heroes[city.governor];
+    G.player.merit = Math.max(0, G.player.merit - 5);
+    city.governor = heroId;
+    city.promoteTurn = turn;
+    h.cityId = city.id;
+    h.loyalty = U.clamp((h.loyalty || 0) + 4, 0, 100);
+    h.bond = U.clamp((h.bond || 0) + 14, 0, 100);
+    h.lastAct = turn;
+    if (prev && prev.id !== heroId) prev.loyalty = U.clamp((prev.loyalty || 0) - 6, 0, 100);
+
+    State.log(G, 'good', `${h.name}领${city.name}守将${prev ? `，${prev.name}改任副将` : ''}。`);
+    return { cityId: city.id };
+  },
+
+  PUNISH_HERO(G, { heroId }) {
+    const { h, c } = mustHeroInDemesne(G, heroId, '责罚');
+    const turn = G.meta.turn;
+    if (c.governor !== heroId) throw new Error('只可责罚此城守将');
+    h.cd = h.cd || {};
+    mustCooldown(h, 'punish', 5, turn);
+
+    h.loyalty = U.clamp((h.loyalty || 0) - 10, 0, 100);
+    h.grievance = Math.min(9, (h.grievance || 0) + 1);
+    c.order = U.clamp(c.order + 3, 0, 100);
+    for (const o of Object.values(G.heroes)) {
+      if (o.id === heroId || o.factionId !== G.player.factionId) continue;
+      if (o.cityId !== c.id) continue;
+      o.bond = U.clamp((o.bond || 0) - 3, 0, 100);
+    }
+    h.cd.punish = turn;
+    h.lastAct = turn;
+    State.log(G, 'bad', `${c.name}：当众责罚${h.name}，立威而伤人望。`);
+  },
+
+  CONSOLE_HERO(G, { heroId }) {
+    const { h, c } = mustHeroInDemesne(G, heroId, '抚慰');
+    const turn = G.meta.turn;
+    if ((h.grievance || 0) <= 0) throw new Error(`${h.name}并无积怨`);
+    h.cd = h.cd || {};
+    mustCooldown(h, 'console', 3, turn);
+    if (c.food < 60) throw new Error('粮不足（需 60）');
+
+    c.food -= 60;
+    h.grievance -= 1;
+    h.bond = U.clamp((h.bond || 0) + 5, 0, 100);
+    h.cd.console = turn;
+    h.lastAct = turn;
+    State.log(G, 'good', `${c.name}：亲往${h.name}处劳问，其意稍解。`);
+  },
+
   CLAN_ACTION(G, { cityId, action }) {
     const c = mustOwnCity(G, cityId);
     if (!c.clans || !c.clans.length) throw new Error('此城无大族');

@@ -40,6 +40,7 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 │    build.js       工程队列
 │    tech-system.js 科研点累积、排队、乘数刷新
 │    clans.js       士族情绪漂移与叛乱
+│    relations.js   人情账：武将忠诚漂移 / 闲置 / 叛变（含带城投敌）
 │    viceroy.js     太守按方针自动营造 + 征兵
 │    rally.js       持续调兵（补给线）
 │    diplo.js       关系漂移 / 状态机 / canAttack 闸门 / AI 议和宣战结盟
@@ -60,7 +61,7 @@ index.html          入口：按固定顺序用 <script> 加载全部源码，�
 │      rank.js      官阶台
 │      peace.js     求和裁决弹窗
 │      diplo.js     外交面板与行动
-│      city.js      城池面板（概览 / 营造 / 士族 / 施政）
+│      city.js      城池面板（概览 / 营造 / 士族 / 人物 / 施政）
 │      army.js      军务面板
 │      tech.js      科技面板
 │      log.js       纪事面板
@@ -184,6 +185,7 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
  7  Rally.run         持续调兵
  8  Favor.monthly     好感漂移 / 赏赐 / 削权
  9  Mission.tick      上命派发与逾期（含量外交类结果）
+9.2 Relations.drift  人情账：忠诚漂移 / 闲置计数 / 叛变（预警 → 3 月干预窗口 → 掷骰）
  9.5 Diplo.advance   停战到期 / 每 6 回合重算边界 / 关系漂移 / AI 外交
 10  Rank.monthly      声望自然增长 + 晋升检查
 11  AI.run            各势力决策（玩家势力的非直辖城也走这里）—— 细节见 [AI.md](AI.md)
@@ -195,7 +197,8 @@ Store.dispatch('RECRUIT', { cityId, troop, amount })
 顺序有意义，改之前先想清楚：
 `Viceroy` 在 `Rally` 之前 → 太守当月募的兵当月经能送出；
 `Army` 在 `Economy` 之前 → 当月攻下的城当月就开始产出；
-`Clans` 在 `Economy` 之后 → 士族影响的是**下个月**的产出系数。
+`Clans` 在 `Economy` 之后 → 士族影响的是**下个月**的产出系数；
+`Relations` 在 `Mission` 之后 → 上命结算完才判断人心，且叛变发生在当月经济算完之后。
 
 ### 4.1 求和裁决
 
@@ -341,8 +344,11 @@ core/data 碰 `Store`/`UI`/`Bus`、view 直接改 `G`、`style.css` 规则区裸
 其余缺字段一律由四张默认值表兜底：
 
 ```js
-META_DEFAULTS / PLAYER_DEFAULTS / FACTION_DEFAULTS / CITY_DEFAULTS
+META_DEFAULTS / PLAYER_DEFAULTS / FACTION_DEFAULTS / CITY_DEFAULTS / HERO_DEFAULTS
 ```
+
+武将的人情账字段（`ambition / bond / grievance / idle / lastAct / warnTurn / cd`）走 `HERO_DEFAULTS`；
+`ambition` 由 `State._ambitionOf()` 现算，旧档用 `State._idJitter(id)` 代替 RNG，保证同一份档多次迁移结果一致。
 
 **新增状态字段时把默认值加进对应的表就行**（`State._fillDefaults` 只补 `null`/`undefined`，不会覆盖 `false`/`0`），
 别再往 migrate 里手写 `if (x == null)`。

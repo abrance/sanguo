@@ -151,6 +151,7 @@ const UI_CITY = {
     const scroll = pane.scrollTop;
     if (UI.cityTab === 'build') UI.paneBuild(G, c);
     else if (UI.cityTab === 'clans') UI.paneClans(G, c);
+    else if (UI.cityTab === 'heroes') UI.paneHeroes(G, c);
     else if (UI.cityTab === 'policy') UI.panePolicy(G, c);
     else UI.paneOverview(G, c);
     pane.scrollTop = scroll;
@@ -486,6 +487,99 @@ const UI_CITY = {
     act('suppress', '打压', '免费', null);
 
     pane.appendChild(box);
+  },
+
+  /** 人物：忠诚 / 野心 / 私交 / 积怨 + 四个命令（docs/HERO.md §1.7） */
+  paneHeroes(G, c) {
+    const pane = UI.$('cityPane');
+    const isDemesne = c.grantedTo === PLAYER_HERO_ID;
+    const heroes = Object.values(G.heroes).filter(h =>
+      h.alive && h.id !== PLAYER_HERO_ID && h.factionId === c.owner
+      && (h.cityId === c.id || c.governor === h.id));
+
+    if (!heroes.length) {
+      pane.innerHTML = `<div class="dim">此城无将。</div>`;
+      return;
+    }
+
+    heroes.sort((a, b) => (b.id === c.governor ? 1 : 0) - (a.id === c.governor ? 1 : 0) || b.tong - a.tong);
+
+    let html = `<div class="dim mb-5 lh-17">
+      忠诚 &lt; 30 且野心 &gt; 60 者会叛：叛前一月有预警，3 月内赏赐 / 抚慰可挽；
+      守将忠诚影响守城战力，私交影响城池产出。
+    </div>`;
+
+    for (const h of heroes) {
+      const loy = Math.round(h.loyalty || 0);
+      const bond = Math.round(h.bond || 0);
+      const amb = Math.round(h.ambition || 0);
+      const skName = heroSkill(G, h.skill).name;
+      const tags = [];
+      if (h.id === c.governor) tags.push('守将');
+      if (amb > 60) tags.push(`野心 ${amb}`);
+      if ((h.grievance || 0) > 0) tags.push(`积怨 ${h.grievance}`);
+      if ((h.idle || 0) >= 6) tags.push(`闲置 ${h.idle} 月`);
+      if (skName) tags.push(skName);
+
+      html += `<div class="clan" data-hero="${h.id}">
+        <div class="crow">
+          <span class="cname">${U.esc(h.name)}</span>
+          <span class="dim">武${h.wu} 统${h.tong} 智${h.zhi} 政${h.zheng} 魅${h.mei}</span>
+        </div>
+        <div class="barbox">
+          <span class="dim fs-tiny">忠</span>
+          <div class="bar sat"><div style="--w:${loy}%"></div></div>
+          <span class="dim fs-tiny">私</span>
+          <div class="bar inf"><div style="--w:${bond}%"></div></div>
+        </div>
+        <div class="dim fs-tiny">${tags.join(' · ') || '平平无奇'}</div>
+      </div>`;
+    }
+
+    pane.innerHTML = html;
+
+    if (!isDemesne || G.over) {
+      if (!isDemesne) pane.insertAdjacentHTML('beforeend', `<div class="dim mt-8">非你直辖之城，不可赏罚任免。</div>`);
+      return;
+    }
+
+    const turn = G.meta.turn;
+    for (const h of heroes) {
+      const row = pane.querySelector(`[data-hero="${h.id}"]`);
+      if (!row) continue;
+      const box = document.createElement('div');
+      box.className = 'actions';
+
+      const cd = h.cd || {};
+      const cool = (kind, months) => (cd[kind] && turn - cd[kind] < months
+        ? `尚需 ${months - (turn - cd[kind])} 月` : null);
+      const cost = 80 * (1 + G.player.rank);
+
+      const run = (type, payload) => () => {
+        try { Store.dispatch(type, payload); } catch (e) { UI.toast(e.message); }
+      };
+
+      box.appendChild(UI._btn(`赏赐 ${cost}钱`, '忠+6 私+10',
+        run('REWARD_HERO', { heroId: h.id }),
+        cool('reward', 3) || (c.gold < cost ? '钱不足' : null)));
+
+      box.appendChild(UI._btn('提拔为守', '战功-5 私+14',
+        run('PROMOTE_HERO', { heroId: h.id, cityId: c.id }),
+        c.governor === h.id ? '已是守将'
+          : (c.promoteTurn && turn - c.promoteTurn < 6 ? `此城人事初定，尚需 ${6 - (turn - c.promoteTurn)} 月`
+            : (G.player.merit < 5 ? '战功不足' : null))));
+
+      box.appendChild(UI._btn('责罚', '忠-10 积怨+1 治安+3',
+        run('PUNISH_HERO', { heroId: h.id }),
+        c.governor === h.id ? cool('punish', 5) : '只可责罚守将'));
+
+      box.appendChild(UI._btn('抚慰 60粮', '积怨-1 私+5',
+        run('CONSOLE_HERO', { heroId: h.id }),
+        (h.grievance || 0) <= 0 ? '并无积怨'
+          : (cool('console', 3) || (c.food < 60 ? '粮不足' : null))));
+
+      row.appendChild(box);
+    }
   },
 
   panePolicy(G, c) {
