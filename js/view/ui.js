@@ -31,6 +31,10 @@ const UI = {
     UI.bindDiplo();
     UI.bindPeace();
     UI.bindEvent();
+    UI.bindTurnFx();
+    Audio.init();
+    UI.bindMute();
+    UI.bindAudioHooks();
     Bus.on('combat', e => Renderer.addFx(e));
     UI.buildStart();
     UI.resizeCanvasSoon();
@@ -53,6 +57,16 @@ const UI = {
 
   // ───────── 标签页 ─────────
   bindTabs() {
+    // 战报「只看关键轮」
+    const keyBtn = UI.$('logKeyOnly');
+    if (keyBtn) {
+      keyBtn.onclick = () => {
+        UI.logKeyOnly = !UI.logKeyOnly;
+        keyBtn.classList.toggle('on', UI.logKeyOnly);
+        UI.render(Store.get());
+      };
+    }
+
     for (const btn of UI.$('sideTabs').querySelectorAll('button')) {
       btn.onclick = () => {
         UI.sideTab = btn.dataset.tab;
@@ -494,6 +508,43 @@ const UI = {
   },
 
   // ───────── 按钮 ─────────
+  /** 音效挂钩：破城一声、我军失城一声警报 */
+  bindAudioHooks() {
+    if (typeof Bus === 'undefined') return;
+    Bus.on('combat', e => {
+      if (!e) return;
+      const g = Store.get();
+      const mine = g && (e.atkLoss != null) && (e.cityId === g.player.homeCityId);
+      Audio.play(e.captured ? 'siege' : 'march');
+      void mine;
+    });
+    // 我军失城 / 势力覆灭：纪事里出现关键字就响一次（Audio 内部有节流）
+    UI._lastLogLen = 0;
+    const watch = () => {
+      const g = Store.get();
+      if (!g) return;
+      if (UI._lastLogLen === 0) { UI._lastLogLen = g.log.length; return; }
+      if (g.log.length > UI._lastLogLen) {
+        const fresh = g.log.slice(UI._lastLogLen);
+        UI._lastLogLen = g.log.length;
+        if (fresh.some(x => /陷落|覆灭|失守/.test(x.text))) Audio.play('alarm');
+      }
+    };
+    setInterval(watch, 600);
+  },
+
+  /** 顶栏音效开关：状态存 localStorage，用例里的无头环境没有 AudioContext 也不报错 */
+  bindMute() {
+    const btn = UI.$('btnMute');
+    if (!btn) return;
+    const sync = () => {
+      btn.classList.toggle('off', Audio.muted);
+      btn.title = Audio.muted ? '音效已关（点击开启）' : '音效已开（点击关闭）';
+    };
+    sync();
+    btn.onclick = () => { Audio.setMuted(!Audio.muted); sync(); if (!Audio.muted) Audio.play('turn'); };
+  },
+
   bindButtons() {
     UI.$('btnEndTurn').onclick = () => {
       // 战局已终：这颗按钮变成「重看结局」，不推进回合
@@ -506,8 +557,9 @@ const UI = {
         Store.dispatch('END_TURN');
         Save.save(Store.get(), Save.AUTO);      // 自动存档槽，不占玩家的命名槽
         const g = Store.get();
-        const season = SEASON[U.season(g.meta.month)].name;
-        UI.flash(`${g.meta.year}年 ${g.meta.month}月 · ${season}`, 'turn');
+        UI_TURNFX.play(g);                      // 过场：月份牌 + 季节色（不再只弹一条 toast）
+        Audio.play('turn');
+        UI.flash(`${g.meta.year}年 ${g.meta.month}月 · ${SEASON[U.season(g.meta.month)].name}`, 'turn');
       } catch (e) { UI.toast(e.message); }
     };
 
@@ -757,4 +809,4 @@ const UI = {
 };
 
 Object.assign(UI,
-  UI_START, UI_RANK, UI_PEACE, UI_EVENT, UI_DIPLO, UI_CITY, UI_ARMY, UI_TECH, UI_LOG, UI_LEGION, UI_END);
+  UI_START, UI_RANK, UI_PEACE, UI_EVENT, UI_TURNFX, UI_DIPLO, UI_CITY, UI_ARMY, UI_TECH, UI_LOG, UI_LEGION, UI_END);

@@ -84,8 +84,15 @@ const UI_LOG = {
     const open = UI._logOpen.has(key);
     const atkPct = Math.round((1 - b.atkRemain / Math.max(1, b.atkStart)) * 100);
     const defPct = Math.round((1 - b.defRemain / Math.max(1, b.defStart)) * 100);
+    // 战法轮高亮（A6 起战报里会写「X用「火计」」）；只看关键轮：城门破 / 伤亡大 / 结局
+    const keyOnly = UI.logKeyOnly;
+    const lines = (e.data.lines || []).filter(l => !keyOnly
+      || /用「|城门破|折损|陷落|退去|尽没|初战/.test(l));
     const body = open
-      ? `<div class="bcard-body">${(e.data.lines || []).map(l => `<div>${U.esc(l)}</div>`).join('')}</div>`
+      ? `<div class="bcard-body">${lines.map(l => {
+        const cls = /用「/.test(l) ? 'bline tactic' : (/城门破|陷落/.test(l) ? 'bline key' : 'bline');
+        return `<div class="${cls}">${U.esc(l)}</div>`;
+      }).join('')}</div>`
       : '';
 
     return `<div class="bcard ${b.captured ? 'win' : 'fail'}${open ? ' open' : ''}${fresh ? ' fresh' : ''}" data-lkey="${U.esc(key)}">
@@ -93,7 +100,7 @@ const UI_LOG = {
         <span class="bcard-city">${U.esc(b.cityName)}</span>
         <span class="bcard-res">${b.captured ? '城破' : '不克'}</span>
         <span class="bcard-vs">${U.esc(b.atkName)} → ${U.esc(b.defName)}</span>
-        <span class="bcard-rounds">${b.rounds} 合</span>
+        <span class="bcard-rounds">${b.rounds} 合${b.tactic ? ' · ' + U.esc((Combat.TACTICS[b.tactic] || {}).name || '战法') : ''}</span>
       </div>
       <div class="bcard-bar">
         <i class="atk" style="--w:${U.clamp(atkPct, 0, 100)}%"></i>
