@@ -17,6 +17,17 @@ const Legion = {
     return city.owner === 'free' || Diplo.canAttack(G, G.player.factionId, city.owner);
   },
 
+  /** 征兵：补到方针比例（钱不够就按现有钱能买多少） */
+  _recruit(G, c, P) {
+    const cap = State.troopCapOf(G, c);
+    const target = cap * P.recruitRatio;
+    const cur = troopTotal(c.garrison);
+    if (cur >= target * 0.97 || c.gold <= 80) return;
+    const want = Math.min(Math.round(target - cur), Math.round(c.pop * 1.2));
+    if (want < 20) return;
+    Recruit.autoFill(G, c, want, true);
+  },
+
   run(G, stamp) {
     const f = G.factions[G.player.factionId];
     if (!f || f.dead) return;
@@ -40,36 +51,27 @@ const Legion = {
         }
       }
 
-      // 1 营造 + 征兵（沿用方针表，只是把"谁管"从城换成军区）
+      // 1 营建 + 征兵（沿用方针表，只是把"谁管"从城换成军区）
+      //    征讨号令下先征兵再营建：先把兵攥在手里，当月就能举兵
       const P = POLICIES[lg.policy] || POLICIES.balanced;
+      const strike = lg.stance === 'strike';
       for (const c of cities) {
-        for (let slot = 0; slot < 3 && Build.queueFree(c); slot++) {
-          const key = Build.autoPick(G, c, P.buildOrder);
-          if (!key) break;
-          const chk = Build.canBuild(G, c, key);
-          if (!chk.ok || c.gold - chk.cost.gold < 150) break;
-          try { Build.start(G, c, key, true); } catch (e) { break; }
-        }
-
-        const cap = State.troopCapOf(G, c);
-        const target = cap * P.recruitRatio;
-        const cur = troopTotal(c.garrison);
-        if (cur < target * 0.97 && c.gold > 80) {
-          const want = Math.min(Math.round(target - cur), Math.round(c.pop * 1.2));
-          if (want >= 20) Recruit.autoFill(G, c, want, true);
-        }
-        const drill = State.bld(c, 'drill');
-        c.morale = U.clamp(c.morale + 1 + drill * 0.6, 0, 100);
+        if (strike) Legion._recruit(G, c, P);
+        Build.autoWork(G, c, P, strike ? 0 : 150);
+        if (!strike) Legion._recruit(G, c, P);
+        c.morale = U.clamp(c.morale + 1 + State.bld(c, 'drill') * 0.6, 0, 100);
       }
 
       if (lg.stance === 'defend') continue;
 
       // 2 集结 / 出兵：复用 AI 的决策，用 filter 把号令约束套上去
+      //    征讨 = 玩家点了名的仗，不掷骰子（force），当回合就集结、就出兵
       const filter = city => Legion._targetAllowed(G, lg, city);
-      AI._mass(G, f, cities, stamp, null, filter);
+      const force = strike;
+      AI._mass(G, f, cities, stamp, null, filter, force);
 
       const before = new Set(Object.values(G.armies).map(a => a.id));
-      AI._attack(G, f, cities, stamp, null, filter);
+      AI._attack(G, f, cities, stamp, null, filter, force);
       // 给本军区派出的军队打标记，战果统计与拔城归属都靠它
       for (const a of Object.values(G.armies)) {
         if (before.has(a.id) || a.factionId !== G.player.factionId || a.mission !== 'attack') continue;

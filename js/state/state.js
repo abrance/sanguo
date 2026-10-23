@@ -359,6 +359,14 @@ const State = {
   // ───────── 军区（一将统辖多城，全托管但听玩家号令） ─────────
   legions(G) { return G.player.legions || (G.player.legions = []); },
 
+  /** 城不再直辖（交出 / 削权 / 失守）：一并从军区辖城摘掉，否则军区还当它是自己的 */
+  dropLegionCity(G, cityId) {
+    for (const lg of State.legions(G)) {
+      const i = (lg.cityIds || []).indexOf(cityId);
+      if (i >= 0) lg.cityIds.splice(i, 1);
+    }
+  },
+
   legionOf(G, cityId) {
     for (const lg of State.legions(G)) {
       if (lg.cityIds && lg.cityIds.indexOf(cityId) >= 0) return lg;

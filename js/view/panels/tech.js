@@ -24,15 +24,15 @@ const UI_TECH = {
       const pct = Math.round((1 - cur.left / cur.total) * 100);
       const eta = TechSys.eta(G, G.player.factionId, cur);
       const color = BRANCH_COLOR[TECHS[cur.key].branch];
-      html += `<div class="techcur" style="border-left:3px solid ${color}">
+      html += `<div class="techcur bl-c" style="--c:${color}">
         <div class="tcrow">
-          <span style="color:${color}">研习中 · ${TECHS[cur.key].name}</span>
+          <span class="c" style="--c:${color}">研习中 · ${TECHS[cur.key].name}</span>
           <span class="dim">${Math.ceil(cur.left)}/${cur.total} 点 · 约 ${eta} 月</span>
         </div>
-        <div class="qbar"><div style="width:${pct}%"></div></div>
+        <div class="qbar"><div style="--w:${pct}%"></div></div>
       </div>`;
     } else {
-      html += `<div class="dim" style="margin:6px 0">当前无研习项目，点下方「研」开工或排队。</div>`;
+      html += `<div class="dim my-6">当前无研习项目，点下方「研」开工或排队。</div>`;
     }
 
     if (queue.length) {
@@ -49,8 +49,8 @@ const UI_TECH = {
       const doneN = list.filter(k => f.tech.done[k]).length;
       html += `<div class="tbranch">
         <div class="tbranch-head">
-          <span style="color:${BRANCH_COLOR[br]}">${br}</span>
-          <span class="dim" style="font-size:9px">${doneN}/${list.length}</span>
+          <span class="c" style="--c:${BRANCH_COLOR[br]}">${br}</span>
+          <span class="dim fs-tiny">${doneN}/${list.length}</span>
         </div>`;
 
       for (const key of list) {
@@ -80,7 +80,7 @@ const UI_TECH = {
       html += `</div>`;
     }
 
-    html += `<div class="capnote" style="margin-top:8px">
+    html += `<div class="capnote mt-8">
       科研点由<b>学宫</b>产出：每级 6 点/月，另加守将政治加成。无学宫之城仅 0.8 点/月。<br>
       可连续点「研」排入队列，最多 ${TechSys.MAX_QUEUE} 项。
     </div>`;

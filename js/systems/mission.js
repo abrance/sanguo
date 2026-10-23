@@ -16,6 +16,7 @@ const Mission = {
     }
 
     if (p.mission) {
+      if (this._outranked(G, p.mission)) { p.mission = null; this.issue(G); return; }
       if (this._checkDiplo(G)) return;
       if (G.meta.turn > p.mission.expireTurn) this._fail(G);
       return;
@@ -26,11 +27,17 @@ const Mission = {
     this.issue(G);
   },
 
+  /** 官阶不够的上命（县令被命离间之类）：上级改令，不罚 */
+  _outranked(G, m) {
+    const t = MISSION_TYPES[m.typeKey];
+    return !!t && (t.minRank || 0) > G.player.rank;
+  },
+
   issue(G) {
     const p = G.player;
     if (p.mission) return;
 
-    let key = pickMissionType();
+    let key = pickMissionType(G);
     let m = MISSION_TYPES[key].make(G);
     if (!m) {
       m = MISSION_TYPES.tribute.make(G);

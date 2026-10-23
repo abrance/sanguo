@@ -86,6 +86,20 @@
   --rp:#6a5a8a;
   --inf:#7a6a9a;  --inf-deep:#3a2a4a;   /* 士族影响力条 */
 
+  /* ── 占位与标签（原内联裸值收口） ── */
+  --ink-ghost:#888;        /* 未知势力占位灰 */
+  --warn-ink:#d9a05a;      /* 警示标签文字 */
+  --warn-line:#7a5a2e;     /* 警示标签描边 */
+  --bad-line:#7a2f2f;      /* 危险标签描边 */
+
+  /* ── 图例用色（与画布一致，别随手改） ── */
+  --legend-faction:#b8860b;
+  --legend-own:#1f5f8b;
+  --legend-free:#c8b58a;
+  --arc-war:#c85a4a;
+  --arc-truce:#c9a227;
+  --arc-ally:#5f9a6a;
+
   /* ── 阴影 / 黑 ── */
   --scrim-1:#000a;
   --scrim-2:#000b;
@@ -392,8 +406,8 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
   font-size:9px;line-height:1;padding:1px 3px;border-radius:2px;
   background:var(--surface-2);border:1px solid var(--hair);color:var(--ink-dim);
 }
-.cityrail .chip .bdg.warn{color:#d9a05a;border-color:#7a5a2e}
-.cityrail .chip .bdg.bad{color:#d96a6a;border-color:#7a2f2f}
+.cityrail .chip .bdg.warn{color:var(--warn-ink);border-color:var(--warn-line)}
+.cityrail .chip .bdg.bad{color:var(--war);border-color:var(--bad-line)}
 
 /* ---------- 军区 ---------- */
 .lgcard{
@@ -541,7 +555,7 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
   text-align:left;line-height:1.6;
 }
 .help-table th{
-  background:#221d16;color:var(--ink);font-weight:normal;
+  background:var(--surface-2);color:var(--ink);font-weight:normal;
   font-size:var(--fs-body);white-space:nowrap;
 }
 .help-table td:first-child{
@@ -656,6 +670,7 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
 .techcur{
   background:var(--line-soft);border-radius:var(--r-sm);
   padding:5px 7px;margin-bottom:6px;
+  border-left:3px solid var(--c,transparent);   /* 分支色由 JS 传 --c */
 }
 .techcur .tcrow{
   display:flex;justify-content:space-between;align-items:baseline;
@@ -803,6 +818,11 @@ select:focus-visible{
 .card{box-shadow:inset 0 1px 0 var(--glint)}
 .pick:focus-visible,.rcard:focus-visible{outline:1px solid var(--gold);outline-offset:1px}
 
+/* 截图模式（?shot=1）：动画全停，视觉回归才能逐像素比对 */
+body.shot *,body.shot *::before,body.shot *::after{
+  animation:none!important;transition:none!important;
+}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{
     animation-duration:.01ms!important;animation-iteration-count:1!important;
@@ -892,4 +912,143 @@ select:focus-visible{
 .bcard-body{
   margin-top:5px;padding-top:4px;border-top:1px solid var(--line-2);
   font-size:var(--fs-label);line-height:1.6;color:var(--ink-warm);
+}
+
+/* ==========================================================================
+   分层契约（写新样式前先读这一段）
+   1. token 层：:root 变量。所有颜色 / 字号 / 圆角只能从这里来
+   2. 组件层：上面的 .card .row .qbar … 语义样式
+   3. 工具层：下面的 .fs-* .mt-* —— 只表达间距 / 字号，JS 用来替代内联样式
+   4. 数据变量层：--w --c --fill 由 JS 写进 style，本文件负责翻译成属性
+      JS 只传"值"，不写"属性名"；颜色仍是 token 或数据层配色（势力 / 地形 / 科技分支）
+   画布（renderer / sparkline）不受本条约束：canvas 用不了 CSS 继承。
+   ========================================================================== */
+
+/* ---------- 数据变量层 ---------- */
+.qbar>div{width:var(--w)}
+.bar>div{width:var(--w)}
+.dbar i{width:var(--w)}
+.missionbox .mbar>i{width:var(--w)}
+.mission-line .mline-bar>i{width:var(--w)}
+.bcard-bar>i{width:var(--w)}
+
+.w{width:var(--w)}
+.c{color:var(--c)}
+.fill{background:var(--fill)}
+.bc{border-color:var(--c)}
+.bl-c{border-left:3px solid var(--c)}
+
+/* ---------- 语义小类（都有 token 背书） ---------- */
+.hostile{color:var(--war)}
+.gold-ink{color:var(--gold)}
+.gold-bright-ink{color:var(--gold-bright)}
+.ally-ink{color:var(--ally-ink)}
+.ally-box{border-color:var(--ally-deep)}
+.sat-good{color:var(--ally)}
+.sat-mid{color:var(--gold)}
+.sat-bad{color:var(--war)}
+.rally-state.moving{color:var(--ally-ink)}
+.rally-state.ready{color:var(--gold-bright)}
+.rally-state.full{color:var(--gold)}
+.rally-state.blocked{color:var(--war)}
+.tip-dim{color:var(--ink-dim)}
+.tip-gold{color:var(--gold-bright)}
+.tip-good{color:var(--ally)}
+.tip-bad{color:var(--war)}
+.actions button.sel{border-color:var(--gold)}
+.card.tight{flex:0 0 auto;max-height:150px}
+.card.autoheight{flex:0 0 auto}
+.icon-sprite{position:absolute;width:0;height:0;overflow:hidden}
+.sw.faction{background:var(--legend-faction)}
+.sw.own{background:var(--legend-own)}
+.sw.free{background:var(--legend-free)}
+.arc.war{border-color:var(--arc-war)}
+.arc.truce{border-color:var(--arc-truce)}
+.arc.ally{border-color:var(--arc-ally)}
+#legend .arc.war{border-color:var(--arc-war)}
+#legend .arc.truce{border-color:var(--arc-truce)}
+#legend .arc.ally{border-color:var(--arc-ally)}
+
+/* ---------- 工具层（JS 里唯一允许替代内联样式的类） ---------- */
+.fs-tiny{font-size:var(--fs-tiny)}
+.fs-label{font-size:var(--fs-label)}
+.fs-body{font-size:var(--fs-body)}
+.fs-lead{font-size:var(--fs-lead)}
+.mt-3{margin-top:3px}
+.mt-4{margin-top:4px}
+.mt-5{margin-top:5px}
+.mt-6{margin-top:6px}
+.mt-8{margin-top:8px}
+.mb-4{margin-bottom:4px}
+.mb-5{margin-bottom:5px}
+.mb-6{margin-bottom:6px}
+.my-6{margin:6px 0}
+.my-6-3{margin:6px 0 3px}
+.my-8-3{margin:8px 0 3px}
+.ml-auto{margin-left:auto}
+.p-4{padding:4px}
+.py-4{padding:4px 0}
+.p-6-2{padding:6px 2px}
+.minw-74{min-width:74px}
+.lh{line-height:1.6}
+.lh-17{line-height:1.7}
+.brk{flex-basis:100%;height:0}
+.war-soft-ink{color:var(--war-soft)}
+
+/* ---------- 结局：天下一统 / 势力覆亡 ---------- */
+.end-box{
+  width:600px;max-height:88vh;overflow-y:auto;
+  padding:38px 44px 30px;text-align:center;
+  background:linear-gradient(180deg,var(--bg2),var(--bg-veil));
+  border:1px solid var(--gold-line);border-radius:var(--r-lg);
+  box-shadow:0 26px 80px var(--scrim-1),inset 0 1px 0 var(--glint);
+  position:relative;
+}
+.end-box::before{
+  content:"";position:absolute;inset:8px;pointer-events:none;
+  border:1px solid var(--line-soft);border-radius:var(--r-sm);
+}
+.end-box.lose{border-color:var(--line);filter:saturate(.55)}
+.end-eyebrow{
+  font-size:var(--fs-tiny);letter-spacing:6px;color:var(--ink-dim);
+  animation:endRise .5s ease-out both;
+}
+.end-title{
+  margin:14px 0 6px;font-size:34px;font-weight:400;letter-spacing:16px;
+  color:var(--gold-pale);text-indent:16px;
+  text-shadow:0 0 22px rgba(201,162,39,.35);
+  animation:endRise .7s cubic-bezier(.2,.8,.2,1) .08s both;
+}
+.end-box.lose .end-title{color:var(--ink);text-shadow:none;letter-spacing:12px}
+.end-seal{
+  position:absolute;top:26px;right:26px;width:56px;height:56px;
+  display:flex;align-items:center;justify-content:center;
+  border:2px solid var(--war);border-radius:2px;
+  color:var(--war);font-size:var(--fs-body);letter-spacing:1px;
+  line-height:1.05;text-align:center;transform:rotate(-8deg);opacity:.85;
+  animation:sealStamp .55s cubic-bezier(.2,1.5,.4,1) .45s both;
+}
+.end-text{
+  margin:10px auto 22px;max-width:440px;font-size:var(--fs-body-2);color:var(--ink-dim);
+  line-height:1.9;animation:endRise .6s ease-out .18s both;
+}
+.end-stats{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:1px;
+  background:var(--line-soft);border:1px solid var(--line-soft);
+  margin-bottom:22px;
+}
+.end-stat{
+  background:var(--bg2);padding:12px 6px;
+  animation:endRise .5s ease-out both;
+  animation-delay:calc(.28s + var(--i, 0) * .06s);
+}
+.end-stat b{display:block;font-size:var(--fs-title);color:var(--gold-pale);font-weight:400}
+.end-stat span{display:block;margin-top:3px;font-size:var(--fs-tiny);color:var(--ink-dim);letter-spacing:1px}
+.end-acts{display:flex;gap:8px;justify-content:center;animation:endRise .6s ease-out .3s both}
+.end-acts button{min-width:112px}
+@keyframes endRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes sealStamp{
+  0%{opacity:0;transform:rotate(-8deg) scale(2.4)}
+  60%{opacity:.9;transform:rotate(-8deg) scale(.94)}
+  100%{opacity:.85;transform:rotate(-8deg) scale(1)}
 }

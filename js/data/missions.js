@@ -95,6 +95,7 @@ const MISSION_TYPES = {
   intrigue: {
     id: 'intrigue',
     weight: 10,
+    minRank: 4,   // 离间要以国家名义上表，官未至州牧做不了（见 Diplo.layer）
     title: '奉命离间',
     make(G) {
       const pick = Diplo.intrigueTarget(G);
@@ -136,11 +137,13 @@ function pickExpeditionTarget(G) {
 
 const MISSION_LIST = ['tribute', 'levy', 'expedition', 'envoy', 'intrigue'];
 
-/** 按权重抽一个类型 */
-function pickMissionType() {
-  const total = MISSION_LIST.reduce((s, k) => s + MISSION_TYPES[k].weight, 0);
+/** 按权重抽一个类型（minRank 未达的类型不发，避免下派做不了的活） */
+function pickMissionType(G) {
+  const rank = G && G.player ? G.player.rank : 99;
+  const pool = MISSION_LIST.filter(k => (MISSION_TYPES[k].minRank || 0) <= rank);
+  const total = pool.reduce((s, k) => s + MISSION_TYPES[k].weight, 0);
   let r = RNG.next() * total;
-  for (const k of MISSION_LIST) {
+  for (const k of pool) {
     r -= MISSION_TYPES[k].weight;
     if (r <= 0) return k;
   }

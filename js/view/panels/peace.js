@@ -33,7 +33,7 @@ const UI_PEACE = {
     const rest = offers.length - 1;
     const war = Diplo.statusOf(G, G.player.factionId, f.id) === Diplo.WAR;
     UI.$('peaceHead').innerHTML =
-      `<b style="color:${f.color}">${U.esc(f.name)}</b> 遣使请和 · 愿纳钱 ${U.num(Math.min(f.treasury, 400))}`
+      `<b class="c" style="--c:${f.color}">${U.esc(f.name)}</b> 遣使请和 · 愿纳钱 ${U.num(Math.min(f.treasury, 400))}`
       + ` · 停战 ${Diplo.TRUCE_MONTHS} 月<br><span class="dim">${war ? '战事未休' : '已非交战'}`
       + `${rest > 0 ? ` · 另有 ${rest} 国待决` : ''}</span>`;
 

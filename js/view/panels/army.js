@@ -22,12 +22,12 @@ const UI_ARMY = {
       const f = G.factions[a.factionId];
       const h = a.heroId ? G.heroes[a.heroId] : null;
       rows.push(`<div class="row" data-to="${a.to}">
-        <span class="rname" style="color:#d96a6a">${f.name} ${h ? h.name : ''}</span>
+        <span class="rname hostile">${f.name} ${h ? h.name : ''}</span>
         <span class="rmeta">犯 ${G.cities[a.to].name} ${a.eta}月</span>
       </div>`);
     }
     UI.$('armyCount').textContent = mine.length + hostile.length;
-    box.innerHTML = rows.join('') || '<div class="dim" style="padding:4px">无在外军队</div>';
+    box.innerHTML = rows.join('') || '<div class="dim p-4">无在外军队</div>';
     for (const el of box.querySelectorAll('.row[data-to]')) {
       el.onclick = () => {
         const G2 = Store.get();
@@ -60,7 +60,7 @@ const UI_ARMY = {
         <span class="cn">${c.name}${c.policy ? `<span class="dim"> · ${POLICIES[c.policy].name}</span>` : ''}</span>
         <span class="cm ${pct >= 95 ? 'cfull' : ''}">${U.num(t)}/${U.num(cap)} ${pct}%</span>
       </div>`;
-    }).join('') || '<div class="dim" style="padding:4px">无直辖城</div>';
+    }).join('') || '<div class="dim p-4">无直辖城</div>';
 
     for (const el of list.querySelectorAll('.crow-pick')) {
       const cid = el.dataset.city;

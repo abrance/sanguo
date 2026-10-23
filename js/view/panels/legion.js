@@ -15,12 +15,12 @@ const UI_LEGION = {
       .sort((a, b) => (b.tong + b.zheng) - (a.tong + a.zheng))
       .slice(0, 6);
 
-    let html = `<div class="dim" style="margin-bottom:6px;line-height:1.6">
+    let html = `<div class="dim mb-6 lh">
       军区每月自动营建、征兵；号令决定它打不打、打谁。都督统率 → 守城战力，政略 → 产出。
     </div>`;
 
     if (!legions.length) {
-      html += `<div class="dim" style="padding:4px 0">尚未设军区。</div>`;
+      html += `<div class="dim py-4">尚未设军区。</div>`;
     }
 
     for (const lg of legions) {
@@ -34,7 +34,7 @@ const UI_LEGION = {
           <b>${U.esc(h ? h.name : '—')}</b>
           <span class="dim">统 ${h ? h.tong : '—'} · 政 ${h ? h.zheng : '—'}</span>
           <span class="dim">${cities.length} 城</span>
-          <span class="dim" style="margin-left:auto">出兵 ${lg.stats ? lg.stats.attacks : 0} · 拔城 ${lg.stats ? lg.stats.taken : 0}</span>
+          <span class="dim ml-auto">出兵 ${lg.stats ? lg.stats.attacks : 0} · 拔城 ${lg.stats ? lg.stats.taken : 0}</span>
         </div>
         <div class="lgrow"><span class="lglab">号令</span>
           ${Object.values(Legion.STANCES).map(s =>
@@ -67,11 +67,11 @@ const UI_LEGION = {
     }
 
     if (heroes.length) {
-      html += `<div class="dim" style="margin:8px 0 3px">委任新都督</div><div class="lgrow">`
+      html += `<div class="dim my-8-3">委任新都督</div><div class="lgrow">`
         + heroes.map(h => `<button class="mini" data-new="${h.id}">${U.esc(h.name)}</button>`).join('')
         + `</div>`;
     } else if (legions.length) {
-      html += `<div class="dim" style="margin-top:8px">无可委任的将领。</div>`;
+      html += `<div class="dim mt-8">无可委任的将领。</div>`;
     }
 
     box.innerHTML = html;
@@ -122,7 +122,8 @@ const UI_LEGION = {
         }
         if (b.dataset.city) {
           const lg = State.legions(G2).find(x => x.id === lgId);
-          const ids = lg.cityIds.slice();
+          // 老存档里可能有已不直辖的残留辖城：按当前直辖过滤掉，顺手把军区列表扶正
+          const ids = lg.cityIds.filter(id => State.isPlayerCity(G2, G2.cities[id]));
           const i = ids.indexOf(b.dataset.city);
           if (i >= 0) ids.splice(i, 1); else ids.push(b.dataset.city);
           Store.dispatch('LEGION_ASSIGN', { id: lgId, cityIds: ids });

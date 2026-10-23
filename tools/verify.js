@@ -65,6 +65,70 @@ section('静态检查（无需开局）');
 }
 
 // ─────────────────────────────────────────────
+section('分层守护');
+{
+  const fs = require('fs');
+  const path = require('path');
+  const read = f => fs.readFileSync(path.join(h.ROOT, f), 'utf8');
+  const listJs = dir => {
+    const out = [];
+    (function walk(d) {
+      for (const e of fs.readdirSync(path.join(h.ROOT, d), { withFileTypes: true })) {
+        const p = d + '/' + e.name;
+        if (e.isDirectory()) walk(p);
+        else if (/\.js$/.test(e.name)) out.push(p);
+      }
+    })(dir);
+    return out;
+  };
+  // 只查真实引用，避免注释里的词误报
+  const hits = (files, re) => files
+    .filter(f => re.test(read(f).replace(/\/\/.*$/gm, '')))
+    .map(f => f + ' ↔ ' + re);
+
+  const systems = listJs('js/systems');
+  const dataCore = listJs('js/data').concat(listJs('js/core'));
+  const view = listJs('js/view');
+
+  // 1) 规则层不碰 DOM
+  let bad = hits(systems, /\b(document|window|innerHTML|querySelector|addEventListener)\b/);
+  ok('systems 不碰 DOM', !bad.length, bad.slice(0, 3).join('; '));
+
+  // 2) 规则层不走命令层（dispatch 只在 view/store 里）
+  bad = hits(systems, /\b(Store\.|dispatch\()/);
+  ok('systems 不调 dispatch', !bad.length, bad.slice(0, 3).join('; '));
+
+  // 3) core / data 不得往上走：不调命令、不碰视图（data 可以调 State 的纯查询函数）
+  bad = hits(dataCore, /\b(Store\.|UI\.|Renderer\.|Bus\.|dispatch\()/);
+  ok('core / data 不依赖上层', !bad.length, bad.slice(0, 3).join('; '));
+
+  // 4) 视图层只读状态：不允许直接写 G
+  bad = view.concat(['js/main.js']).filter(f =>
+    /(^|[^.\w])G\.[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*\s*=[^=]/.test(read(f)));
+  ok('view 不直接改状态', !bad.length, bad.join(', '));
+
+  // 5) 样式：裸色值只允许在 :root token 区
+  const css = read('style.css');
+  const rootEnd = css.indexOf('\n}', css.indexOf(':root{'));
+  const bareHex = css.slice(rootEnd).match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+  ok('style.css 规则区无裸色值', !bareHex.length, bareHex.slice(0, 5).join(', '));
+
+  // 6) 内联 style 只允许自定义属性（JS 传值，CSS 翻译成属性）
+  const inline = [];
+  for (const f of ['index.html'].concat(view)) {
+    const src = read(f);
+    const re = /style="([^"]*)"/g;
+    let m;
+    while ((m = re.exec(src))) {
+      for (const decl of m[1].split(';').filter(Boolean)) {
+        if (!/^\s*--[\w-]+\s*:/.test(decl)) inline.push(`${f}: ${m[1].trim()}`);
+      }
+    }
+  }
+  ok('内联 style 只剩 --自定义属性', !inline.length, inline.slice(0, 3).join(' | '));
+}
+
+// ─────────────────────────────────────────────
 section('事件总线隔离');
 {
   const { api } = h.boot({ seed: 1 });
@@ -537,6 +601,28 @@ section('外交');
   // 新上命类型存在
   ok('上命含出使 / 离间', !!api.MISSION_TYPES.envoy && !!api.MISSION_TYPES.intrigue);
 
+  // 官阶不够不派离间（离间需州牧=4）
+  const low = h.boot({ seed: 21 });
+  const lg = low.api.Store.get();
+  lg.player.rank = 1;
+  let sawIntrigue = false;
+  for (let i = 0; i < 300; i++) if (low.api.pickMissionType(lg) === 'intrigue') sawIntrigue = true;
+  ok('县令不派离间上命', sawIntrigue === false);
+  ok('县令手上离间上命会改令', (() => {
+    lg.player.rank = 1;
+    lg.player.mission = { id: 'mx', typeKey: 'intrigue', aFid: 'yuanshao', bFid: 'gongsunzan',
+      targetRel: -10, expireTurn: lg.meta.turn + 8, rewardMerit: 1, rewardFavor: 1 };
+    lg.player.missionCooldown = 0;
+    low.api.Store.replace(lg);
+    low.api.Mission.tick(low.api.Store.get());
+    const now = low.api.Store.get().player.mission;
+    return !now || now.typeKey !== 'intrigue';
+  })());
+  sawIntrigue = false;
+  lg.player.rank = 4;
+  for (let i = 0; i < 300; i++) if (low.api.pickMissionType(lg) === 'intrigue') sawIntrigue = true;
+  ok('州牧可派离间上命', sawIntrigue === true);
+
   // ◆ 援军：mission aid 抵达并入守军，不当攻军
   const b3 = h.boot({ seed: 12 });
   const a3 = b3.api;
@@ -848,6 +934,59 @@ section('外交长跑（200 回合）');
 }
 
 // ─────────────────────────────────────────────
+section('大势（剧本骨架 + 宿敌摩擦）');
+{
+  const { api } = h.boot({ seed: 11 });
+  const sc = api.getScenario(api.DEFAULT_SCENARIO);
+  const amb = sc.ambitions || {};
+  const owners = Object.keys(amb).filter(id => amb[id].length);
+  ok('剧本带野心表且覆盖十家以上', owners.length >= 10, `${owners.length} 家`);
+  ok('野心目标都是真势力', owners.every(id => amb[id].every(([t]) => !!sc.factionRows.find(r => r[0] === t))));
+  ok('剧本带宿敌表', (sc.rivals || []).length >= 10, `${(sc.rivals || []).length} 对`);
+
+  let news = 0, flips = 0;
+  let prev = Object.fromEntries(Object.values(api.Store.get().cities).map(c => [c.id, c.owner]));
+  for (let t = 0; t < 12; t++) {
+    h.runTurns(api, 1);
+    const G = api.Store.get();
+    news += G.log.filter(l => l.turn === G.meta.turn && l.text.startsWith('【天下】')).length;
+    for (const c of Object.values(G.cities)) {
+      if (c.owner !== prev[c.id]) { flips++; prev[c.id] = c.owner; }
+    }
+  }
+  ok('开局一年内有天下大事播报', news >= 2, `${news} 条`);
+  ok('开局一年内有城池易手', flips >= 2, `${flips} 次`);
+  ok('定战不受强弱门槛卡住（讨董开战）',
+    Object.keys(api.Store.get().diplo).some(k => k.includes('dongzhuo')
+      && api.Store.get().diplo[k].status === 'war'), '无董卓战事');
+
+  // 无城 AI 势力当月判亡，不靠一支在途军续命
+  {
+    const z = h.boot({ seed: 9, factionId: 'yuanshao', cityId: 'ye' });
+    const G = z.api.Store.get();
+    const victim = Object.values(G.factions).find(f => f.kind !== 'free' && f.id !== G.player.factionId);
+    for (const c of Object.values(G.cities)) if (c.owner === victim.id) c.owner = 'free';
+    const src = z.api.State.factionCities(G, G.player.factionId)[0];
+    z.api.Army.create(G, {
+      factionId: victim.id, heroId: null, from: src.id, to: src.id,
+      troops: { inf: 100 }, mission: 'aid',
+    });
+    z.api.Store.replace(G);
+    h.runTurns(z.api, 1);
+    const G2 = z.api.Store.get();
+    ok('无城势力当月覆灭', G2.factions[victim.id].dead === true, victim.name);
+    ok('覆灭势力的残军被清空', !Object.values(G2.armies).some(a => a.factionId === victim.id));
+  }
+
+  // 宿敌关系逐月结冰 → 不靠剧本也会打起来
+  const r1 = h.boot({ seed: 5 });
+  const relOf = () => r1.api.Diplo.relationOf(r1.api.Store.get(), 'yuanshao', 'gongsunzan');
+  const rel0 = relOf();
+  h.runTurns(r1.api, 10);
+  ok('宿敌关系自然恶化', relOf() < rel0 + 1, `${rel0} → ${relOf()}`);
+}
+
+// ─────────────────────────────────────────────
 section('军区（一将统辖多城，全托管但听号令）');
 {
   const mk = seed => {
@@ -871,6 +1010,44 @@ section('军区（一将统辖多城，全托管但听号令）');
   ok('军区成立并统辖多城', !!lg && lg.cityIds.length >= 5, `${lg.cityIds.length} 城`);
   ok('都督给军区城加成（统/政）', !!mul && mul.atk > 1 && mul.eco > 1,
     `战力 ×${mul.atk.toFixed(2)} 产出 ×${mul.eco.toFixed(2)}`);
+
+  // 1.6 交出 / 削权 / 失守的城要从军区辖城里摘掉（否则再点军区报"非你直辖之城"）
+  {
+    const z = mk(46);                  // 独立一局，别污染后面的用例
+    const raw = JSON.parse(JSON.stringify(z.g()));
+    const p = raw.player;
+    p.rank = 1;                        // 直辖上限 2，好造出"交出"路径
+    const others = Object.values(raw.cities)
+      .filter(c => c.owner !== p.factionId && c.owner !== 'free')
+      .slice(0, 3).map(c => c.id);
+    for (const id of others) { raw.cities[id].owner = p.factionId; raw.cities[id].grantedTo = null; }
+    raw.cities[others[0]].grantedTo = z.api.PLAYER_HERO_ID;
+    p.demesne = [others[0]];
+    p.homeCityId = others[0];
+    raw.player.legions = undefined;
+    z.api.Store.replace(raw);
+    const lgId = z.api.Store.dispatch('LEGION_CREATE', { heroId: z.hero.id }).id;
+    z.api.Store.dispatch('LEGION_ASSIGN', { id: lgId, cityIds: [others[0]] });
+
+    // 收归第二座（未满员）→ 能加进军区
+    z.api.Store.dispatch('SET_DEMESNE', { cityId: others[1] });
+    z.api.Store.dispatch('LEGION_ASSIGN', { id: lgId, cityIds: z.g().player.demesne.slice() });
+    ok('收归后能加进军区', z.g().player.legions[0].cityIds.indexOf(others[1]) >= 0);
+
+    // 收归第三座：直辖已满 → 交出 first
+    let err0 = null;
+    try { z.api.Store.dispatch('SET_DEMESNE', { cityId: others[2], releaseId: others[0] }); } catch (e) { err0 = e.message; }
+    ok('满员时可用 releaseId 换城', !err0, err0 || '');
+    ok('交出的城从军区辖城移除',
+      z.g().player.legions[0].cityIds.indexOf(others[0]) < 0
+      && z.api.State.isPlayerCity(z.g(), z.g().cities[others[0]]) === false);
+
+    let err = null;
+    try {
+      z.api.Store.dispatch('LEGION_ASSIGN', { id: lgId, cityIds: z.g().player.demesne.slice() });
+    } catch (e) { err = e.message; }
+    ok('换城后军区指派不再报错', !err, err || '');
+  }
 
   // 1.5 府衙 3 级时一次填满两个工程位，且不重复同一建筑
   {
@@ -924,21 +1101,71 @@ section('军区（一将统辖多城，全托管但听号令）');
     a.api.State.legionOf(a.g(), lgCityId) && a.g().cities[lgCityId].policy === 'farm',
     '方针仍在，但由军区执行');
 
-  // 4 征讨：下令即宣战，出兵只打该势力
+  // 4 征讨：下令即宣战，军区属城只打该势力（同势力其他城归 AI 管，不在此列）
   const b = mk(42);
   b.api.Store.dispatch('LEGION_ORDER', { id: b.id, stance: 'strike', targetFid: 'yuanshao', policy: 'army' });
   const pfB = b.g().player.factionId;
+  const lgB = new Set(b.g().player.legions[0].cityIds);
   const declared = b.api.Diplo.statusOf(b.g(), pfB, 'yuanshao') === 'war';
   const targets = new Set();
-  for (let i = 0; i < 14; i++) {
-    b.api.Store.dispatch('END_TURN');
-    for (const arm of Object.values(b.g().armies)) {
-      if (arm.factionId === pfB && arm.mission === 'attack') targets.add(b.g().cities[arm.to].owner);
+  // 在 Army.create 上量：记录军区城每次出兵的目标势力（城会在行军途中易主，不能事后看）
+  const origCreate = b.api.Army.create;
+  b.api.Army.create = function (GG, o) {
+    if (o.mission === 'attack' && o.factionId === pfB && lgB.has(o.from)) {
+      targets.add(GG.cities[o.to].owner);
     }
-  }
+    return origCreate.call(b.api.Army, GG, o);
+  };
+  for (let i = 0; i < 14; i++) b.api.Store.dispatch('END_TURN');
+  b.api.Army.create = origCreate;
   ok('征讨号令：即宣战，且只打指定势力',
     declared && targets.size >= 1 && [...targets].every(o => o === 'yuanshao'),
     `宣战 ${declared}，出兵目标 ${[...targets].join('/')}`);
+
+  // 4.2 征讨不掷骰子：下令当回合就出兵（不必等 AI 那几个概率门）
+  {
+    const z = mk(45);
+    z.api.Store.dispatch('LEGION_ORDER', { id: z.id, stance: 'strike', targetFid: 'yuanshao', policy: 'army' });
+    const pfz = z.g().player.factionId;
+    const lgz = z.g().player.legions[0].id;
+    h.runTurns(z.api, 1);
+    const out = Object.values(z.g().armies).filter(a => a.factionId === pfz && a.legionId === lgz);
+    ok('征讨当回合即出兵', out.length >= 1, `出兵 ${out.length}`);
+    const atkStat = z.api.State.legions(z.g())[0].stats.attacks || 0;
+    ok('军区战果记到号令账上', atkStat >= 1, `出兵计数 ${atkStat}`);
+  }
+
+  // 4.3 工程位空着就不许因"预留金"空转（偶见不营建的老病，太守/军区同源）
+  {
+    const z = mk(47);
+    const G0 = z.g();
+    const cid = G0.player.legions[0].cityIds[0];
+    const c = G0.cities[cid];
+    const P = z.api.POLICIES[G0.player.legions[0].policy] || z.api.POLICIES.balanced;
+    const key = z.api.Build.autoPick(G0, c, P.buildOrder);
+    if (!key) {
+      ok('空工程位不因预留金空转', false, '无可开之工，用例失效');
+    } else {
+      const cost = z.api.Build.costOf(G0, c, key);
+      c.buildQueue = [];
+      c.gold = cost.gold + 100;          // 够付工程款，但留不出 150 的预留金
+      c.mat = Math.max(c.mat, cost.mat + 100);
+      c.iron = Math.max(c.iron, cost.iron + 100);
+      z.api.Build.autoWork(G0, c, P, 150);
+      ok('空工程位不因预留金空转', c.buildQueue.length === 1,
+        `${key} 需钱 ${cost.gold}，余 ${cost.gold === 0 ? 100 : c.gold - cost.gold}`);
+      // 已经有活干时仍然守预留金（不把征兵的钱一次花光）
+      const c2 = G0.cities[G0.player.legions[0].cityIds[1]];
+      const key2 = z.api.Build.autoPick(G0, c2, P.buildOrder);
+      if (key2) {
+        const cost2 = z.api.Build.costOf(G0, c2, key2);
+        c2.buildQueue = [{ key: key2, to: 99, left: 3, total: 3 }];
+        c2.gold = cost2.gold + 100;
+        z.api.Build.autoWork(G0, c2, P, 150);
+        ok('已在施工时守预留金', c2.buildQueue.length === 1, `队列 ${c2.buildQueue.length}`);
+      }
+    }
+  }
 
   // 4.5 征讨目标停战后，军区不空转（自动转守土待命）
   const d = mk(44);

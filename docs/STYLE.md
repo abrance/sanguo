@@ -1,14 +1,47 @@
-# 视觉规范（token / 图标 / 排版）
+# 视觉规范（分层 / token / 图标 / 排版）
 
 > 事实来源：`style.css` 顶部 `:root` 与 `index.html` 的 `#icon-sprite`。
-> 改样式只允许：**新增/复用 token**、**用 token 覆盖裸值**；不要在规则里写裸色值（`node tools/shots.js` 会告诉你画面动了多少）。
+> 四层分工与红线见下面 §0；违反红线时 `node tools/verify.js` 的「分层守护」直接报错。
+
+---
+
+## 0. 四层分工（写样式前先看这里）
+
+| 层 | 住在哪 | 只准写 |
+|---|---|---|
+| token | `style.css` 的 `:root` | 颜色 / 字号 / 圆角 |
+| 组件 | `style.css` 各 `/* ---------- 域 ---------- */` 段 | 这类组件长什么样 |
+| 工具 | `style.css` 末尾「工具层」 | 纯间距 / 字号（`.fs-label .mt-6 .p-4 …`） |
+| 数据变量 | JS 写 `style="--w:…"`，CSS 译成属性 | 数值、数据层配色 |
+
+四条红线，`verify.js` 都会拦：
+
+1. `style.css` 的规则区不允许裸色值 —— 全部走 token。
+2. `js/view/**` 与 `index.html` 的内联 `style` 只允许 `--自定义属性`；
+   `width:` / `font-size:` / `color:` 这类属性名一律进 CSS。
+3. JS 里不写颜色字面量（`#xxx` / `rgba(...)`）。颜色只能来自：
+   token、数据层自带配色（`f.color` / `TERRAIN[].color` / `BRANCH_COLOR`）。
+4. 一处语义一个类。同一串 `margin-top:6px;line-height:1.6` 出现第二次就该变成类。
+
+写数据的套路：
+
+```html
+<div class="qbar"><div style="--w:42%"></div></div>      <!-- 进度：CSS 侧 width:var(--w) -->
+<span class="c" style="--c:${f.color}">曹操</span>          <!-- 势力色：CSS 侧 color:var(--c) -->
+<i class="csw fill" style="--fill:${f.color}"></i>          <!-- 色点：background:var(--fill) -->
+```
+
+例外：`renderer.js` / `map.js` / 顶栏 sparkline 是 canvas，拿不到 CSS 继承，用色自带在脚本里。
+
+改完必须跑两条：`node tools/verify.js`（分层与逻辑）、`node tools/shots.js`（像素差）。
 
 ---
 
 ## 1. 为什么有这套 token
 
-之前 `style.css` 里散着 **184 处裸色值（77 个不同颜色）**、9 种字号、4 种圆角。
-现在全部收进 `:root`，改名换色只改一处；写新样式时如果找不到合适的 token，说明要么该复用现有语义，要么这是一类新语义（那就加 token 并写注释）。
+2025 年整理前，`style.css` 里散着 **184 处裸色值（77 个不同颜色）**、9 种字号、4 种圆角，
+另有一批颜色活在 JS 模板字符串的内联样式里（改配色得全局搜 `#`）。
+现在全部收进 `:root`；写新样式时找不到合适 token，说明要么该复用现有语义，要么这是一类新语义（那就加 token 并写注释）。
 
 **当前状态**：规则区裸色值 = 0（只有 `#icon-sprite` 里没有颜色，图标统一走 `currentColor`）。
 
@@ -60,7 +93,8 @@
 - 交战 / 损失：`--war` `--war-deep` `--war-soft` `--war-text` `--battle-line` `--battle-line-hover` `--battle-line-fail` `--battle-text`
 - 同盟 / 收益：`--ally` `--ally-deep` `--ally-soft` `--ally-ink` `--ally-past`
 - 守方（战报条）：`--def-deep` `--def`
-- 其他：`--blue` `--blue-soft` `--blue-pale` `--red` `--green` `--warn-bg`
+- 其他：`--blue` `--blue-soft` `--blue-pale` `--red` `--green` `--warn-bg` `--warn-ink` `--warn-line` `--bad-line` `--ink-ghost`
+- 图例（与画布同源）：`--legend-faction` `--legend-own` `--legend-free` `--arc-war` `--arc-truce` `--arc-ally`
 - 资源：`--food` `--food-deep` `--goldres` `--troop` `--mat` `--iron` `--rp` `--inf` `--inf-deep`
 - 阴影/黑：`--scrim-1` `--scrim-2` `--hair` `--glint` `--black`
 
@@ -84,7 +118,10 @@
 
 规则区已无 `font-size:<px>` 与 `border-radius:<px>` 裸值。
 
-**间距**：暂未 token 化（现有 3/4/5/6/8px 混用）。要上 4px 栅格会真实改变布局，属于下一轮，届时必须逐个机位看截图。
+**间距**：没做成 token，而是工具层固定几档（`.mt-3 .mt-4 .mt-5 .mt-6 .mt-8` / `.mb-4 .mb-5 .mb-6` /
+`.my-6 .my-6-3 .my-8-3` / `.ml-auto` / `.p-4 .py-4 .p-6-2`）。
+只用这几种，别现编 `margin-top:7px`；确实需要新档就加到工具层里（这样它能被 grep 到）。
+上 4px 栅格会真实改变布局，属于下一轮，届时必须逐个机位看截图。
 
 ---
 
@@ -116,9 +153,22 @@
 
 ## 5. 改样式的流程
 
-1. 找 token；找不到就判断"复用 / 新增"
-2. 改完跑 `node tools/shots.js`
+1. 先判断这值属于哪层：颜色/字号 → token；重复的间距 → 工具类；数据（宽度/势力色）→ 数据变量；都不是 → 组件类
+2. 找不到 token 就判断“复用 / 新增”（新 token 必须配注释说明语义）
+3. 跑 `node tools/verify.js`，确认「分层守护」仍全绿
+4. 跑 `node tools/shots.js`
    - **0 px**：纯等价改动，直接提交
    - 有差异：打印的是像素数，人眼看 `tools/shots/*.png` 与运行页面
-3. 确认是有意的改动 → `node tools/shots.js --update` 重写基线
-4. 提交时一起带上 `tools/shots/*.png`，否则下一个人会看到"凭空多了差异"
+5. 确认是有意的改动 → `node tools/shots.js --update` 重写基线
+6. 提交时一起带上 `tools/shots/*.png`，否则下一个人会看到“凭空多了差异”
+
+## 结局弹窗（`js/view/panels/end.js`）
+
+天下一统 / 势力覆亡只在**结局首次出现**时铺满一屏（`UI._endKey` 记忆，读档读到已终局面也会铺）：
+
+- 卷轴式外框：内嵌一圈 `--line-soft` 细边（`.end-box::before`），胜利描金边、覆亡降饱和
+- 标题朱印：`.end-seal` 落章动效（放大砸下 + 回弹），角度固定 −8°
+- 六格战绩（城 / 覆灭势力 / 征战月数 / 战功 / 官阶 / 仕途）逐格上浮，错峰靠内联 `--i` + CSS `calc()`（继续遵守"内联只给自定义属性"）
+- 镜头：胜利时 `Renderer.flyTo(全图中心, 1200ms, ZOOM_MIN)`，天下尽收眼底
+- 三个出口：览图（关掉弹窗看地图）/ 看纪事（切纪事侧栏）/ 重开一局（回起始界面）
+- 结局后「结束回合」按钮变成「天下一统 / 势力覆亡」，点它重看这一幕

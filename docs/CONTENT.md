@@ -104,6 +104,22 @@ agr11: { id: 'agr11', name: '代田新法', branch: '农', tier: 11, cost: 900, 
 相邻关系**不是显式配置的**，由 `State.neighbors(cityId, 235)` 按像素距离算 ——
 所以城的坐标决定了它和谁接壤。加城后务必检查新城的邻居是否合理。
 
+### 大势（时间窗内的既定攻打对象）
+`js/data/scenarios/taodong190/ambitions.js`：
+
+```js
+// 势力id: [[目标势力id, 起回合, 止回合, 缘由, 必战?], ...]
+yuanshao: [
+  ['hanfu', 3, 20, '冀州殷富，绍欲取之为基业'],
+  ['gongsunzan', 22, 46, '界桥之后，河北只容一家'],
+],
+// 宿敌对：关系每月自然 −2~−4
+const TAODONG190_RIVALS = [['yuanshao', 'gongsunzan'], ...];
+```
+
+回合是绝对回合数（开局 = 1，一回合 = 一月）。`必战` 跳过"强弱"门槛，也不受 AI 相位错开限制。
+没写进表的势力走随机宣战逻辑。加了新势力记得给它排一条野心，否则它多半一辈子不动兵。
+
 ### 势力
 `js/data/scenarios/taodong190/factions.js` 的 `TAODONG190_FACTION_ROWS`：
 

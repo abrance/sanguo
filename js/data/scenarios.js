@@ -16,6 +16,8 @@ const SCENARIOS = {
     heroSkills: TAODONG190_HERO_SKILLS,
     heroRows: TAODONG190_HERO_ROWS,
     factionRows: TAODONG190_FACTION_ROWS,
+    ambitions: TAODONG190_AMBITIONS,
+    rivals: TAODONG190_RIVALS,
     // 可玩势力（小势力也开放，玩家可体验弱主开局）
     playable: TAODONG190_FACTION_ROWS.map(r => r[0]),
     desc: '董卓挟天子迁都长安，关东诸侯会盟讨伐。你是乱世中的一城之主 —— 效忠一方、积攒战功、步步高升，或者……自立门户。',

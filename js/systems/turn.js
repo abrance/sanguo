@@ -65,11 +65,20 @@ const Turn = {
       if (f.kind === 'free') continue;
       if (f.dead) continue;
       const cities = State.factionCities(G, f.id);
-      const armies = Object.values(G.armies).filter(a => a.factionId === f.id);
-      if (cities.length === 0 && armies.length === 0) {
-        f.dead = true;
-        State.log(G, 'note', `${f.name}覆灭。`);
+      if (cities.length) continue;
+
+      // 玩家本势力：在外军队没归建前还活着（还能打回来），判负交给 checkEnd
+      if (f.id === G.player.factionId
+          && Object.values(G.armies).some(a => a.factionId === f.id)) continue;
+
+      // 无城即亡：AI 势力不再靠一支在途军凭空续命（地图上看不见它，却还在外交名单里）
+      f.dead = true;
+      for (const a of Object.values(G.armies)) {
+        if (a.factionId !== f.id) continue;
+        delete G.armies[a.id];
+        if (a.heroId && G.heroes[a.heroId]) G.heroes[a.heroId].cityId = null;
       }
+      State.log(G, 'note', `${f.name}覆灭。`);
     }
   },
 };

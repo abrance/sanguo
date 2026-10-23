@@ -16,7 +16,7 @@ const UI_START = {
       const el = document.createElement('div');
       el.className = 'pick';
       el.dataset.fid = id;
-      el.innerHTML = `<i class="csw" style="background:${color}"></i>
+      el.innerHTML = `<i class="csw fill" style="--fill:${color}"></i>
         <span>${U.esc(name)}</span>
         <span class="pk-meta">${cityIds.length}城</span>`;
       el.title = ruler ? `君主：${ruler[1]}` : '';

@@ -109,9 +109,9 @@ const AI = {
   },
 
   /** 集中兵力：向好打的前线城市输送，形成局部优势 */
-  _mass(G, f, cities, stamp, exclude, filter) {
+  _mass(G, f, cities, stamp, exclude, filter, force) {
     if (cities.length < 2) return;
-    if (!RNG.chance(0.16 + f.aggression * 0.20 + (f.momentum - 1) * 0.35)) return;
+    if (!force && !RNG.chance(0.16 + f.aggression * 0.20 + (f.momentum - 1) * 0.35)) return;
 
     let best = null;
     for (const c of cities) {
@@ -157,14 +157,17 @@ const AI = {
     }
   },
 
-  _attack(G, f, cities, stamp, exclude, filter) {
-    const maxArmies = Math.max(1, Math.ceil(cities.length / 2));
+  _attack(G, f, cities, stamp, exclude, filter, force) {
+    // force：玩家点了名的征讨，不掷骰子，也不按"半军区"限军数
+    const maxArmies = force ? Math.max(2, cities.length) : Math.max(1, Math.ceil(cities.length / 2));
     let outgoing = Object.values(G.armies).filter(a => a.factionId === f.id).length;
     if (outgoing >= maxArmies) return;
 
-    const chances = (outgoing === 0 ? 0.10 + f.aggression * 0.30 : 0.04 + f.aggression * 0.15)
-      + (f.momentum - 1) * 0.25;
-    if (!RNG.chance(chances)) return;
+    if (!force) {
+      const chances = (outgoing === 0 ? 0.10 + f.aggression * 0.30 : 0.04 + f.aggression * 0.15)
+        + (f.momentum - 1) * 0.25;
+      if (!RNG.chance(chances)) return;
+    }
 
     const sources = cities
       .map(c => ({ c, score: Combat.attackScore(G, c.garrison, c.governor, c.terrain) }))
