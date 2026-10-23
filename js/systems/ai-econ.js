@@ -39,14 +39,13 @@ const AIEcon = {
       const want = Math.min(Math.round(target - cur), Math.round(c.pop * 1.6));
       if (want < 20) continue;
 
-      const before = c.gold;
-      const added = Recruit.autoFill(G, c, want, true);
-      if (added > 0 && c.gold < 60) {
-        const take = Math.min(f.treasury, 120);
+      // 府库先补后买：以前是「买完再补」，穷城买不动 → added=0 → 永远补不到，府库却越攒越多
+      if (c.gold < 150) {
+        const take = Math.min(f.treasury, 320 - c.gold);
         c.gold += take;
         f.treasury -= take;
       }
-      void before;
+      Recruit.autoFill(G, c, want, true);
     }
   },
 
