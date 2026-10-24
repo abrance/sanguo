@@ -131,6 +131,19 @@ section('分层守护');
   ok('style.css 规则区无裸色值', !bareHex.length, bareHex.slice(0, 5).join(', '));
   ok('style.css 规则区无裸 rgba', !bareRgba.length, `rgba() 出现 ${bareRgba.length} 次`);
 
+  // 5.1) 间距只用偶数 px：4px 栅格太粗，会把 11px 字号的密集列表撑开；
+  // 2px 是这套界面的实际节奏（但优先用 4 的倍数）。奇数 px 一律当手滑。
+  const spacingBad = [];
+  css.split('\n').forEach((line, i) => {
+    for (const seg of line.split(';')) {
+      const m = /^\s*(padding|margin|gap|row-gap|column-gap)(-(top|right|bottom|left))?\s*:\s*([^;]+)$/.exec(seg);
+      if (!m) continue;
+      const odd = [...m[4].matchAll(/(\d+(?:\.\d+)?)px/g)].map(x => Number(x[1])).filter(v => v % 2);
+      if (odd.length) spacingBad.push(`L${i + 1} ${seg.trim()}`);
+    }
+  });
+  ok('间距只用偶数 px（2px 栅格）', !spacingBad.length, spacingBad.slice(0, 3).join(' | '));
+
   // 6) 内联 style 只允许自定义属性（JS 传值，CSS 翻译成属性）
   const inline = [];
   for (const f of ['index.html'].concat(view)) {
