@@ -11,6 +11,7 @@
 |---|---|---|
 | token | `style.css` 的 `:root` | 颜色 / 字号 / 圆角 |
 | 组件 | `style.css` 各 `/* ---------- 域 ---------- */` 段 | 这类组件长什么样 |
+| 原语 | `style.css` 「原语层」段（`:where()`，权重 0） | 进度条轨道 / 列表行这类要反复用的小东西，只写一次 |
 | 工具 | `style.css` 末尾「工具层」 | 纯间距 / 字号（`.fs-label .mt-6 .p-4 …`） |
 | 数据变量 | JS 写 `style="--w:…"`，CSS 译成属性 | 数值、数据层配色 |
 
@@ -43,7 +44,8 @@
 另有一批颜色活在 JS 模板字符串的内联样式里（改配色得全局搜 `#`）。
 现在全部收进 `:root`；写新样式时找不到合适 token，说明要么该复用现有语义，要么这是一类新语义（那就加 token 并写注释）。
 
-**当前状态**：规则区裸色值 = 0（只有 `#icon-sprite` 里没有颜色，图标统一走 `currentColor`）。
+**当前状态**：规则区裸色值与裸 `rgba()` = 0（只有 `#icon-sprite` 里没有颜色，图标统一走 `currentColor`）。
+半透明浮层一律走 `--veil-*` / `--tint-row` / `--glow-gold`，`verify.js` 会拦裸 `rgba(`。
 
 ---
 
@@ -98,6 +100,7 @@
 - 图例（与画布同源）：`--legend-faction` `--legend-own` `--legend-free` `--arc-war` `--arc-truce` `--arc-ally`
 - 资源：`--food` `--food-deep` `--goldres` `--troop` `--mat` `--iron` `--rp` `--inf` `--inf-deep`
 - 阴影/黑：`--scrim-1` `--scrim-2` `--hair` `--glint` `--black`
+- 浮层表面（半透明）：`--veil-hud`（地图角标 / 图例）`--veil-tip`（城池速览）`--veil-toast`（浮层提示）`--tint-row`（表格斑马纹）`--glow-gold`（金色外发光）`--meter-bg`（进度条轨道底）
 
 ### 已知的近似色（**故意保留，未合并**）
 
@@ -119,10 +122,38 @@
 
 规则区已无 `font-size:<px>` 与 `border-radius:<px>` 裸值。
 
+**字体**：`--font-cjk` 一处定义，`body{font-family:var(--font-cjk)}`。栈里除了思源宋体 / 苹方宋还列了 Linux 的
+「Noto Serif CJK SC」「Source Han Serif CN」——少列一个，缺字机器就会掉到黑体，「古风衬线」的意图静默丢失。
+`body` 带 `font-variant-numeric:tabular-nums`：每月刷新的数字不左右抖。
+
+**动效**：`--t-fast:.12s`（悬停 / 按下 / 数值过渡）、`--t-med:.22s`（浮层进出 / 进度条填充）。
+新增过渡只用这两档，别现编 `.18s`。过场、印章这类编舞动效（`turnfx` / `end-seal`）仍用自己的时长。
+
+**控件**：`--ctl-h-sm:18px`（行内小按钮 / `.mini`）、`--ctl-h:22px`（普通按钮 / `select`）、
+`--ctl-h-lg:26px`（底部存读档 / 结束回合）。`select` 已在「控件基线」段统一接管：
+`appearance:none` + 两道 token 化的 `linear-gradient` 拼箭头 + `--btn-bg` 底——不接管就会露出
+浏览器默认的浅灰底、黑字、Arial 13.3px，那是全界面最刺眼的一块。
+
 **间距**：没做成 token，而是工具层固定几档（`.mt-3 .mt-4 .mt-5 .mt-6 .mt-8` / `.mb-4 .mb-5 .mb-6` /
 `.my-6 .my-6-3 .my-8-3` / `.ml-auto` / `.p-4 .py-4 .p-6-2`）。
 只用这几种，别现编 `margin-top:7px`；确实需要新档就加到工具层里（这样它能被 grep 到）。
 上 4px 栅格会真实改变布局，属于下一轮，届时必须逐个机位看截图。
+
+---
+
+## 3.1 原语层（进度条 / 列表行）
+
+同一件东西只写一次：轨道底、填充过渡、行分隔线、行悬停都在 `style.css` 的「原语层」段，
+用 `:where()` 包起来（权重 0），组件层随时能覆盖。
+
+| 原语 | 覆盖的类 | 各组件只准再写 |
+|---|---|---|
+| 进度条轨道 | `.qbar .bar .dbar .merit-bar .mline-bar .mbar` | 高度、外边距、渐变配色（`.dbar` 用 `--meter-bg` 换更暗一档） |
+| 列表行 | `.row .brow .qrow .clan .crow-pick .diplo-row .prow` | 内边距（密度）、列宽 |
+| 可点行 | `.row .brow .crow-pick` | — |
+
+新增一种「条」或「行」时，先看能不能加进上面这几组，别再复制一份
+`background:var(--surface-3);border-radius:var(--r-sm);overflow:hidden`。
 
 ---
 
@@ -154,7 +185,8 @@
 
 ## 5. 改样式的流程
 
-1. 先判断这值属于哪层：颜色/字号 → token；重复的间距 → 工具类；数据（宽度/势力色）→ 数据变量；都不是 → 组件类
+1. 先判断这值属于哪层：颜色/字号 → token；重复的间距 → 工具类；数据（宽度/势力色）→ 数据变量；
+   已经是「条 / 行 / 控件」→ 先看原语层能不能覆盖；都不是 → 组件类
 2. 找不到 token 就判断“复用 / 新增”（新 token 必须配注释说明语义）
 3. 跑 `node tools/verify.js`，确认「分层守护」仍全绿
 4. 跑 `node tools/shots.js`

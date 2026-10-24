@@ -123,11 +123,13 @@ section('分层守护');
     /(^|[^.\w])G\.[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*\s*=[^=]/.test(read(f)));
   ok('view 不直接改状态', !bad.length, bad.join(', '));
 
-  // 5) 样式：裸色值只允许在 :root token 区
+  // 5) 样式：裸色值只允许在 :root token 区（十六进制与 rgba 都算）
   const css = read('style.css');
   const rootEnd = css.indexOf('\n}', css.indexOf(':root{'));
   const bareHex = css.slice(rootEnd).match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+  const bareRgba = css.slice(rootEnd).match(/rgba?\(/g) || [];
   ok('style.css 规则区无裸色值', !bareHex.length, bareHex.slice(0, 5).join(', '));
+  ok('style.css 规则区无裸 rgba', !bareRgba.length, `rgba() 出现 ${bareRgba.length} 次`);
 
   // 6) 内联 style 只允许自定义属性（JS 传值，CSS 翻译成属性）
   const inline = [];
