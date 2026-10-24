@@ -136,6 +136,10 @@
 `appearance:none` + 两道 token 化的 `linear-gradient` 拼箭头 + `--btn-bg` 底——不接管就会露出
 浏览器默认的浅灰底、黑字、Arial 13.3px，那是全界面最刺眼的一块。
 
+**侧栏宽**：`--sidebar-w`（默认 456px），文件尾三个 `@media` 按屏幕宽 / 高逐步让地：
+≤1500px → 430px，≤1300px → 404px，屏幕高 ≤700px 时收紧 `gap` 与卡片内边距。
+地图侧全部走 flex + `Renderer.resize`，不需额外改代码；改宽度后必须逐个 tab 看有无截断。
+
 **间距**：没做成 token，而是工具层固定几档（`.mt-3 .mt-4 .mt-5 .mt-6 .mt-8` / `.mb-4 .mb-5 .mb-6` /
 `.my-6 .my-6-3 .my-8-3` / `.ml-auto` / `.p-4 .py-4 .p-6-2`）。
 只用这几种，别现编 `margin-top:7px`；确实需要新档就加到工具层里（这样它能被 grep 到）。

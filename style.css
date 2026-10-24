@@ -130,6 +130,9 @@
   --ctl-h:22px;
   --ctl-h-lg:26px;
 
+  /* ── 侧栏宽（窄屏逐步让地给地图，见文件尾的 @media） ── */
+  --sidebar-w:456px;
+
   /* ── 浮层表面（半透明底，原先裸写在规则区的 rgba） ── */
   --veil-hud:rgba(18,16,14,.82);      /* 地图角标 / 图例 */
   --veil-tip:rgba(22,18,14,.96);      /* 城池速览 */
@@ -221,7 +224,7 @@ option{background:var(--bg2);color:var(--ink)}
 
 /* ---------- sidebar ---------- */
 #sidebar{
-  width:456px;flex:0 0 456px;
+  width:var(--sidebar-w);flex:0 0 var(--sidebar-w);
   display:flex;flex-direction:column;
   gap:6px;
   padding:8px;
@@ -1214,4 +1217,14 @@ body.shot *,body.shot *::before,body.shot *::after{
   0%{opacity:0;transform:rotate(-8deg) scale(2.4)}
   60%{opacity:.9;transform:rotate(-8deg) scale(.94)}
   100%{opacity:.85;transform:rotate(-8deg) scale(1)}
+}
+
+/* ---------- 窄屏：让宽度给地图 ----------
+   侧栏一直吃 456px：1280 屏上地图只剩 824，1440 屏也才 984。
+   只改宽度、不改内容顺序，地图侧的全部尺寸都由 flex + Renderer.resize 跟着走。 */
+@media (max-width:1500px){ :root{--sidebar-w:430px} }
+@media (max-width:1300px){ :root{--sidebar-w:404px} }
+@media (max-height:700px){
+  #sidebar{gap:4px;padding:6px}
+  .card{padding:6px 8px}
 }
