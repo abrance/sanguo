@@ -138,6 +138,11 @@
   --glow-gold:rgba(201,162,39,.35);   /* 金色外发光 */
   --meter-bg:var(--surface-3);        /* 进度条轨道底（.dbar 在卡片上换更暗的一档） */
 
+  /* ── 离地高度（阴影只三档，按「离地多高」分配，别一条一条现编 offset） ── */
+  --elev-1:0 4px 12px var(--scrim-1);    /* 贴在地图上的常驻件：小地图 / 角标 / 图例 */
+  --elev-2:0 8px 24px var(--scrim-2);    /* 跟着揇标走的临时件：城池速览 / 浮层提示 */
+  --elev-3:0 22px 64px var(--scrim-1);   /* 弹窗：开局 / 存档 / 官阶台 / 结局 */
+
   /* ── 圆角 ── */
   --r-xs:1px;
   --r-sm:2px;
@@ -505,6 +510,7 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
   display:flex;align-items:center;gap:5px;
   background:var(--veil-hud);
   border:1px solid var(--line);border-radius:var(--r-md);
+  box-shadow:var(--elev-1);
   padding:4px 7px;
 }
 #mapHud span{font-size:var(--fs-label);margin-left:4px}
@@ -515,6 +521,7 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
   max-width:calc(100% - 24px);
   background:var(--veil-hud);
   border:1px solid var(--line);border-radius:var(--r-md);
+  box-shadow:var(--elev-1);
   padding:5px 10px;font-size:var(--fs-label);color:var(--ink-dim);
 }
 #legend span{display:flex;align-items:center;gap:4px}
@@ -610,7 +617,7 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
   border:1px solid var(--line);
   border-radius:var(--r-lg);
   padding:26px 30px 30px;
-  box-shadow:0 20px 60px var(--scrim-1);
+  box-shadow:var(--elev-3);
 }
 .start-box>button#btnStart{
   position:sticky;bottom:-2px;   /* 开局按钮钉在底部：小窗口下不用滚到底也能点 */
@@ -907,7 +914,7 @@ button.wide-mini{display:block;width:100%;margin-top:5px;padding:0;min-height:va
   background:var(--veil-toast);
   border:1px solid var(--btn-line-hover);border-left:3px solid var(--gold);
   color:var(--ink);font-size:var(--fs-body-2);line-height:1.5;letter-spacing:.5px;
-  box-shadow:0 6px 20px var(--scrim-1);
+  box-shadow:var(--elev-2);
   opacity:0;pointer-events:none;
   transition:opacity var(--t-med) ease,transform var(--t-med) ease;
 }
@@ -929,7 +936,7 @@ button.wide-mini{display:block;width:100%;margin-top:5px;padding:0;min-height:va
   padding:6px 9px;border-radius:var(--r-md);
   background:var(--veil-tip);
   border:1px solid var(--line-warm);
-  box-shadow:0 8px 24px var(--scrim-2);
+  box-shadow:var(--elev-2);
   font-size:var(--fs-body);line-height:1.6;
 }
 .ct-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;
@@ -1024,7 +1031,7 @@ body.shot *,body.shot *::before,body.shot *::after{
   width:180px;height:135px;
   background:var(--bg-deep);
   border:1px solid var(--line);border-radius:var(--r-sm);
-  box-shadow:0 6px 18px var(--scrim-1);
+  box-shadow:var(--elev-1);
   opacity:.92;cursor:pointer;
   transition:opacity var(--t-fast),border-color var(--t-fast);
 }
@@ -1154,7 +1161,7 @@ body.shot *,body.shot *::before,body.shot *::after{
   padding:38px 44px 30px;text-align:center;
   background:linear-gradient(180deg,var(--bg2),var(--bg-veil));
   border:1px solid var(--gold-line);border-radius:var(--r-lg);
-  box-shadow:0 26px 80px var(--scrim-1),inset 0 1px 0 var(--glint);
+  box-shadow:var(--elev-3),inset 0 1px 0 var(--glint);
   position:relative;
 }
 .end-box::before{

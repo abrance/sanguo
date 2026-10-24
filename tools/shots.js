@@ -25,11 +25,20 @@ const TOLERANCE = 200;          // 允许的差异像素数（抗锯齿抖动）
 const W = 900;
 const H = 600;
 
-// 机位：覆盖 远景地形 / 近景城池 / 纪事战报
+// 机位：地图三个（远景 / 近景 / 纪事战报）+ 侧栏面板四个（城池 / 科技 / 军务 / 官阶台）
+//
+// 面板机位存在的理由：控件的 padding / 字号 / 高度只改 CSS 时，地图机位几乎看不出变化，
+// 而控件就在侧栏里。没有这几个机位，控件回归只能靠“手量 getBoundingClientRect”。
+const PANEL = 'zoom=1.0&cx=1180&cy=760&seed=11';
 const SHOTS = [
   { name: 'map-far', query: 'zoom=0.5&cx=1200&cy=900&seed=11' },
   { name: 'map-near', query: 'zoom=1.2&cx=1180&cy=760&seed=11&turn=6' },
   { name: 'log-battle', query: 'zoom=1.0&cx=1180&cy=760&seed=11&turn=4&fight=1&turn2=2&tab=log' },
+  { name: 'panel-city', query: PANEL + '&turn=4&tab=city&sel=chenliu' },
+  { name: 'panel-tech', query: PANEL + '&turn=6&tab=tech' },
+  { name: 'panel-army', query: PANEL + '&turn=6&tab=army' },
+  { name: 'panel-rank', query: PANEL + '&turn=6&tab=city&sel=chenliu&rank=1' },
+  { name: 'start', query: 'start=1' },
 ];
 
 function findChrome() {

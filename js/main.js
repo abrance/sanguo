@@ -75,7 +75,12 @@
       UI.syncTabs();
     }
     UI.render(g);
-    document.getElementById('startOverlay').classList.add('hidden');
+    // 浮层机位：视觉回归除了地图，也要拍到面板与弹窗（rank=1 官阶台 / start=1 开局界面）
+    if (q.get('rank')) {
+      document.getElementById('rankOverlay').classList.remove('hidden');
+      UI.renderRankHall(g);
+    }
+    if (!q.get('start')) document.getElementById('startOverlay').classList.add('hidden');
     window.__shotReady = true;
 
     // dt 固定 0：旗面飘动 / 直辖光晕 / 镜头缓动全都停在初始姿态

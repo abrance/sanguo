@@ -101,6 +101,8 @@
 - 资源：`--food` `--food-deep` `--goldres` `--troop` `--mat` `--iron` `--rp` `--inf` `--inf-deep`
 - 阴影/黑：`--scrim-1` `--scrim-2` `--hair` `--glint` `--black`
 - 浮层表面（半透明）：`--veil-hud`（地图角标 / 图例）`--veil-tip`（城池速览）`--veil-toast`（浮层提示）`--tint-row`（表格斑马纹）`--glow-gold`（金色外发光）`--meter-bg`（进度条轨道底）
+- 离地高度（阴影）：`--elev-1` 贴地图的常驻件 / `--elev-2` 跟指针的临时件 / `--elev-3` 弹窗。
+  只这三档，按「离地多高」选；`.card` 的 `inset` 高光不算离地高度，留在原处。
 
 ### 已知的近似色（**故意保留，未合并**）
 
@@ -189,11 +191,14 @@
    已经是「条 / 行 / 控件」→ 先看原语层能不能覆盖；都不是 → 组件类
 2. 找不到 token 就判断“复用 / 新增”（新 token 必须配注释说明语义）
 3. 跑 `node tools/verify.js`，确认「分层守护」仍全绿
-4. 跑 `node tools/shots.js`
+4. 跑 `node tools/shots.js`（8 个机位：地图 3 + 侧栏面板 4 + 开局浮层 1）
    - **0 px**：纯等价改动，直接提交
    - 有差异：打印的是像素数，人眼看 `tools/shots/*.png` 与运行页面
+   - 只改控件（padding / 字号 / 高度）时看 `panel-*`，地图机位基本不动
 5. 确认是有意的改动 → `node tools/shots.js --update` 重写基线
-6. 提交时一起带上 `tools/shots/*.png`，否则下一个人会看到“凭空多了差异”
+6. **基线不入库**（`.gitignore` 排除了 `tools/shots/`，截图受本机字体与显卡影响）。
+   所以第一次跑会自己生成基线，比对结果是「本机改前 vs 本机改后」；要跟别人的基线比，先把
+   他的基线拷过来再跑 `node tools/shots.js -v`。
 
 ## 结局弹窗（`js/view/panels/end.js`）
 
