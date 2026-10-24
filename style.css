@@ -539,8 +539,10 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
 .overlay{
   position:fixed;inset:0;z-index:50;
   background:radial-gradient(circle at 50% 30%,var(--line-soft),var(--bg-veil) 70%);
-  display:flex;align-items:center;justify-content:center;
+  display:flex;align-items:flex-start;justify-content:center;
+  overflow:auto;padding:12px;   /* 内容比视口高时可以滚：否则按钮落在屏幕外，看着像“点了没反应” */
 }
+.overlay>*{margin:auto}        /* 放得下时居中，放不下时从顶部开始滚 */
 .overlay.hidden{display:none}
 .start-box{
   width:660px;max-height:86vh;overflow-y:auto;
@@ -549,6 +551,10 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
   border-radius:var(--r-lg);
   padding:26px 30px 30px;
   box-shadow:0 20px 60px var(--scrim-1);
+}
+.start-box>button#btnStart{
+  position:sticky;bottom:-2px;   /* 开局按钮钉在底部：小窗口下不用滚到底也能点 */
+  width:100%;box-shadow:0 -10px 14px -8px var(--bg2);
 }
 .start-box h1{
   font-size:var(--fs-display);letter-spacing:14px;text-align:center;
@@ -931,7 +937,7 @@ body.shot *,body.shot *::before,body.shot *::after{
   transition:width .25s;
 }
 .mission-line.warn .mline-bar>i{background:linear-gradient(90deg,var(--war-deep),var(--war))}
-.mission-line.blink{animation:mlBlink 1.1s ease-in-out infinite}
+.mission-line.blink{animation:mlBlink 1.1s ease-in-out 3}
 @keyframes mlBlink{50%{background:var(--warn-bg)}}
 
 .missionbox .mbar{

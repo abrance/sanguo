@@ -126,7 +126,8 @@ node tools/sim.js [--months 200] [--every 20] [--seed 11]
 
 ## 浏览器侧的验证
 
-`tools/` 覆盖不到 Canvas 渲染与 DOM 交互。这部分要手工或用浏览器自动化：
+`tools/` 覆盖不到 Canvas 渲染与 DOM 交互。这部分要手工或用浏览器自动化。
+**怀疑卡顿/点击无反应时，先看 [docs/PERF.md](PERF.md) 的排查清单**（`?perf=1` 角标、`document.getAnimations()`、进程 CPU 三层测量）。
 
 ```bash
 make server                      # 起服务（no-store，改完刷新即生效）

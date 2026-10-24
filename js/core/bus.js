@@ -21,7 +21,11 @@ const Bus = (() => {
     if (!arr) return;
     for (const fn of arr.slice()) {
       try { fn(payload); }
-      catch (e) { console.error(`[bus] ${evt} 订阅者出错:`, e); }
+      catch (e) {
+        const msg = `bus 订阅者出错: ${evt} → ${e.message}`;
+        if (typeof window !== "undefined" && window.SanguoLog) window.SanguoLog.push('bus', msg, e);
+        else console.error(`[bus] ${msg}`, e);
+      }
     }
   }
 
