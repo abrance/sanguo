@@ -1309,6 +1309,44 @@ section('玩家天赋');
 }
 
 // ─────────────────────────────────────────────
+section('月产明细（Economy.project）与结算同源');
+{
+  const { api, get } = h.boot({ seed: 7, talent: 'farmer' });
+  const G = get();
+  const c = G.cities[G.player.homeCityId];
+  const P = api.Economy.project(G, c);
+  ok('project 带上农夫天赋的粮产乘数', Math.abs((P.parts.talent.food || 1) - 1.25) < 1e-9);
+
+  const g0 = c.gold, f0 = c.food;
+  api.Economy.produce(G, 't');
+  ok('结算的钱增量 = project 的月入钱', Math.abs((c.gold - g0) - P.goldOut) < 1e-6,
+    `${((c.gold - g0)).toFixed(3)} vs ${P.goldOut.toFixed(3)}`);
+  const netFood = P.foodOut - P.armyUpkeep - P.popUpkeep;
+  ok('结算的粮增量 = 产出 − 军耗 − 民食（未触仓廪上限时）',
+    c.food === P.foodCap || Math.abs((c.food - f0) - netFood) < 1e-6,
+    `${(c.food - f0).toFixed(3)} vs ${netFood.toFixed(3)}`);
+
+  const alien = Object.values(G.cities).find(x => x.owner !== G.player.factionId);
+  const PA = api.Economy.project(G, alien);
+  ok('非直辖城不吃玩家天赋', !PA.parts.talent.id);
+
+  const foe = Object.values(G.cities).find(x => x.owner !== G.player.factionId && api.troopTotal(x.garrison) > 0)
+    || alien;
+  const pred = api.Combat.predict(G, { inf: 1000 }, null, foe, G.player.factionId, 0);
+  ok('出征预估带回双方首轮战力', pred.atkPower > 0, `我 ${Math.round(pred.atkPower)} : 守 ${Math.round(pred.defPower)}`);
+
+  // talentGain：同一座城算两遍的差值，应当就是天赋那一份
+  const gain = api.Economy.talentGain(G);
+  const { api: a0, get: g0b } = h.boot({ seed: 7 });
+  const G0 = g0b();
+  ok('无天赋时 talentGain 全为 0',
+    Object.values(api.Economy.talentGain(G0)).every(v => v === 0));
+  ok('农夫天赋 talentGain 粮为正且只有粮',
+    gain.food > 0 && Math.abs(gain.gold) < 1e-9 && Math.abs(gain.mat) < 1e-9,
+    `粮${gain.food.toFixed(1)} 钱${gain.gold.toFixed(1)}`);
+}
+
+// ─────────────────────────────────────────────
 section('武将特技接线');
 {
   const { api, get } = h.boot({ seed: 7 });

@@ -327,8 +327,8 @@ const UI = {
     const f = G.factions[city.owner];
     const pred = Combat.predict(G, plan, from.governor, city, G.player.factionId, State.bld(from, 'drill'));
     UI._tint(hint, pred.win ? 'tip-good' : 'tip-bad');
-    hint.textContent = `攻 ${city.name}（${f ? f.name : '—'}）：预计${pred.win ? '可克' : '难克'}，`
-      + `余兵约 ${U.num(pred.remain)}/${U.num(total)}`;
+    hint.textContent = `攻 ${city.name}（${f ? f.name : '—'}）：我战力 ${U.num(pred.atkPower)} : 守 ${U.num(pred.defPower)}，`
+      + `预计${pred.win ? '可克' : '难克'}，余兵约 ${U.num(pred.remain)}/${U.num(total)}`;
   },
 
   /** 对非交战势力出兵＝背刺，付出前必须让人看清代价 */
@@ -700,7 +700,21 @@ const UI = {
     UI.$('demesneVal').textContent = G.player.demesne.length;
     UI.$('demesneCap').textContent = cityCap(G.player);
     UI.$('favorVal').textContent = Math.round(G.player.favor == null ? 60 : G.player.favor);
-    UI.$('talentVal').textContent = talentName(G);
+    // 天赋：不只写名字，写出它当前每月给直辖城折合多少东西（绝对值才看得出效果）
+    const tal = talentOf(G);
+    const gain = tal.id ? Economy.talentGain(G) : null;
+    const bits = gain
+      ? [['钱', gain.gold], ['粮', gain.food], ['建材', gain.mat], ['铁料', gain.iron]]
+        .filter(([, v]) => Math.abs(v) >= 1)
+      : [];
+    UI.$('talentVal').textContent = tal.id
+      ? `${tal.name}${bits.length ? `（${bits.map(([k, v]) => k + U.signed(v)).join(' ')}/月）` : ''}`
+      : '无';
+    UI.$('talentVal').title = tal.id
+      ? `${tal.name}：${tal.desc}\n只作用于你的直辖城与军队。\n每月折合：`
+        + (bits.map(([k, v]) => `${k}${U.signed(v)}`).join('　') || '—')
+        + '\n（随城建、季节、士族浮动）'
+      : '本局未选天赋';
 
     UI.renderSparks(G);
     UI.renderMissionLine(G);

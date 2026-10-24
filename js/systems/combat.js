@@ -419,9 +419,11 @@ const Combat = {
     const atkStart = troopTotal(a);
     const defStart = troopTotal(d);
     const defDrill = State.bld(city, 'drill');
-    if (atkStart <= 0) return { win: false, remain: 0, atkLossPct: 1, rounds: 0 };
-    if (defStart <= 0) return { win: true, remain: atkStart, atkLossPct: 0, rounds: 0 };
+    if (atkStart <= 0) return { win: false, remain: 0, atkLossPct: 1, rounds: 0, atkPower: 0, defPower: 0 };
+    if (defStart <= 0) return { win: true, remain: atkStart, atkLossPct: 0, rounds: 0, atkPower: 0, defPower: 0 };
 
+    // 首轮双方战力也带回去，UI 能把「差在哪」摊给玩家看
+    let firstAtk = 0, firstDef = 0;
     let rounds = 0;
     while (rounds < 6) {
       rounds++;
@@ -437,19 +439,20 @@ const Combat = {
         factionId: city.owner, drill: defDrill,
         enemyHeroId: atkHeroId,
       });
+      if (rounds === 1) { firstAtk = AP; firstDef = DP; }
       const share = AP / Math.max(1, AP + DP);
       Combat._applyLosses(a, U.clamp((1 - share) * 0.58, 0.02, 0.70));
       Combat._applyLosses(d, U.clamp(share * 0.90, 0.02, 0.88));
 
       const ar = troopTotal(a), dr = troopTotal(d);
       if (dr <= Math.max(6, defStart * 0.10)) {
-        return { win: ar > 0, remain: ar, atkLossPct: 1 - ar / atkStart, rounds };
+        return { win: ar > 0, remain: ar, atkLossPct: 1 - ar / atkStart, rounds, atkPower: firstAtk, defPower: firstDef };
       }
       if (ar < 25 || ar <= atkStart * 0.32) {
-        return { win: false, remain: ar, atkLossPct: 1 - ar / atkStart, rounds };
+        return { win: false, remain: ar, atkLossPct: 1 - ar / atkStart, rounds, atkPower: firstAtk, defPower: firstDef };
       }
     }
-    return { win: false, remain: troopTotal(a), atkLossPct: 1 - troopTotal(a) / atkStart, rounds };
+    return { win: false, remain: troopTotal(a), atkLossPct: 1 - troopTotal(a) / atkStart, rounds, atkPower: firstAtk, defPower: firstDef };
   },
 
   defenseScore(G, city) {

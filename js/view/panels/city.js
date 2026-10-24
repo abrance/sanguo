@@ -2,6 +2,48 @@
 // 定义后由 ui.js 末尾装配进 UI 命名空间，调用点仍是 UI.xxx
 const UI_CITY = {
 
+  // ───────── 武将效果展示的公用小工具 ────────
+  _EFF_NAME: {
+    wu: '武', tong: '统', zhi: '智', zheng: '政', mei: '魅',
+    speed: '行军', cav: '骑兵', defenseCity: '守城', reputation: '名望',
+  },
+  // 这几个键是百分比，其余是平加
+  _EFF_PCT: { speed: 1, cav: 1, defenseCity: 1 },
+
+  /** 宝物效果 → 人看的字：武+4 / 守城+3% */
+  _effText(eff) {
+    return Object.keys(eff).map(k => {
+      const v = eff[k];
+      return `${UI_CITY._EFF_NAME[k] || k}${UI_CITY._EFF_PCT[k] ? '+' + Math.round(v * 100) + '%' : '+' + v}`;
+    }).join(' ');
+  },
+
+  /** 该将身上宝物的效果合计（同类相加） */
+  _treasureSum(G, h) {
+    const sum = {};
+    for (const cat in (h.slots || {})) {
+      const def = TREASURES[h.slots[cat]];
+      if (!def) continue;
+      for (const k in def.eff) sum[k] = (sum[k] || 0) + def.eff[k];
+    }
+    return sum;
+  },
+
+  /**
+   * 该将在本城的战力倍率（统率 + 特技 + 忠诚 + 甲胄）——
+   * 把同一支样板兵带一遍有将 / 无将，比值就是这个人实际值多少。换将换宝，这个数当场变。
+   */
+  _heroPowerMul(G, c, h, isDef) {
+    const opts = {
+      terrain: c.terrain, isDefender: !!isDef, morale: 60,
+      enemyTroops: { inf: 1000 }, factionId: c.owner,
+      wall: isDef ? c.wall : 0, drill: State.bld(c, 'drill'),
+    };
+    const base = Combat.power(G, { inf: 1000 }, null, opts);
+    const withHero = Combat.power(G, { inf: 1000 }, h.id, opts);
+    return base > 0 ? withHero / base : 0;
+  },
+
   // ───────── 城池面板 ─────────
   // ───────── 直辖城切换条：一眼看全城状态，点即切换，不用回地图 ─────────
   renderRail(G) {
@@ -224,8 +266,10 @@ const UI_CITY = {
     const caps = State.troopCapByType(G, c);
     const capTotal = State.troopCapOf(G, c);
     const total = troopTotal(c.garrison);
-    const season = SEASON[U.season(G.meta.month)];
     const clanSat = Math.round(State.clanSat(c));
+    // 月产与结算共用同一份公式（Economy.project），面板数字就是真进账数字
+    const P = Economy.project(G, c);
+    const pt = P.parts;
 
     const rows = [
       ['丁口 / 户籍', `${Math.round(c.pop)} / ${State.popMaxOf(G, c)}`],
@@ -239,11 +283,36 @@ const UI_CITY = {
       ['驻军', `${U.num(total)} / ${U.num(capTotal)}`],
       ['城内宝物', State.treasuresAt(G, c.id).length
         ? `${State.treasuresAt(G, c.id).length} 件` : '—'],
-      ['月产粮', U.num(State.bld(c, 'farm') * 50 * season.food)],
-      ['月产钱', U.num(State.bld(c, 'market') * 20 * season.tax)],
+      ['月净粮', U.signed(P.foodOut - P.armyUpkeep - P.popUpkeep)],
+      ['月入钱', U.signed(P.goldOut)],
+      ['月入建材', U.signed(P.matOut)],
+      ['月入铁料', U.signed(P.ironOut)],
     ];
 
     let html = `<div class="statgrid">${UI._statGrid(rows)}</div>`;
+
+    // 月产明细：每一项乘数都摊开，天赋 / 科技 / 士族 / 守将 / 军区的效果一望即知
+    const f2 = v => v.toFixed(2);
+    const talSuffix = id => (pt.talent.id ? `天赋${f2(pt.talent[id] || 1)}` : '天赋—');
+    html += `<div class="seclabel">月产从哪来</div>`;
+    html += `<div class="capformula">`
+      + `粮 ${U.num(P.foodOut)} = 农田(${pt.farm})×78 × 季${f2(pt.season.food)} × 丁${f2(pt.popFactor)} × 治${f2(pt.orderFactor)}`
+      + ` × 族${f2(pt.clanMul)} × 将${f2(pt.skillMul)} × 区${f2(pt.legionEco)} × 交${f2(pt.bondMul)}`
+      + ` × 科${f2(pt.tech.food)} × ${talSuffix('food')}<br>`
+      + `钱 ${U.num(P.goldOut)} = 市集(${pt.market})×30 × 季${f2(pt.season.tax)} × 丁 × 治`
+      + ` × 族${f2(pt.clanMul)} × 将${f2(pt.skillMul)} × 区${f2(pt.legionEco)} × 交${f2(pt.bondMul)}`
+      + ` × 科${f2(pt.tech.gold)} × 关市${f2(pt.customs)} × ${talSuffix('gold')}<br>`
+      + `建材 ${U.num(P.matOut)} = (28 + 伐木(${pt.lumber})×13 + 采石(${pt.quarry})×21) × 季${f2(pt.season.mat)}`
+      + ` × 科${f2(pt.tech.mat)} × 族${f2(pt.clanMul)} × ${talSuffix('mat')}<br>`
+      + `铁料 ${U.num(P.ironOut)} = (4 + 冶铁(${pt.ironworks})×7) × 科${f2(pt.tech.iron)}`
+      + ` × 族${f2(pt.clanMul)} × ${talSuffix('iron')}<br>`
+      + `军耗粮 ${U.num(P.armyUpkeep)}　民食 ${U.num(P.popUpkeep)}`
+      + `</div>`;
+    html += `<div class="capnote">`
+      + `丁 = 丁口系数　治 = 治安　族 = 士族均心　将 = 守将政治　区 = 军区都督政略　交 = 守将私交`
+      + `　科 = 势力科技　天赋 = 开局天赋（<b>只作用于你的直辖城</b>）。<br>`
+      + `上限：粮 ${U.num(P.foodCap)} · 建材 ${U.num(P.matCap)} · 铁料 ${U.num(P.ironCap)}。`
+      + `</div>`;
 
     html += `<div class="seclabel">驻军 / 兵种兵额</div>`;
     html += `<div class="statgrid">${TROOP_KEYS.map(k =>
@@ -515,18 +584,36 @@ const UI_CITY = {
       const loy = Math.round(h.loyalty || 0);
       const bond = Math.round(h.bond || 0);
       const amb = Math.round(h.ambition || 0);
-      const skName = heroSkill(G, h.skill).name;
+      const sk = skillOf(G, h);
+      const isGov = h.id === c.governor;
       const tags = [];
-      if (h.id === c.governor) tags.push('守将');
+      if (isGov) tags.push('守将');
       if (amb > 60) tags.push(`野心 ${amb}`);
       if ((h.grievance || 0) > 0) tags.push(`积怨 ${h.grievance}`);
       if ((h.idle || 0) >= 6) tags.push(`闲置 ${h.idle} 月`);
-      if (skName) tags.push(skName);
+
+      // 五维读数：本体 + 宝物（dim 加号后是宝物贡献，不做二次累加）
+      const statText = ['wu', 'tong', 'zhi', 'zheng', 'mei'].map(k => {
+        const raw = h[k] || 0;
+        const b = State.heroStat(G, h.id, k) - raw;
+        return `${UI_CITY._EFF_NAME[k]}${raw}${b ? `<span class="dim">+${b}</span>` : ''}`;
+      }).join(' ');
+
+      // 特技 + 它在本文城实际值多少（守将算守城，其余算带队）
+      const mul = UI_CITY._heroPowerMul(G, c, h, isGov);
+      const mulText = `本城${isGov ? '守城' : '带队'}战力 ×${mul.toFixed(2)}（含统率${State.heroStat(G, h.id, 'tong')}）`
+        + (isGov ? `，守军合计 ${U.num(Combat.defenseScore(G, c))}` : '');
+      const skillLine = (sk.name ? `${sk.name}：${sk.desc}` : '无特技') + ' → ' + mulText;
+
+      const trSum = UI_CITY._treasureSum(G, h);
+      const trLine = Object.keys(trSum).length
+        ? `<div class="dim fs-tiny">宝物合计：${UI_CITY._effText(trSum)}</div>`
+        : '<div class="dim fs-tiny">未佩宝</div>';
 
       html += `<div class="clan" data-hero="${h.id}">
         <div class="crow">
           <span class="cname">${U.esc(h.name)}</span>
-          <span class="dim">武${h.wu} 统${h.tong} 智${h.zhi} 政${h.zheng} 魅${h.mei}</span>
+          <span class="dim">${statText}</span>
         </div>
         <div class="barbox">
           <span class="dim fs-tiny">忠</span>
@@ -534,6 +621,8 @@ const UI_CITY = {
           <span class="dim fs-tiny">私</span>
           <div class="bar inf"><div style="--w:${bond}%"></div></div>
         </div>
+        <div class="dim fs-tiny">${skillLine}</div>
+        ${trLine}
         <div class="dim fs-tiny">${tags.join(' · ') || '平平无奇'}</div>
       </div>`;
     }
@@ -590,8 +679,10 @@ const UI_CITY = {
         const def = tid ? TREASURES[tid] : null;
         const btn = document.createElement('button');
         btn.className = 'tslot' + (def ? ` on r${def.rare}` : '');
-        btn.textContent = def ? `${TREASURE_CAT_NAME[cat]}·${def.name}` : `${TREASURE_CAT_NAME[cat]}·空`;
-        btn.title = def ? `${def.about}（点击卸下）` : `${TREASURE_CAT_NAME[cat]}槽未装`;
+        btn.textContent = def ? `${TREASURE_CAT_NAME[cat]}·${def.name} ${UI_CITY._effText(def.eff)}`
+          : `${TREASURE_CAT_NAME[cat]}·空`;
+        btn.title = def ? `${def.name}：${UI_CITY._effText(def.eff)}\n${def.about}（点击卸下）`
+          : `${TREASURE_CAT_NAME[cat]}槽未装`;
         if (def) btn.onclick = () => {
           try { Store.dispatch('UNEQUIP_TREASURE', { heroId: h.id, cat }); }
           catch (e) { UI.toast(e.message); }
@@ -611,8 +702,8 @@ const UI_CITY = {
           const def = TREASURES[tid];
           const b = document.createElement('button');
           b.className = 'tslot';
-          b.textContent = `装 ${def.name}`;
-          b.title = `${TREASURE_CAT_NAME[def.cat]}：${def.about}`;
+          b.textContent = `装 ${def.name} ${UI_CITY._effText(def.eff)}`;
+          b.title = `${TREASURE_CAT_NAME[def.cat]}：${UI_CITY._effText(def.eff)}\n${def.about}`;
           b.onclick = () => {
             try { Store.dispatch('EQUIP_TREASURE', { heroId: h.id, treasureId: tid }); }
             catch (e) { UI.toast(e.message); }
