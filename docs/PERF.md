@@ -102,8 +102,9 @@ SanguoLog.dump();                          // 或 copy(SanguoLog.ring.join("\n")
    - 新增会改变画面的状态时，**必须进这个比对**，否则画面不刷新（看着像卡死）。
    - `resize()` / `attach()` 要置 `Renderer.stale = true`，否则改尺寸后留白。
 2. **画布像素上限**（`js/view/renderer.js` `MAX_CANVAS_PX = 1.3e6`）：`devicePixelRatio` 封顶 1.5，超出像素预算再按 `sqrt(预算/实际)` 缩 dpr。小窗口不缩，大窗口自动降。
-3. **主循环 try/catch**：一帧画崩只跳过该帧并记一次日志，不能让 `requestAnimationFrame` 断链（断了就是"地图永久冻结"）。
-4. **禁用无限动画**：`mlBlink` 由 `infinite` 改为 `3` 次；`.`overlay` 加 `overflow:auto` + `>*{margin:auto}`；`#btnStart` 用 `position:sticky` 钉在底部（小窗口下按钮曾在屏幕外 17px，表现就是"点开局没反应"）。
+3. **跟不上就限流**（同一处）：用 rAF 间隔的滑动平均判断"光栅化跟不上"（>24ms 限到 30fps，>40ms 限到 18fps）。每帧都重画只会把光栅队列堆到 CPU 100%，宁可掉帧也不让页面卡死。`?perf=1` 角标里出现 `限流 33ms` 就是它在工作。
+4. **主循环 try/catch**：一帧画崩只跳过该帧并记一次日志，不能让 `requestAnimationFrame` 断链（断了就是"地图永久冻结"）。
+5. **禁用无限动画**：`mlBlink` 由 `infinite` 改为 `3` 次；`.`overlay` 加 `overflow:auto` + `>*{margin:auto}`；`#btnStart` 用 `position:sticky` 钉在底部（小窗口下按钮曾在屏幕外 17px，表现就是"点开局没反应"）。
 
 ---
 

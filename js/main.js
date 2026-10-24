@@ -117,7 +117,8 @@
         + `画布 ${Renderer.canvas.width}x${Renderer.canvas.height} @${Renderer._dpr}\n`
         + `重画原因 ${why}\n`
         + `绘制 ${st.draws ? (st.drawMs / st.draws).toFixed(1) : '—'}ms/次  最大 ${st.maxDraw.toFixed(1)}ms  `
-        + `合计 ${(st.drawMs / span).toFixed(0)}ms/s\n`
+        + `合计 ${(st.drawMs / span).toFixed(0)}ms/s`
+        + (st.gap ? `  限流 ${st.gap}ms` : '') + '\n'
         + `堆 ${((performance.memory && performance.memory.usedJSHeapSize) / 1e6 || 0).toFixed(0)}MB`
         + `  DOM ${document.getElementsByTagName('*').length}`
         + `  网络 ${st.net ? (st.net < 0 ? '失败' : st.net.toFixed(0) + 'ms') : '—'}`
@@ -250,9 +251,12 @@
     // 静止不重绘：软件光栅化时每帧整幅重绘要吃掉整整一个核，满载降频之后就是「开一会儿突然卡」。
     // 画面要变的时候才画：局面变了 / 镜头动了 / 选中·悬停变了 / 有交战特效 / 画布尺寸变了。
     let seen = { G: null, x: 0, y: 0, z: 0, hover: null, sel: null, targeting: false };
+    let frameDt = 16;      // rAF 间隔滑动平均：光栅化跟不上时它会持续 >20ms
+    let lastDrawAt = 0;
     function frame(t) {
       const dt = Math.min(80, t - last);
       last = t;
+      frameDt = frameDt * 0.9 + dt * 0.1;
       if (PERF) PERF.frames++;
       try {
         const G = Store.get();
@@ -261,7 +265,12 @@
           const dirty = seen.G !== G || seen.x !== cam.x || seen.y !== cam.y || seen.z !== cam.zoom
             || seen.hover !== Renderer.hoverId || seen.sel !== Renderer.selectedId
             || seen.targeting !== Renderer.targeting || Renderer.moving();
-          if (dirty) {
+          // 光栅化跟不上（rAF 间隔持续超两帧）时限流：每帧都重画只会把队列堆到 CPU 100%，
+          // 宁可降帧也不让页面卡死。跟不上越严重，限得越狠。
+          const minGap = frameDt > 40 ? 55 : frameDt > 24 ? 33 : 0;
+          if (PERF) PERF.gap = minGap;
+          if (dirty && (!minGap || t - lastDrawAt >= minGap)) {
+            lastDrawAt = t;
             if (PERF) {
               const why = seen.G !== G ? 'state'
                 : (seen.x !== cam.x || seen.y !== cam.y || seen.z !== cam.zoom) ? 'cam'
