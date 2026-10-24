@@ -145,6 +145,7 @@ git worktree remove ../sanguo-view      # 合完之后删掉
 | [docs/COMMANDS.md](docs/COMMANDS.md) | 23 个命令的参数、校验规则、返回值与错误 |
 | [docs/CONTENT.md](docs/CONTENT.md) | 扩展指南：加建筑/科技/兵种/武将/城池/势力/剧本/上命，以及改平衡的入口 |
 | [docs/TESTING.md](docs/TESTING.md) | 无头测试怎么跑、断言覆盖了什么、盲区在哪 |
+| [docs/PERF.md](docs/PERF.md) | **卡顿排查手册**：三层测量（进程 CPU / `?perf=1` 角标 / `document.getAnimations()`）、脏重绘与画布像素上限、无限 CSS 动画这类坑、`[sanguo]` 错误日志与启动自检 |
 | [docs/AI.md](docs/AI.md) | **AI 行为逻辑**（持续维护）：决策顺序、全部阈值与概率、外交 AI、参数速查、已知天花板 |
 | [js/data/talents.js](js/data/talents.js) | **玩家天赋**数值表（开局 6 选 1），改数值只动这一个文件 |
 | [docs/DIPLOMACY.md](docs/DIPLOMACY.md) | **P3 外交系统设计稿**（已实现）：关系与状态机、三层权限、AI 结盟、验收标准 |

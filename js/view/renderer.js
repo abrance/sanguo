@@ -25,14 +25,23 @@ const Renderer = {
     window.addEventListener('resize', Renderer.resize);
   },
 
+  /** 一块画布的像素上限：没显卡加速时合成开销 ≈ 像素数 × 刷新率，大窗口不封顶就是半核跑空转 */
+  MAX_CANVAS_PX: 1.3e6,
+  scale: 1,
+
   resize() {
-    const dpr = window.devicePixelRatio || 1;
+    // 页面缩放（Ctrl+=）会抬高 devicePixelRatio：画布像素按平方涨，软件光栅化下直接爆 CPU。
+    // 两道闸：dpr 封顶 1.5，再按最大像素数降渲染分辨率（CSS 尺寸不变，只降内部像素）。
     const rect = Renderer.canvas.getBoundingClientRect();
+    let dpr = Math.min(window.devicePixelRatio || 1, 1.5) * (Renderer.scale || 1);
+    const px = Math.max(1, rect.width * rect.height) * dpr * dpr;
+    if (px > Renderer.MAX_CANVAS_PX) dpr *= Math.sqrt(Renderer.MAX_CANVAS_PX / px);
     Renderer.canvas.width = Math.max(1, Math.floor(rect.width * dpr));
     Renderer.canvas.height = Math.max(1, Math.floor(rect.height * dpr));
     Renderer._dpr = dpr;
     Renderer.cw = rect.width;
     Renderer.ch = rect.height;
+    Renderer.stale = true;      // 尺寸变了，必须重画一帧
   },
 
   attach(G) {
@@ -40,6 +49,13 @@ const Renderer = {
     Renderer.terrain = GameMap.prerender(GameMap.generate(G.meta.seed), Object.values(G.cities));
     const home = G.cities[G.player.homeCityId];
     if (home) Renderer.centerOn(home.x, home.y);
+    Renderer.stale = true;
+  },
+
+  /** 本帧要不要重画：静止时返回 false，主循环据此跳过整幅重绘 */
+  moving() {
+    return !!(Renderer.stale || Renderer._fly || Renderer._inertia
+      || (Renderer.fx && Renderer.fx.length));
   },
 
   centerOn(x, y) { Renderer.cam.x = x; Renderer.cam.y = y; },

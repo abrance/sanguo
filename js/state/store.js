@@ -1065,17 +1065,25 @@ const Store = (() => {
   function get() { return G; }
 
   function dispatch(type, payload) {
-    if (!G) throw new Error('尚未开局');
-    const handler = COMMANDS[type];
-    if (!handler) throw new Error('未知命令: ' + type);
-    if (G.over && !OVER_SAFE[type]) throw new Error('战局已终');
-    const draft = U.clone(G);
-    const res = handler(draft, payload || {});
-    snapshotRuntime(draft);
-    G = draft;
-    Bus.emit('state', G);
-    Bus.emit('cmd', { type, payload, res });
-    return res;
+    try {
+      if (!G) throw new Error('尚未开局');
+      const handler = COMMANDS[type];
+      if (!handler) throw new Error('未知命令: ' + type);
+      if (G.over && !OVER_SAFE[type]) throw new Error('战局已终');
+      const draft = U.clone(G);
+      const res = handler(draft, payload || {});
+      snapshotRuntime(draft);
+      G = draft;
+      Bus.emit('state', G);
+      Bus.emit('cmd', { type, payload, res });
+      return res;
+    } catch (e) {
+      // 命令被拒是正常业务（钱不够 / 条件不满足），但也要留痕：控制台能查到哪条命令、什么原因
+      const msg = `${type} 被拒: ${e.message}`;
+      if (typeof window !== 'undefined' && window.SanguoLog) window.SanguoLog.push('cmd', msg, null);
+      else console.warn('[cmd] ' + msg);
+      throw e;
+    }
   }
 
   function replace(game) {

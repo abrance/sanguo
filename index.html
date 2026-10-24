@@ -515,5 +515,18 @@
 <script src="js/view/panels/end.js"></script>
 <script src="js/view/ui.js"></script>
 <script src="js/main.js"></script>
+<script>
+  // 启动自检：3 秒后主脚本还没跑起来，说明文件没加载完整（服务正在重启 / 刷新太快 / 缓存）——
+  // HTML+CSS 能显示、但点什么都没反应，就看这条提示，不用开 DevTools
+  setTimeout(function () {
+    if (window.__bootOk) return;
+    var d = document.createElement('div');
+    d.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99999;background:#7a1f16;color:#ffe;'
+      + 'font:13px/1.8 sans-serif;padding:8px 12px';
+    d.textContent = '界面没启动：脚本没加载完整（服务在重启 / 刷新太快 / 缓存）。'
+      + '确认 make server 已就绪后按 Ctrl+Shift+R 强制刷新。';
+    document.body.appendChild(d);
+  }, 3000);
+</script>
 </body>
 </html>
