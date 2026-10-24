@@ -309,9 +309,6 @@ option{background:var(--bg2);color:var(--ink)}
   border:1px solid var(--line);border-radius:var(--r-sm);
 }
 #sideTabs button:hover{border-color:var(--btn-line-hover);color:var(--ink)}
-#sideTabs button.on{
-  background:var(--surface-6);color:var(--gold);border-color:var(--gold);
-}
 
 .tabpane{flex:1 1 0;min-height:0;display:flex;flex-direction:column;gap:6px}
 
@@ -323,7 +320,6 @@ option{background:var(--bg2);color:var(--ink)}
   border:1px solid var(--line);border-radius:var(--r-sm);
 }
 .subtabs button:hover{color:var(--ink)}
-.subtabs button.on{background:var(--surface-6);color:var(--gold);border-color:var(--gold-line)}
 
 .pane{flex:1 1 0;min-height:0;overflow-y:auto;font-size:var(--fs-body);padding-right:2px}
 
@@ -475,7 +471,6 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
   font-size:var(--fs-tiny);padding:1px 6px;border-radius:var(--r-sm);
   border:1px solid var(--rare-1);color:var(--ink-dim);cursor:pointer;background:transparent;
 }
-.tslot.on{border-color:var(--gold);color:var(--ink)}
 .tslot.on.r1{border-color:var(--rare-1)}
 .tslot.on.r2{border-color:var(--rare-2)}
 .tslot.on.r3{border-color:var(--rare-3);color:var(--gold-pale)}
@@ -495,7 +490,6 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
 }
 .titem:hover{background:var(--line-soft)}
 .titem.done{color:var(--ally)}
-.titem.cur{color:var(--gold);border-color:var(--gold-line);background:var(--row-hover)}
 .titem.locked{color:var(--ink-locked)}
 .titem .tname{flex:1 1 auto}
 .titem .tcost{font-size:var(--fs-label);color:var(--ink-dim)}
@@ -535,20 +529,19 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
 #legend .star{color:var(--gold-pale);font-size:var(--fs-tiny);line-height:1}
 
 /* ---------- 一键理政条 ---------- */
-#bulkBar{
+.bulkbar{
   flex:0 0 auto;padding:6px 8px 7px;
   background:var(--bg3);border:1px solid var(--line);border-radius:var(--r-md);
 }
-#bulkBar .bk-head{font-size:var(--fs-label);color:var(--ink-dim);letter-spacing:1px;margin-bottom:5px}
-#bulkBar .bk-row{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
-#bulkBar .bk-row+.bk-row{margin-top:4px}
-#bulkBar .bk-lab{font-size:var(--fs-label);color:var(--ink-dim);margin-right:2px}
-#bulkBar button{
+.bulkbar .bk-head{font-size:var(--fs-label);color:var(--ink-dim);letter-spacing:1px;margin-bottom:5px}
+.bulkbar .bk-row{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.bulkbar .bk-row+.bk-row{margin-top:4px}
+.bulkbar .bk-lab{font-size:var(--fs-label);color:var(--ink-dim);margin-right:2px}
+.bulkbar button{
   font-family:inherit;font-size:var(--fs-label);padding:2px 7px;cursor:pointer;
   background:var(--btn-bg);color:var(--ink);border:1px solid var(--btn-line);border-radius:var(--r-sm);
 }
-#bulkBar button:hover{border-color:var(--gold)}
-#bulkBar button.on{background:var(--surface-6);border-color:var(--gold);color:var(--gold-pale)}
+.bulkbar button:hover{border-color:var(--gold)}
 
 /* ---------- 直辖城切换条 ---------- */
 #cityRail{
@@ -564,7 +557,6 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
   background:var(--btn-bg);border:1px solid var(--btn-line);border-radius:var(--r-sm);
 }
 .cityrail .chip:hover{border-color:var(--gold)}
-.cityrail .chip.on{background:var(--surface-6);border-color:var(--gold);color:var(--gold-pale)}
 .brow .bdg, .cityrail .chip .bdg{
   font-size:9px;line-height:1;padding:1px 3px;border-radius:2px;
   background:var(--surface-2);border:1px solid var(--hair);color:var(--ink-dim);
@@ -581,7 +573,6 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
 .lgcard .lghead b{color:var(--gold-pale)}
 .lgcard .lgrow{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:4px}
 .lgcard .lglab{font-size:var(--fs-label);color:var(--ink-dim);min-width:26px}
-.lgcard .mini.on{background:var(--surface-6);border-color:var(--gold);color:var(--gold-pale)}
 .lgcard .mini:disabled{opacity:.35;cursor:not-allowed}
 .lgcard .lgacts{display:flex;gap:5px;margin-top:6px}
 
@@ -603,7 +594,6 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
   border:1px solid var(--btn-line);border-radius:var(--r-sm);cursor:pointer;
 }
 .prow .pct button:hover{border-color:var(--gold)}
-.prow .pct button.on{background:var(--surface-6);border-color:var(--gold);color:var(--gold-pale)}
 .prow .pval{width:86px;text-align:right;font-size:var(--fs-label);color:var(--gold-pale)}
 .peace-note{font-size:var(--fs-label);color:var(--ink-dim);line-height:1.7;margin:10px 0 0}
 
@@ -648,7 +638,6 @@ button.wide{display:block;width:100%;margin-top:14px;padding:9px;font-size:var(-
   display:flex;align-items:center;gap:6px;
 }
 .pick:hover{border-color:var(--gold)}
-.pick.on{border-color:var(--gold);background:var(--surface-6)}
 .pick .csw{width:8px;height:8px}
 .pick .pk-meta{margin-left:auto;font-size:var(--fs-tiny);color:var(--ink-dim)}
 
@@ -764,7 +753,6 @@ button.wide-mini{display:block;width:100%;margin-top:5px;padding:0;min-height:va
   padding:4px 8px;border:1px solid var(--line);border-radius:var(--r-sm);
   background:var(--surface-4);font-size:var(--fs-body);color:var(--ink-dim);
 }
-.ladder-row.cur{border-color:var(--gold);background:var(--surface-5);color:var(--ink)}
 .ladder-row.past{color:var(--ally-past)}
 .ladder-row .lv{width:16px;text-align:center;color:var(--gold)}
 .ladder-row .nm{width:42px;color:var(--ink)}
@@ -779,7 +767,6 @@ button.wide-mini{display:block;width:100%;margin-top:5px;padding:0;min-height:va
   cursor:pointer;transition:border-color var(--t-fast),background var(--t-fast);
 }
 .rcard:hover{border-color:var(--line-warm-2)}
-.rcard.on{border-color:var(--gold);background:var(--surface-5)}
 .rcard.locked{opacity:.45;cursor:not-allowed}
 .rcard h4{font-size:var(--fs-body-2);font-weight:400;margin-bottom:4px;letter-spacing:2px}
 .rcard .bl{color:var(--ally-soft);margin-bottom:2px}
@@ -882,7 +869,6 @@ button.wide-mini{display:block;width:100%;margin-top:5px;padding:0;min-height:va
   padding:3px 4px;
   font-size:var(--fs-body);
 }
-.crow-pick.on{background:var(--surface-5)}
 .crow-pick input{accent-color:var(--gold);margin:0;cursor:pointer}
 .crow-pick .cn{flex:1 1 auto;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .crow-pick .cm{font-size:var(--fs-label);color:var(--ink-dim);white-space:nowrap}
@@ -1022,7 +1008,6 @@ body.shot *,body.shot *::before,body.shot *::after{
   border:1px solid var(--line);border-radius:var(--r-sm);
 }
 .logfilters .chip:hover{color:var(--ink);border-color:var(--btn-line-hover)}
-.logfilters .chip.on{background:var(--surface-6);color:var(--gold);border-color:var(--gold-line)}
 .logsearch{
   flex:1 1 auto;min-width:0;
   font-family:inherit;font-size:var(--fs-label);padding:1px 6px;
@@ -1080,6 +1065,27 @@ body.shot *,body.shot *::before,body.shot *::after{
   font-size:var(--fs-label);line-height:1.6;color:var(--ink-warm);
 }
 
+/* ---------- 选中态（.on / .cur / .sel）----------
+   全站只在这里定义（原先散在 14 处，其中 5 份字面完全一样）。
+   只有三种语义，新增选中样式先看能不能复用，别再抄一份 surface-6 + gold：
+   金底金字（页签类）/ 深底金字（按钮类）/ 深底但文字不变（卡片与行）
+   放得靠后是为了用 DOM 顺序压过各组件的基础规则（两组权重与组件类持平）。 */
+.cityrail .chip.on,.mini.on,.bulkbar button.on,.prow .pct button.on{
+  background:var(--surface-6);border-color:var(--gold);color:var(--gold-pale);
+}
+.subtabs button.on,.logfilters .chip.on{
+  background:var(--surface-6);border-color:var(--gold-line);color:var(--gold);
+}
+/* 一级导航（顶栏页签）比二级页签亮一档：层级靠描金色区分，别抹平 */
+#sideTabs button.on{background:var(--surface-6);border-color:var(--gold);color:var(--gold)}
+.pick.on{background:var(--surface-6);border-color:var(--gold)}
+.rcard.on{border-color:var(--gold);background:var(--surface-5)}
+.crow-pick.on{background:var(--surface-5)}
+.titem.cur{color:var(--gold);border-color:var(--gold-line);background:var(--row-hover)}
+.ladder-row.cur{border-color:var(--gold);background:var(--surface-5);color:var(--ink)}
+.tslot.on{border-color:var(--gold);color:var(--ink)}
+.actions button.sel{border-color:var(--gold)}
+
 /* ==========================================================================
    分层契约（写新样式前先读这一段）
    1. token 层：:root 变量。所有颜色 / 字号 / 圆角只能从这里来
@@ -1121,7 +1127,6 @@ body.shot *,body.shot *::before,body.shot *::after{
 .tip-gold{color:var(--gold-bright)}
 .tip-good{color:var(--ally)}
 .tip-bad{color:var(--war)}
-.actions button.sel{border-color:var(--gold)}
 .card.tight{flex:0 0 auto;max-height:150px}
 .card.autoheight{flex:0 0 auto}
 .icon-sprite{position:absolute;width:0;height:0;overflow:hidden}

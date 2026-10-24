@@ -162,6 +162,21 @@
 新增一种「条」或「行」时，先看能不能加进上面这几组，别再复制一份
 `background:var(--surface-3);border-radius:var(--r-sm);overflow:hidden`。
 
+## 3.2 选中态（`.on` / `.cur` / `.sel`）
+
+选中样式**全站只有一处**：`style.css` 的「选中态」段（在分层契约注释前面）。
+三个修饰类共 14 个组件，原先散在 14 处（其中 5 份字面完全一样）。只有三种语义：
+
+| 语义 | 用在哪 | 表现 |
+|---|---|---|
+| 按钮 / 行选中 | `.mini` `.chip` `.bulkbar button` `.prow .pct button` `.pick` `.rcard` `.crow-pick` | `--surface-6`（或 `--surface-5`）+ 金色描边 |
+| 页签选中 | `#sideTabs` / `.subtabs` / `.logfilters .chip` | 同上；一级导航描 `--gold`、二级描 `--gold-line`（层级靠描金色区分，别抹平） |
+| 行/槽内高亮 | `.titem.cur` `.ladder-row.cur` `.tslot.on` `.actions button.sel` | 各自保留原样，不合并 |
+
+新增选中样式先看能不能用上面三种，**别再抄一份 `background:var(--surface-6);border-color:var(--gold)`**。
+这整段放在组件层末尾：权重与组件基础类持平，靠 DOM 顺序取胜。所以 `#bulkBar` 的容器
+已改名为 `.bulkbar` 类（id 选择器高一级，会把 `.on` 压掉）。
+
 ### 可点的 div 必须三件套
 
 用 `<div>` 冒充按钮时（军队行、直辖城切换条），模板里必须同时给
