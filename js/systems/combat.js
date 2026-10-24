@@ -234,12 +234,30 @@ const Combat = {
   },
 
   /**
+   * 一直打到结束。正常局面靠 MAX_ROUNDS 收尾；再加一道硬闸，
+   * 免得存档里的脏数据（round/兵力为 NaN）把 `while (!step(...))` 变成死循环。
+   */
+  runToEnd(G, army, city, tactic, stamp) {
+    let guard = 0;
+    while (!Combat.step(G, army, city, tactic, stamp)) {
+      tactic = null;
+      if (++guard > 200) {      // 正常最多 MAX_ROUNDS 轮，200 是兜底
+        if (army.battle) army.battle.done = true;
+        break;
+      }
+    }
+  },
+
+  /**
    * 推进一轮。tacticKey 非空时本场消耗一次战法。
    * 返回 true 表示战斗结束（b.done / b.captured）。
    */
   step(G, army, city, tacticKey, stamp) {
     const b = army.battle;
     if (!b || b.done) return true;
+    // 回合数必须先落成有限数：老存档/手工改档里出现 NaN 时，b.round >= MAX_ROUNDS
+    // 永远为假，调用方的 `while (!step(...))` 就成了死循环（主线程卡死、无报错）
+    b.round = Number.isFinite(b.round) ? b.round : 0;
 
     let mods = null;
     if (tacticKey && !b.tacticUsed) {
@@ -383,7 +401,7 @@ const Combat = {
   resolve(G, army, city, stamp, opts) {
     Combat.begin(G, army, city, stamp);
     let tactic = opts && opts.aiTactic ? Combat._aiTactic(G, army, city) : null;
-    while (!Combat.step(G, army, city, tactic, stamp)) { tactic = null; }
+    Combat.runToEnd(G, army, city, tactic, stamp);
     return Combat.conclude(G, army, city, stamp);
   },
 
@@ -405,7 +423,7 @@ const Combat = {
       if (!army.battle) continue;
       const city = G.cities[army.battle.cityId];
       if (!city) { delete army.battle; continue; }
-      while (!Combat.step(G, army, city, null, stamp)) { /* 自动打完 */ }
+      Combat.runToEnd(G, army, city, null, stamp);
       const rep = Combat.conclude(G, army, city, stamp);
       delete army.battle;
       Army._afterBattle(G, army, city, rep, stamp);

@@ -88,6 +88,7 @@ const Army = {
       if (a.battle) continue;
       // 待发：原地不动（会攻的同步抵达就靠它）
       if (a.delay > 0) { a.delay -= 1; continue; }
+      if (!Number.isFinite(a.eta)) a.eta = 1;   // 脏存档兜底：NaN 会让这支部队永远到不了
       a.eta -= 1;
       const prog = U.clamp(1 - a.eta / a.totalEta, 0, 1);
       const from = G.cities[a.from];

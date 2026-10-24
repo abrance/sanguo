@@ -2817,6 +2817,58 @@ section('剧本：官渡 200');
 }
 
 // ─────────────────────────────────────────────
+section('脏数据不能把主线程卡死');
+{
+  // 攻城推进：调用方是 `while (!Combat.step(...))`，只要 step 不再推进回合就是死循环。
+  // 老存档 / 手工改档里 round、兵力出现 NaN 时必须照样收敛。
+  const { api, get } = h.boot({ seed: 77 });
+  const st = get();
+  const home = st.cities[st.player.homeCityId];
+  const nb = api.State.neighbors(st, home.id, 300).find(x => x.owner !== st.player.factionId);
+  for (const k of api.TROOP_KEYS) nb.garrison[k] = 0;
+  nb.garrison.inf = 900;
+  nb.wall = 2;
+  const pr = api.Diplo.pair(st, st.player.factionId, nb.owner);
+  pr.status = api.Diplo.WAR; pr.rel = -80; pr.until = 0;
+  api.Store.replace(st);
+
+  const g = get();
+  const army = api.Army.create(g, {
+    factionId: g.player.factionId, heroId: 'PLAYER', from: home.id, to: nb.id,
+    troops: { inf: 2000 }, mission: 'attack',
+  });
+  api.Combat.begin(g, army, nb, 'test');
+  army.battle.round = NaN;                 // 脏数据：正常代码下 round >= MAX_ROUNDS 永不成立
+  army.battle.atkStart = NaN;
+  api.Combat.runToEnd(g, army, nb, null, 'test');
+  ok('攻城：round 为 NaN 时 runToEnd 仍会收敛', army.battle.done === true,
+    `round=${army.battle.round} done=${army.battle.done}`);
+  ok('攻城：收敛后回合数是有限数', Number.isFinite(army.battle.round), String(army.battle.round));
+
+  // 行军的 eta 为 NaN：旧代码会永远到不了（部队卡在路上，局面越积越多）
+  const g2 = get();
+  const a2 = api.Army.create(g2, {
+    factionId: g2.player.factionId, heroId: 'PLAYER', from: home.id, to: nb.id,
+    troops: { inf: 100 }, mission: 'move',
+  });
+  a2.eta = NaN; a2.totalEta = NaN;
+  g2.armies[a2.id] = a2;
+  api.Army.advance(g2, 'test');
+  ok('行军：eta 为 NaN 时会被修正而不是永远到不了', Number.isFinite(a2.eta), String(a2.eta));
+
+  // 官阶：晋升循环上限就是阶数，脏 rank/merit 也只能推到底
+  const g3 = get();
+  g3.player.rank = 1;
+  g3.player.merit = Infinity;
+  api.Rank.checkPromotion(g3, 'test');
+  ok('官阶：merit 为 Infinity 时晋升到顶就停', g3.player.rank === api.RANKS.length,
+    `rank=${g3.player.rank}/${api.RANKS.length}`);
+  g3.player.rank = NaN;
+  api.Rank.checkPromotion(g3, 'test');
+  ok('官阶：rank 为 NaN 时不抛错也不死循环', true);
+}
+
+// ─────────────────────────────────────────────
 section('渲染层纯函数（js/view 里不碰 DOM 的那部分）');
 {
   // renderer.js 顶层只有对象字面量与纯函数，能单独装进 vm 跑

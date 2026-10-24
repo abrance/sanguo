@@ -132,7 +132,33 @@ copy(Diag.report());
 
 ---
 
-## 6. 回归守护
+## 6. 主线程阻塞点审计（2026-10 结论）
+
+排查"卡死"先分清两类：**死循环/同步长任务**（控制台也死）与**每帧太贵**（掉帧但 JS 活着）。
+下面是把全部 `while` / 自递归 / 增长中的 `for` 过一遍之后的清单：
+
+| 位置 | 状态 | 说明 |
+| --- | --- | --- |
+| `Renderer` 画家算法 | **已修** | `while (ai < armies.length) draw(...)` 漏 `ai++`，军队在所有可见城池以南就死循环。现走 `mergeDrawOrder`，`for` 收尾 |
+| `Combat.resolve` / `finishOpen` | **已加固** | 调用方是 `while (!step(...))`；`round`/兵力为 NaN 时 `round >= MAX_ROUNDS` 永不成立。现在 `step` 先把 `round` 归一为有限数，`runToEnd` 再加 200 轮硬闸 |
+| `Army.advance` | **已加固** | `eta` 为 NaN 的部队永远到不了（不卡 CPU，但部队越积越多）。现在先修正 `eta` 再减 |
+| `Rank.checkPromotion` | **已加固** | `while (true)` 晋升；`nextRank` 到顶返回 null，现在再加"最多阶数"的 `for` 上限 |
+| `EventSys.autoResolve` | 安全 | `guard++ < 8` |
+| `Save.list` / `Save.head` | **注意** | 每列一个槽就 `JSON.parse` 整份存档（~170KB）。槽多了打开存档面板会顿一下 —— 同步解析，不是死循环 |
+| `Store.dispatch` | **注意** | 每条命令都 `U.clone` 整棵树；大局面约 5–15ms。连点会排队但不会卡死 |
+| `END_TURN` / AI | **注意** | 同步跑完全部势力；70 城 / 25 军实测 8–16ms。局面越大越久（同步长任务，不是死循环） |
+| `confirm()`（覆盖/删除存档） | 注意 | 浏览器原生模态，会真的阻塞 JS；对话框被窗口挡住时看着像"点了没反应" |
+| `setInterval` | 安全 | 音效观察 600ms 一次；`?perf=1` 的 ping 2s 一次 |
+
+### 审计与回归手段
+
+1. **全文扫描**：`while (` / `for (;;)` / 自递归 / 集合在循环里被 push 的 `for`，逐个确认游标推进。
+2. **脏数据注入断言**：`tools/verify.js` 的「脏数据不能把主线程卡死」一节，把 `round`/`eta`/`rank`/`merit` 写成 `NaN`/`Infinity` 跑一遍，收敛不了就是回归。
+3. **DOM 模糊测试**（手工跑，需要浏览器）：随机点页签/按钮/弹窗/城池 + 随机拖拽缩放，每个动作前 `console.log('fuzz#N')`，用 CDP 单动作超时判定卡死 —— 卡住时最后一条日志就是肇事动作。本项目用这招跑过 400（地图操作）+ 300（弹窗/战斗/存读档）个动作，均无卡死。
+
+---
+
+## 7. 回归守护
 
 ```bash
 node tools/verify.js                 # 逻辑层 295 条断言，含"脚本被 index.html 引用"等静态检查

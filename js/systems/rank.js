@@ -20,7 +20,8 @@ const Rank = {
   /** 检查晋升 */
   checkPromotion(G, stamp) {
     let promoted = false;
-    while (true) {
+    // 上限就是阶数：nextRank 到顶返回 null，这里再兜一道，脏数据也不会死循环
+    for (let guard = 0; guard <= RANKS.length; guard++) {
       const nr = nextRank(G.player.rank);
       if (!nr) break;
       const need = meritThreshold(G.player);
