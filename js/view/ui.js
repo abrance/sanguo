@@ -38,6 +38,7 @@ const UI = {
     Bus.on('combat', e => Renderer.addFx(e));
     UI.buildStart();
     UI.resizeCanvasSoon();
+    window.addEventListener('resize', () => { UI._wrapRect = null; });   // 悬浮提示缓存的容器矩形作废
   },
 
   resizeCanvasSoon() { requestAnimationFrame(() => Renderer.resize()); },
@@ -144,7 +145,16 @@ const UI = {
       Renderer.hoverId = hit ? hit.id : null;
       if (UI.pending && hit && hit.id !== prev) UI.showTargetHint(hit);
       if (UI.pending) UI.hideCityTip();
-      else UI.showCityTip(hit, e.clientX, e.clientY);
+      // 悬浮提示一帧最多更新一次：120Hz 鼠标（或触控板）能一秒打上百个 mousemove，
+      // 每个都重建 innerHTML + 量尺寸 = 强制布局，主线程直接被拖住
+      else {
+        UI._tipArgs = { city: hit, x: e.clientX, y: e.clientY };
+        if (!UI._tipRaf) UI._tipRaf = requestAnimationFrame(() => {
+          UI._tipRaf = 0;
+          const a = UI._tipArgs;
+          if (a) UI.showCityTip(a.city, a.x, a.y);
+        });
+      }
     });
 
     cv.addEventListener('mouseleave', () => {
@@ -377,7 +387,7 @@ const UI = {
     const tip = UI.$('cityTip');
     if (!tip) return;
     const G = Store.get();
-    if (!G || !city) { tip.classList.add('hidden'); return; }
+    if (!G || !city) { tip.classList.add('hidden'); UI._tipSig = ''; UI._tipSize = null; return; }
 
     const f = G.factions[city.owner];
     const isMine = city.owner === G.player.factionId;
@@ -390,7 +400,12 @@ const UI = {
     const building = city.buildQueue && city.buildQueue.length
       ? BUILDINGS[city.buildQueue[0].key].name : null;
 
-    tip.innerHTML = `
+    // 同一座城、内容没变就不重建 DOM：悬停移动时只改两个 style，不再触发强制布局
+    const sig = [city.id, city.owner, city.grantedTo, troops, Math.round(city.order), Math.round(city.morale),
+      city.wall.toFixed(1), gov ? gov.id : '', city.policy, building].join('|');
+    if (sig !== UI._tipSig) {
+      UI._tipSig = sig;
+      tip.innerHTML = `
       <div class="ct-head">
         <b>${U.esc(city.name)}</b>
         <span class="c" style="--c:${f ? f.color : 'var(--ink-ghost)'}">${f ? U.esc(f.name) : '—'}${isDemesne ? ' · 直辖' : ''}</span>
@@ -404,10 +419,16 @@ const UI = {
       <div class="ct-foot dim">${TERRAIN[city.terrain].name} · ${city.region}
         ${city.policy ? ' · ' + POLICIES[city.policy].name : ''}
         ${building ? ' · 兴建' + building : ''}</div>`;
+      tip.classList.remove('hidden');
+      UI._tipSize = { w: tip.offsetWidth, h: tip.offsetHeight };   // 只有重建时才量尺寸
+    } else if (tip.classList.contains('hidden')) {
+      tip.classList.remove('hidden');
+      if (!UI._tipSize) UI._tipSize = { w: tip.offsetWidth, h: tip.offsetHeight };
+    }
 
-    tip.classList.remove('hidden');
-    const wrap = UI.$('mapwrap').getBoundingClientRect();
-    const w = tip.offsetWidth, h = tip.offsetHeight;
+    const size = UI._tipSize || { w: 200, h: 80 };
+    const wrap = UI._wrapRect || (UI._wrapRect = UI.$('mapwrap').getBoundingClientRect());
+    const w = size.w, h = size.h;
     let x = cx - wrap.left + 16;
     let y = cy - wrap.top + 18;
     if (x + w > wrap.width - 8) x = cx - wrap.left - w - 14;

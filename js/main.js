@@ -117,13 +117,15 @@
         + `画布 ${Renderer.canvas.width}x${Renderer.canvas.height} @${Renderer._dpr}\n`
         + `重画原因 ${why}\n`
         + `绘制 ${st.draws ? (st.drawMs / st.draws).toFixed(1) : '—'}ms/次  最大 ${st.maxDraw.toFixed(1)}ms  `
-        + `合计 ${(st.drawMs / span).toFixed(0)}ms/s\n`
+        + `合计 ${(st.drawMs / span).toFixed(0)}ms/s`
+        + (st.gap ? `  限流 ${st.gap}ms` : '') + '\n'
         + `堆 ${((performance.memory && performance.memory.usedJSHeapSize) / 1e6 || 0).toFixed(0)}MB`
         + `  DOM ${document.getElementsByTagName('*').length}`
         + `  网络 ${st.net ? (st.net < 0 ? '失败' : st.net.toFixed(0) + 'ms') : '—'}`
         + (st.err ? `\n错误 ${st.err}` : '');
       st.draws = 0; st.frames = 0; st.why = {}; st.drawMs = 0; st.maxDraw = 0; st.since = performance.now();
     }, 1000);
+    window.SanguoPerf = { line: () => el.textContent.replace(/\n/g, ' | ') };
     return st;
   }
 
@@ -143,6 +145,89 @@
     return { push, ring, dump: () => console.table(ring) };
   })();
   window.SanguoLog = LOG;
+
+  // 卡顿取证：长任务（>120ms）与主线程停顿（帧间隔 >400ms）各留最近 6 条，
+  // 报告里能直接看出“是主线程被卡住”还是“光栅化慢”
+  const longTasks = [];
+  const stalls = [];
+  try {
+    if (typeof PerformanceObserver !== 'undefined') {
+      new PerformanceObserver(list => {
+        for (const e of list.getEntries()) {
+          const line = `longtask ${Math.round(e.duration)}ms @${Math.round(e.startTime)}`;
+          longTasks.push(line);
+          if (longTasks.length > 6) longTasks.shift();
+          LOG.push('long', line, null);
+        }
+      }).observe({ entryTypes: ['longtask'] });
+    }
+  } catch (e) { /* 老浏览器不支持 longtask，忽略 */ }
+
+  /**
+   * 一键诊断报告：不用开 DevTools、不用截图，控制台 `copy(Diag.report())` 粘给别人就行。
+   * 带上环境、画布、动画、DOM、错误日志、局面规模——卡顿报告最常缺的就是这几项。
+   */
+  const Diag = {
+    report() {
+      const G = (typeof Store !== 'undefined') && Store.get();
+      let anims = [];
+      try {
+        anims = document.getAnimations().map(a => `${a.animationName || a.transitionProperty || '?'}:`
+          + `${a.playState}:${(a.effect && a.effect.target && (a.effect.target.id || a.effect.target.className)) || ''}`);
+      } catch (e) { anims = ['getAnimations 不可用']; }
+      const overlays = ['startOverlay', 'turnOverlay', 'eventOverlay', 'peaceOverlay', 'rankOverlay',
+        'saveOverlay', 'helpOverlay', 'cityTip']
+        .map(id => { const e = document.getElementById(id); return e ? id + '=' + (e.classList.contains('hidden') ? 'hidden' : 'SHOWN') : null; })
+        .filter(Boolean);
+      const r = Renderer;
+      return [
+        `时间 ${new Date().toString()}`,
+        `UA ${navigator.userAgent}`,
+        `屏幕 ${screen.width}x${screen.height} 窗口 ${innerWidth}x${innerHeight} dpr ${window.devicePixelRatio} 页面缩放 ${(window.visualViewport && visualViewport.scale) || 1}`,
+        `画布 ${r.canvas ? r.canvas.width + 'x' + r.canvas.height : '-'} @${(r._dpr || 1).toFixed(3)} CSS ${r.cw}x${r.ch}`,
+        `帧 ${(window.SanguoPerf && window.SanguoPerf.line()) || '未开 ?perf=1'}`,
+        `光栅 ${rasterProbe()}`,
+        `动画 ${anims.length ? anims.join(' ') : '无'}`,
+        `长任务 ${longTasks.length ? longTasks.slice(-4).join(' / ') : '无'}`,
+        `主线程停顿 ${stalls.length ? stalls.slice(-4).join(' / ') : '无'}`,
+        `弹窗 ${overlays.join(' ')}`,
+        `DOM ${document.getElementsByTagName('*').length} 堆 ${((performance.memory && performance.memory.usedJSHeapSize) / 1e6 || 0).toFixed(0)}MB 逻辑核 ${navigator.hardwareConcurrency}`,
+        `局面 ${G ? `turn ${G.meta.turn} 城 ${Object.keys(G.cities).length} 军 ${Object.keys(G.armies).length} 开战 ${Object.values(G.armies).filter(a => a.battle).length} 纪事 ${G.log.length} 结局 ${G.over ? G.over.result : '-'}` : '未开局'}`,
+        `侧栏 ${UI.sideTab} 城池页 ${UI.cityTab} 选中 ${UI.selectedId} 待重画 ${!!r.moving()}`,
+        `减少动效 ${!!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)}`,
+        `日志 ${LOG.ring.length ? '\n' + LOG.ring.slice(-8).join('\n') : '无'}`,
+      ].join('\n');
+    },
+  };
+  /**
+   * 真·单帧成本：canvas 命令是排队的，光看 draw() 耗时只量到“发命令”。
+   * 后面紧跟一次 getImageData(1,1) 强制把光栅化刷完，才是这台机器真实的每帧耗时。
+   */
+  const rasterProbe = () => {
+    const G = (typeof Store !== 'undefined') && Store.get();
+    if (!G || !Renderer.ctx) return '未开局';
+    const probeAt = z => {
+      const keep = Renderer.cam.zoom;
+      Renderer.cam.zoom = z;
+      const ms = [];
+      for (let i = 0; i < 5; i++) {
+        const t0 = performance.now();
+        Renderer.draw(G, 16);
+        Renderer.ctx.getImageData(0, 0, 1, 1);
+        ms.push(performance.now() - t0);
+      }
+      Renderer.cam.zoom = keep;
+      ms.sort((a, b) => a - b);
+      return ms[2];
+    };
+    const cur = probeAt(Renderer.cam.zoom);
+    const far = probeAt(0.28);
+    const near = probeAt(2.2);
+    return `单帧光栅化 当前 ${cur.toFixed(1)}ms / 最小缩放 ${far.toFixed(1)}ms / 最大缩放 ${near.toFixed(1)}ms`;
+  };
+  window.rasterProbe = rasterProbe;
+
+  window.Diag = Diag;
 
   /** 页面级报错横幅：界面渲染/主循环出错时直接显示在页面上，不用开 DevTools */
   function errBanner(msg) {
@@ -214,9 +299,19 @@
     // 静止不重绘：软件光栅化时每帧整幅重绘要吃掉整整一个核，满载降频之后就是「开一会儿突然卡」。
     // 画面要变的时候才画：局面变了 / 镜头动了 / 选中·悬停变了 / 有交战特效 / 画布尺寸变了。
     let seen = { G: null, x: 0, y: 0, z: 0, hover: null, sel: null, targeting: false };
+    let frameDt = 16;      // rAF 间隔滑动平均：光栅化跟不上时它会持续 >20ms
+    let lastDrawAt = 0;
     function frame(t) {
-      const dt = Math.min(80, t - last);
+      const raw = t - last;
+      const dt = Math.min(80, raw);
       last = t;
+      if (raw > 400 && !document.hidden) {
+        const line = `停顿 ${Math.round(raw)}ms @zoom ${Renderer.cam.zoom.toFixed(2)}`;
+        stalls.push(line);
+        if (stalls.length > 6) stalls.shift();
+        LOG.push('stall', line, null);
+      }
+      frameDt = frameDt * 0.9 + dt * 0.1;
       if (PERF) PERF.frames++;
       try {
         const G = Store.get();
@@ -225,7 +320,12 @@
           const dirty = seen.G !== G || seen.x !== cam.x || seen.y !== cam.y || seen.z !== cam.zoom
             || seen.hover !== Renderer.hoverId || seen.sel !== Renderer.selectedId
             || seen.targeting !== Renderer.targeting || Renderer.moving();
-          if (dirty) {
+          // 光栅化跟不上（rAF 间隔持续超两帧）时限流：每帧都重画只会把队列堆到 CPU 100%，
+          // 宁可降帧也不让页面卡死。跟不上越严重，限得越狠。
+          const minGap = frameDt > 40 ? 55 : frameDt > 24 ? 33 : 0;
+          if (PERF) PERF.gap = minGap;
+          if (dirty && (!minGap || t - lastDrawAt >= minGap)) {
+            lastDrawAt = t;
             if (PERF) {
               const why = seen.G !== G ? 'state'
                 : (seen.x !== cam.x || seen.y !== cam.y || seen.z !== cam.zoom) ? 'cam'

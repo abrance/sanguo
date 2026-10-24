@@ -21,6 +21,7 @@
 | 进程 | Edge `Shift+Esc` 任务管理器 | 「标签页」行的 CPU（不是 GPU 进程行） | 是不是这个页在烧；**必须记的是这一列**，页内角标没有 CPU |
 | 页面 | `?perf=1` 角标（本项目内置） | fps / 重画次数与原因 / 绘制耗时 / 堆 / DOM / 网络 | JS 有没有在烧、地图有没有重画、DOM 有没有漏 |
 | 细节 | `document.getAnimations()` | 正在跑的 CSS 动画 | 有没有无限动画在逼浏览器每帧重绘 |
+| 取证 | `rasterProbe()` / `Diag.report()` | 单帧光栅化毫秒数（三档缩放）、长任务与主线程停顿记录、动画/弹窗/DOM/局面 | 是"光栅化慢"还是"主线程被卡住"，一次分清 |
 
 ### `?perf=1` 角标怎么读
 
@@ -68,7 +69,17 @@ Renderer.drawMinimap = () => {};
 
 // ⑦ 卡死时看错误环缓冲（不需要开 DevTools 也能看红条）
 SanguoLog.dump();                          // 或 copy(SanguoLog.ring.join("\n")) 拷走
+
+// ⑧ 这台机器真实的一帧有多贵（draw + getImageData 强制刷光栅化）
+rasterProbe();       // 当前 / 最小缩放 / 最大缩放 三档的单帧光栅化毫秒数
+
+// ⑨ 完整环境报告：一条命令打包上面所有信息
+copy(Diag.report());
 ```
+
+> **`getImageData` 强制刷新是量真帧成本的唯一简单办法**：canvas 命令是排队的，
+> 不刷就只量到"发命令"的时间（本机 1.5ms），刷完才是真成本（同机 6ms，差 4 倍）。
+> 参考值：60Hz 预算 16.7ms/帧，120Hz 只有 8.3ms/帧 —— 6ms 的帧在 120Hz 机器上已经占掉七成。
 
 判定顺序建议：③（动画）→ ④（像素）→ ⑤⑥（排除法）→ ②（脏标记）→ ①（版本/缓存）。
 
@@ -102,14 +113,16 @@ SanguoLog.dump();                          // 或 copy(SanguoLog.ring.join("\n")
    - 新增会改变画面的状态时，**必须进这个比对**，否则画面不刷新（看着像卡死）。
    - `resize()` / `attach()` 要置 `Renderer.stale = true`，否则改尺寸后留白。
 2. **画布像素上限**（`js/view/renderer.js` `MAX_CANVAS_PX = 1.3e6`）：`devicePixelRatio` 封顶 1.5，超出像素预算再按 `sqrt(预算/实际)` 缩 dpr。小窗口不缩，大窗口自动降。
-3. **主循环 try/catch**：一帧画崩只跳过该帧并记一次日志，不能让 `requestAnimationFrame` 断链（断了就是"地图永久冻结"）。
-4. **禁用无限动画**：`mlBlink` 由 `infinite` 改为 `3` 次；`.`overlay` 加 `overflow:auto` + `>*{margin:auto}`；`#btnStart` 用 `position:sticky` 钉在底部（小窗口下按钮曾在屏幕外 17px，表现就是"点开局没反应"）。
+3. **跟不上就限流**（同一处）：用 rAF 间隔的滑动平均判断"光栅化跟不上"（>24ms 限到 30fps，>40ms 限到 18fps）。每帧都重画只会把光栅队列堆到 CPU 100%，宁可掉帧也不让页面卡死。`?perf=1` 角标里出现 `限流 33ms` 就是它在工作。
+4. **主循环 try/catch**：一帧画崩只跳过该帧并记一次日志，不能让 `requestAnimationFrame` 断链（断了就是"地图永久冻结"）。
+5. **禁用无限动画**：`mlBlink` 由 `infinite` 改为 `3` 次；`.`overlay` 加 `overflow:auto` + `>*{margin:auto}`；`#btnStart` 用 `position:sticky` 钉在底部（小窗口下按钮曾在屏幕外 17px，表现就是"点开局没反应"）。
 
 ---
 
 ## 5. 踩过的坑（照这个顺序怀疑）
 
 - **无限 CSS 动画**：`animation: ... infinite` + 改背景色 = 每帧重绘。用 `document.getAnimations()` 一次抓出来。改法优先级：删掉 > 限定次数 > 换成 transform/opacity（合成层）> 降频。
+- **控制台都动不了 = 主线程死循环，不是渲染慢**。渲染慢只是掉帧，JS 与 DevTools 仍然响应；一旦连 `console` 都卡住，先找 `while`：本项目踩过 `renderer.js` 的画家算法 `while (ai < armies.length) draw(...)` 漏了自增，只要屏幕上有军队在所有可见城池以南（拖拽/放大后极常见）就死循环 —— CPU 100%、控制台无响应、点什么都没反应，且**没有任何报错**。结论：绘制顺序这类循环逻辑抽成纯函数（`Renderer.mergeDrawOrder`）并加断言，别让"忘了推进游标"藏在绘制代码里。
 - **把 `-webkit-` 之类的硬件加速当必然**：先看 `edge://gpu` 的 `Graphics Feature Status`（Canvas / Rasterization / Compositing）。`Software only` 时上面所有优化只能省一半，省不到零 —— 那是浏览器/驱动层要修的。
 - **反了：有独显的机器更卡**。混合显卡（PRIME / Optimus）下浏览器可能来回切 GPU，或 GPU 进程反复重启回退。判定：`--disable-gpu` 起一个实例对比，顺了就是 GPU 路径的问题（改浏览器设置 / 强制走独显 / 更新驱动），跟代码无关。
 - **鼠标一直在地图上动**：`mousemove` 会重建悬浮提示（`showCityTip` 每事件一次 `innerHTML` + 强制布局）。测 CPU 时手别放在地图上，否则读数虚高。

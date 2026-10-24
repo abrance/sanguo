@@ -171,6 +171,26 @@ const Renderer = {
     return v;
   },
 
+  /**
+   * 画家算法的绘制顺序：城与军队按世界 y 混排（城有立面，北边的必须先画）。
+   * 纯函数、循环全部有界 —— 曾经这里是 `while (ai < armies.length) draw(...)` 忘了自增，
+   * 只要屏幕上有军队在所有可见城池以南（拖拽/放大后很常见）主线程就死循环：
+   * CPU 100%、控制台都动不了、点什么都没反应。
+   */
+  mergeDrawOrder(cityItems, armyItems) {
+    const out = [];
+    let ai = 0;
+    for (const it of cityItems) {
+      while (ai < armyItems.length && armyItems[ai].a.y < it.c.y) {
+        out.push({ kind: 'army', o: armyItems[ai] });
+        ai++;
+      }
+      out.push({ kind: 'city', o: it });
+    }
+    for (; ai < armyItems.length; ai++) out.push({ kind: 'army', o: armyItems[ai] });
+    return out;
+  },
+
   /** 命中城池 */
   pick(G, sx, sy) {
     const z = Renderer.cam.zoom;
@@ -284,13 +304,13 @@ const Renderer = {
       .map(a => ({ a, p: Renderer.toScreen(a.x, a.y) }))
       .filter(o => o.p.x > -40 && o.p.y > -40 && o.p.x < cw + 40 && o.p.y < ch + 40)
       .sort((m, n) => m.a.y - n.a.y);
-    let ai = 0;
 
-    for (const { c, p } of cityDraw) {
-      while (ai < armies.length && armies[ai].a.y < c.y) {
-        Renderer.drawArmyMarker(ctx, G, armies[ai].a, armies[ai].p, playerFid, z);
-        ai++;
+    for (const item of Renderer.mergeDrawOrder(cityDraw, armies)) {
+      if (item.kind === 'army') {
+        Renderer.drawArmyMarker(ctx, G, item.o.a, item.o.p, playerFid, z);
+        continue;
       }
+      const { c, p } = item.o;
 
       const f = G.factions[c.owner];
       const color = f ? f.color : '#888';
@@ -404,7 +424,6 @@ const Renderer = {
     }
 
     // 剩下的军队（比所有城都靠南）
-    while (ai < armies.length) Renderer.drawArmyMarker(ctx, G, armies[ai].a, armies[ai].p, playerFid, z);
 
     // 目标选择模式的十字说明
     if (Renderer.targeting) {
