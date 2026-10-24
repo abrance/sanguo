@@ -124,6 +124,7 @@
         + (st.err ? `\n错误 ${st.err}` : '');
       st.draws = 0; st.frames = 0; st.why = {}; st.drawMs = 0; st.maxDraw = 0; st.since = performance.now();
     }, 1000);
+    window.SanguoPerf = { line: () => el.textContent.replace(/\n/g, ' | ') };
     return st;
   }
 
@@ -143,6 +144,41 @@
     return { push, ring, dump: () => console.table(ring) };
   })();
   window.SanguoLog = LOG;
+
+  /**
+   * 一键诊断报告：不用开 DevTools、不用截图，控制台 `copy(Diag.report())` 粘给别人就行。
+   * 带上环境、画布、动画、DOM、错误日志、局面规模——卡顿报告最常缺的就是这几项。
+   */
+  const Diag = {
+    report() {
+      const G = (typeof Store !== 'undefined') && Store.get();
+      let anims = [];
+      try {
+        anims = document.getAnimations().map(a => `${a.animationName || a.transitionProperty || '?'}:`
+          + `${a.playState}:${(a.effect && a.effect.target && (a.effect.target.id || a.effect.target.className)) || ''}`);
+      } catch (e) { anims = ['getAnimations 不可用']; }
+      const overlays = ['startOverlay', 'turnOverlay', 'eventOverlay', 'peaceOverlay', 'rankOverlay',
+        'saveOverlay', 'helpOverlay', 'cityTip']
+        .map(id => { const e = document.getElementById(id); return e ? id + '=' + (e.classList.contains('hidden') ? 'hidden' : 'SHOWN') : null; })
+        .filter(Boolean);
+      const r = Renderer;
+      return [
+        `时间 ${new Date().toString()}`,
+        `UA ${navigator.userAgent}`,
+        `屏幕 ${screen.width}x${screen.height} 窗口 ${innerWidth}x${innerHeight} dpr ${window.devicePixelRatio} 页面缩放 ${(window.visualViewport && visualViewport.scale) || 1}`,
+        `画布 ${r.canvas ? r.canvas.width + 'x' + r.canvas.height : '-'} @${(r._dpr || 1).toFixed(3)} CSS ${r.cw}x${r.ch}`,
+        `帧 ${(window.SanguoPerf && window.SanguoPerf.line()) || '未开 ?perf=1'}`,
+        `动画 ${anims.length ? anims.join(' ') : '无'}`,
+        `弹窗 ${overlays.join(' ')}`,
+        `DOM ${document.getElementsByTagName('*').length} 堆 ${((performance.memory && performance.memory.usedJSHeapSize) / 1e6 || 0).toFixed(0)}MB 逻辑核 ${navigator.hardwareConcurrency}`,
+        `局面 ${G ? `turn ${G.meta.turn} 城 ${Object.keys(G.cities).length} 军 ${Object.keys(G.armies).length} 开战 ${Object.values(G.armies).filter(a => a.battle).length} 纪事 ${G.log.length} 结局 ${G.over ? G.over.result : '-'}` : '未开局'}`,
+        `侧栏 ${UI.sideTab} 城池页 ${UI.cityTab} 选中 ${UI.selectedId} 待重画 ${!!r.moving()}`,
+        `减少动效 ${!!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)}`,
+        `日志 ${LOG.ring.length ? '\n' + LOG.ring.slice(-8).join('\n') : '无'}`,
+      ].join('\n');
+    },
+  };
+  window.Diag = Diag;
 
   /** 页面级报错横幅：界面渲染/主循环出错时直接显示在页面上，不用开 DevTools */
   function errBanner(msg) {
