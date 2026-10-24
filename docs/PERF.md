@@ -122,6 +122,7 @@ copy(Diag.report());
 ## 5. 踩过的坑（照这个顺序怀疑）
 
 - **无限 CSS 动画**：`animation: ... infinite` + 改背景色 = 每帧重绘。用 `document.getAnimations()` 一次抓出来。改法优先级：删掉 > 限定次数 > 换成 transform/opacity（合成层）> 降频。
+- **控制台都动不了 = 主线程死循环，不是渲染慢**。渲染慢只是掉帧，JS 与 DevTools 仍然响应；一旦连 `console` 都卡住，先找 `while`：本项目踩过 `renderer.js` 的画家算法 `while (ai < armies.length) draw(...)` 漏了自增，只要屏幕上有军队在所有可见城池以南（拖拽/放大后极常见）就死循环 —— CPU 100%、控制台无响应、点什么都没反应，且**没有任何报错**。结论：绘制顺序这类循环逻辑抽成纯函数（`Renderer.mergeDrawOrder`）并加断言，别让"忘了推进游标"藏在绘制代码里。
 - **把 `-webkit-` 之类的硬件加速当必然**：先看 `edge://gpu` 的 `Graphics Feature Status`（Canvas / Rasterization / Compositing）。`Software only` 时上面所有优化只能省一半，省不到零 —— 那是浏览器/驱动层要修的。
 - **反了：有独显的机器更卡**。混合显卡（PRIME / Optimus）下浏览器可能来回切 GPU，或 GPU 进程反复重启回退。判定：`--disable-gpu` 起一个实例对比，顺了就是 GPU 路径的问题（改浏览器设置 / 强制走独显 / 更新驱动），跟代码无关。
 - **鼠标一直在地图上动**：`mousemove` 会重建悬浮提示（`showCityTip` 每事件一次 `innerHTML` + 强制布局）。测 CPU 时手别放在地图上，否则读数虚高。

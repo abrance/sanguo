@@ -2817,6 +2817,37 @@ section('剧本：官渡 200');
 }
 
 // ─────────────────────────────────────────────
+section('渲染层纯函数（js/view 里不碰 DOM 的那部分）');
+{
+  // renderer.js 顶层只有对象字面量与纯函数，能单独装进 vm 跑
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+  const src = fs.readFileSync(path.join(h.ROOT, 'js/view/renderer.js'), 'utf8');
+  const ctx = { console, Math, Object, Array, String, Number, JSON, Set, Map, isFinite, isNaN };
+  ctx.globalThis = ctx;
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(src + '\n;globalThis.__R = Renderer;', ctx, { filename: 'renderer.js' });
+  const R = ctx.__R;
+
+  // 画家算法：城与军队按世界 y 混排。
+  // 曾经这里是 `while (ai < armies.length) draw(...)` 忘记自增：只要屏幕上有军队
+  // 在所有可见城池以南（拖拽/放大到最大后很常见）主线程就死循环 —— CPU 100%、
+  // 控制台都动不了、点什么都没反应。循环必须有界，且一支军队都不能丢。
+  const cities = [{ c: { y: 10 } }, { c: { y: 30 } }];
+  const armies = [{ a: { y: 5 } }, { a: { y: 20 } }, { a: { y: 40 } }];
+  const order = R.mergeDrawOrder(cities, armies);
+  const kinds = order.map(o => o.kind).join(',');
+  ok('城军混排：北→南，队尾军队不丢', kinds === 'army,city,army,city,army', kinds);
+  ok('城军混排：无城时军队全出', R.mergeDrawOrder([], armies).length === 3);
+  ok('城军混排：无军时城全出', R.mergeDrawOrder(cities, []).length === 2);
+  ok('城军混排：全部军队只在最后出现一次',
+    order.filter(o => o.kind === 'army').length === 3
+    && new Set(order.filter(o => o.kind === 'army').map(o => o.o.a.y)).size === 3);
+}
+
+// ─────────────────────────────────────────────
 console.log(`\n${fail === 0 ? '全部通过' : '有失败'}：${pass} 通过 / ${fail} 失败`);
 if (fail) {
   console.log('\n失败项：');
