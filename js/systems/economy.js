@@ -1,50 +1,92 @@
 // 经济系统：产出（粮/钱/建材/铁）、消耗、饥荒、治安与人口漂移
 const Economy = {
 
+  /**
+   * 单城月产明细 —— 结算与 UI 共用这一份公式（同 State.troopCapBreakdown 的道理：
+   * 面板显示的数字必须就是真进账的数字，两套算法必然打架）。
+   * talOverride 传入 {} 即可算出「没有天赋时」的产量，供 talentGain 取差值。
+   */
+  project(G, c, talOverride) {
+    const season = SEASON[U.season(G.meta.month)];
+    const f = G.factions[c.owner];
+    const bonus = (f && f.bonus) || techMultipliers({});
+    const gov = c.governor ? G.heroes[c.governor] : null;
+    const isPlayer = c.grantedTo === PLAYER_HERO_ID;
+    const legion = State.legionMul(G, c);
+    // 守将私交加成（只对玩家直辖城，docs/HERO.md §1.5）：私交 100 → 产出 +10%
+    const bondMul = isPlayer && gov && gov.bond ? 1 + gov.bond / 1000 : 1;
+    const skillMul = (gov && skillOf(G, gov).economy) || 1;
+    const legionEco = legion ? legion.eco : 1;
+    const clanMul = State.clanEconMul(c);
+    const popFactor = 0.55 + c.pop / 240;
+    const orderFactor = 0.60 + c.order / 150;
+    const customs = 1 + State.bld(c, 'customs') * 0.10;
+    // 玩家天赋：只作用于直辖城
+    const tal = talOverride !== undefined ? talOverride : (isPlayer ? talentOf(G) : {});
+
+    const ecoMul = skillMul * legionEco * bondMul;
+    const farm = State.bld(c, 'farm') || 0;
+    const market = State.bld(c, 'market') || 0;
+    const matSeason = 0.70 + season.build * 0.40;
+
+    const foodOut = farm * 78 * season.food * popFactor * orderFactor
+      * clanMul * ecoMul * bonus.food * (tal.food || 1);
+    const goldOut = market * 30 * season.tax * popFactor * orderFactor
+      * clanMul * ecoMul * bonus.gold * customs * (tal.gold || 1);
+    const matOut = (28 + (State.bld(c, 'lumber') || 0) * 13 + (State.bld(c, 'quarry') || 0) * 21)
+      * matSeason * bonus.mat * clanMul * (tal.mat || 1);
+    const ironOut = (4 + (State.bld(c, 'ironworks') || 0) * 7) * bonus.iron * clanMul * (tal.iron || 1);
+
+    return {
+      foodOut, goldOut, matOut, ironOut,
+      armyUpkeep: troopFood(c.garrison),
+      popUpkeep: c.pop * 0.32,
+      foodCap: State.foodCapOf(G, c),
+      matCap: 400 + (State.bld(c, 'lumber') || 0) * 500 + (State.bld(c, 'quarry') || 0) * 800,
+      ironCap: 200 + (State.bld(c, 'ironworks') || 0) * 400,
+      // 明细（UI 只用它排版，不再自己算数）
+      parts: {
+        farm, market,
+        season: { food: season.food, tax: season.tax, mat: matSeason },
+        popFactor, orderFactor, clanMul, skillMul, legionEco, bondMul, customs,
+        gov, tech: bonus, talent: tal,
+        lumber: State.bld(c, 'lumber') || 0,
+        quarry: State.bld(c, 'quarry') || 0,
+        ironworks: State.bld(c, 'ironworks') || 0,
+      },
+    };
+  },
+
+  /** 天赋对直辖城的每月折合增量（绝对值，UI 用：同一座城算两遍，差值即天赋贡献） */
+  talentGain(G) {
+    const out = { gold: 0, food: 0, mat: 0, iron: 0 };
+    if (!talentOf(G).id) return out;
+    for (const c of State.demesne(G)) {
+      const withT = Economy.project(G, c);
+      const noT = Economy.project(G, c, {});
+      out.gold += withT.goldOut - noT.goldOut;
+      out.food += withT.foodOut - noT.foodOut;
+      out.mat += withT.matOut - noT.matOut;
+      out.iron += withT.ironOut - noT.ironOut;
+    }
+    return out;
+  },
+
   produce(G, stamp) {
     for (const c of Object.values(G.cities)) {
-      const season = SEASON[U.season(G.meta.month)];
-      const f = G.factions[c.owner];
-      const bonus = (f && f.bonus) || techMultipliers({});
-      const gov = c.governor ? G.heroes[c.governor] : null;
-      const ecoMul = State.legionMul(G, c);
-      // 守将私交加成（只对玩家直辖城，docs/HERO.md §1.5）：私交 100 → 产出 +10%
-      const bondMul = State.isPlayerCity(G, c) && gov && gov.bond
-        ? 1 + gov.bond / 1000 : 1;
-      const ecoBonus = ((gov && skillOf(G, gov).economy) || 1) * (ecoMul ? ecoMul.eco : 1) * bondMul;
-      const clanMul = State.clanEconMul(c);
-
-      const popFactor = 0.55 + c.pop / 240;
-      const orderFactor = 0.60 + c.order / 150;
-
-      const customs = 1 + State.bld(c, 'customs') * 0.10;
-
-      // 玩家天赋：只作用于直辖城
-      const tal = c.grantedTo === PLAYER_HERO_ID ? talentOf(G) : {};
-
-      const foodOut = State.bld(c, 'farm') * 78 * season.food * popFactor * orderFactor
-        * clanMul * ecoBonus * bonus.food * (tal.food || 1);
-      const goldOut = State.bld(c, 'market') * 30 * season.tax * popFactor * orderFactor
-        * clanMul * ecoBonus * bonus.gold * customs * (tal.gold || 1);
-      const matSeason = 0.70 + season.build * 0.40;
-      const matOut = (28 + State.bld(c, 'lumber') * 13 + State.bld(c, 'quarry') * 21)
-        * matSeason * bonus.mat * clanMul * (tal.mat || 1);
-      const ironOut = (4 + State.bld(c, 'ironworks') * 7) * bonus.iron * clanMul * (tal.iron || 1);
+      const P = Economy.project(G, c);
 
       if (c.mat == null) c.mat = 0;
       if (c.iron == null) c.iron = 0;
 
-      const armyUpkeep = troopFood(c.garrison);
-      const popUpkeep = c.pop * 0.32;
-      c.food += foodOut - armyUpkeep - popUpkeep;
-      c.gold += goldOut;
-      c.mat = Math.min(matOut + c.mat, 400 + State.bld(c, 'lumber') * 500 + State.bld(c, 'quarry') * 800);
-      c.iron = Math.min(ironOut + c.iron, 200 + State.bld(c, 'ironworks') * 400);
+      c.food += P.foodOut - P.armyUpkeep - P.popUpkeep;
+      c.gold += P.goldOut;
+      c.mat = Math.min(P.matOut + c.mat, P.matCap);
+      c.iron = Math.min(P.ironOut + c.iron, P.ironCap);
 
       // 仓廪上限
-      const fcap = State.foodCapOf(G, c);
-      if (c.food > fcap) {
-        c.food = fcap;
+      if (c.food > P.foodCap) {
+        c.food = P.foodCap;
         if (c.grantedTo === PLAYER_HERO_ID && RNG.chance(0.04)) {
           State.log(G, 'note', `${c.name}仓廪满溢，余粮陈腐。`);
         }
