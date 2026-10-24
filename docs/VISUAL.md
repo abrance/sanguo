@@ -18,7 +18,7 @@
 | 关系表达 | 城池底部关系弧（红交战 / 黄停战 / 绿同盟）、在建城池城头微光、悬停高亮 | `renderer.js` 城池循环 |
 | 地图仪器 | 右下罗盘 + **兵符图例**（盾/弓/锋/帆/车，zoom≥0.8 才出现）、左上操作提示、HTML 图例（势力/我方/在野/直辖/治所/三关系） | `drawCompass` / `drawArmyKey` + `index.html` |
 | 信息层 | 悬停城池速览浮层（兵/兵额/墙/治安/士气/守将/地形/方针/在建）、浮层 toast（存档/读档/月份）、纪事逐条滑入、战报色条 | `ui.js` `showCityTip` / `flash` / `renderLog` |
-| 交互 | 键盘焦点环、按钮按下下沉、`prefers-reduced-motion` 关闭动效、存读档不再写纪事 | `style.css` 尾部 |
+| 交互 | 键盘焦点环、按钮按下下沉、`prefers-reduced-motion` 关闭动效、存读档不再写纪事、**用 div 做的可点行（军队行 / 直辖城切换条）带 `tabindex` + Enter/Space 等价点击** | `style.css` 尾部、`ui.js` keydown |
 | 视觉系统 | 颜色/圆角/字号/字体栈/动效时长全部收进 `:root`（规则区裸色值与裸 `rgba()` 均为 0）、12 个内联 SVG 线性图标替代彩色圆点、`select` / 按钮 / 进度条 / 列表行各有统一基线（原语层 `:where()`，权重 0），规范见 [STYLE.md](STYLE.md) | `style.css` `:root` + 「控件基线」「原语层」段 + `index.html` `#icon-sprite` |
 
 ### 当前已知的视觉弱点（后面方向的动机）

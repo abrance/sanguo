@@ -13,7 +13,7 @@ const UI_ARMY = {
     const rows = [];
     for (const a of mine) {
       const h = a.heroId ? G.heroes[a.heroId] : null;
-      rows.push(`<div class="row" data-to="${a.to}">
+      rows.push(`<div class="row" data-to="${a.to}" tabindex="0" role="button" data-keyclick>
         <span class="rname">我方 ${h ? h.name : '兵马'}</span>
         <span class="rmeta">${ArmyCompose(a.troops)} → ${G.cities[a.to].name} ${a.eta}月</span>
       </div>`);
@@ -21,7 +21,7 @@ const UI_ARMY = {
     for (const a of hostile) {
       const f = G.factions[a.factionId];
       const h = a.heroId ? G.heroes[a.heroId] : null;
-      rows.push(`<div class="row" data-to="${a.to}">
+      rows.push(`<div class="row" data-to="${a.to}" tabindex="0" role="button" data-keyclick>
         <span class="rname hostile">${f.name} ${h ? h.name : ''}</span>
         <span class="rmeta">犯 ${G.cities[a.to].name} ${a.eta}月</span>
       </div>`);

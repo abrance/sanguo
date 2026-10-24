@@ -153,9 +153,17 @@
 | 进度条轨道 | `.qbar .bar .dbar .merit-bar .mline-bar .mbar` | 高度、外边距、渐变配色（`.dbar` 用 `--meter-bg` 换更暗一档） |
 | 列表行 | `.row .brow .qrow .clan .crow-pick .diplo-row .prow` | 内边距（密度）、列宽 |
 | 可点行 | `.row .brow .crow-pick` | — |
+| 色点 | `.dot .csw .sw` | 尺寸、颜色（形状与 `flex:0 0 auto` 已统一） |
 
 新增一种「条」或「行」时，先看能不能加进上面这几组，别再复制一份
 `background:var(--surface-3);border-radius:var(--r-sm);overflow:hidden`。
+
+### 可点的 div 必须三件套
+
+用 `<div>` 冒充按钮时（军队行、直辖城切换条），模板里必须同时给
+`tabindex="0" role="button" data-keyclick`，`ui.js` 的全局 keydown 会把
+Enter / 空格 转成 `el.click()`，焦点环由 `[data-keyclick]:focus-visible` 接管。
+只写 `cursor:pointer` 等于键盘用户永远够不到这一行。
 
 ---
 

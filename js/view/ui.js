@@ -227,6 +227,12 @@ const UI = {
       if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !typing) {
         if (UI.cycleCity(e.key === 'ArrowRight' ? 1 : -1)) e.preventDefault();
       }
+      // 用 div 做的可点行（军队行 / 直辖城切换条）：Enter 与空格等价于点击。
+      // 没这一条，鼠标能点到的东西键盘用户永远够不到（cursor:pointer 不能代替 tabindex）。
+      if ((e.key === 'Enter' || e.key === ' ') && !typing) {
+        const el = t && t.closest && t.closest('[data-keyclick]');
+        if (el) { e.preventDefault(); el.click(); }
+      }
     });
   },
 
