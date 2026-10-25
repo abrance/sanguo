@@ -2892,10 +2892,11 @@ section('渲染层纯函数（js/view 里不碰 DOM 的那部分）');
   const vm = require('vm');
   const src = fs.readFileSync(path.join(h.ROOT, 'js/view/renderer.js'), 'utf8');
   const ctx = { console, Math, Object, Array, String, Number, JSON, Set, Map, isFinite, isNaN };
+  ctx.U = { clamp: (v, a, b) => Math.min(b, Math.max(a, v)) };   // shadeTint 只用到 clamp
   ctx.globalThis = ctx;
   ctx.window = ctx;
   vm.createContext(ctx);
-  vm.runInContext(src + '\n;globalThis.__R = Renderer;', ctx, { filename: 'renderer.js' });
+  vm.runInContext(src + '\n;globalThis.__R = Renderer; globalThis.__C = { mixOf, shadeTint, hexA, shade, rgbOf };', ctx, { filename: 'renderer.js' });
   const R = ctx.__R;
 
   // 画家算法：城与军队按世界 y 混排。
@@ -2909,6 +2910,20 @@ section('渲染层纯函数（js/view 里不碰 DOM 的那部分）');
   ok('城军混排：北→南，队尾军队不丢', kinds === 'army,city,army,city,army', kinds);
   ok('城军混排：无城时军队全出', R.mergeDrawOrder([], armies).length === 3);
   ok('城军混排：无军时城全出', R.mergeDrawOrder(cities, []).length === 2);
+
+  // 城池取色（docs/ART.md §1.3）：canvas 对非法颜色是静默忽略 —— 着色字符串一旦不是 hex，
+  // rgbOf 算出 NaN、fillStyle 赋值失败、继续用上一个颜色，城池直接变黑块。
+  // 踩过一次（mixOf 返回 rgb() 又喂给只认 hex 的 shadeTint），这里盯住。
+  {
+    const C = ctx.__C;
+    const asHex = v => /^#[0-9a-f]{6}$/i.test(String(v));
+    const mixed = C.mixOf('#6e6a60', '#8b2f2f', 0.1);
+    ok('城池取色：mixOf 返回 hex', asHex(mixed), String(mixed));
+    const roundTrip = [C.shadeTint(mixed, 0.62, -1), C.shadeTint(mixed, 1.08, 1), C.hexA(mixed, 0.5)];
+    const parsed = roundTrip.map(s => C.rgbOf(s));
+    ok('城池取色：shadeTint / hexA 输出可被 rgbOf 解回',
+      parsed.every(p => p.every(n => Number.isFinite(n))), roundTrip.join(' | '));
+  }
   ok('城军混排：全部军队只在最后出现一次',
     order.filter(o => o.kind === 'army').length === 3
     && new Set(order.filter(o => o.kind === 'army').map(o => o.o.a.y)).size === 3);
