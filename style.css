@@ -1233,3 +1233,47 @@ body.shot *,body.shot *::before,body.shot *::after{
   #sidebar{gap:4px;padding:6px}
   .card{padding:6px 8px}
 }
+
+/* ---------- 破城冒字 / 晋升仪式（ART.md §3.3，C2） ----------
+   文本动画交给 CSS：不占「静止不重绘」的 canvas 预算，也不引 DOM 重排。 */
+#mapwrap{position:relative}
+.floatter{
+  position:absolute;transform:translate(-50%,0);pointer-events:none;z-index:22;
+  font-size:var(--fs-title);letter-spacing:1px;white-space:nowrap;
+  color:var(--gold-pale);text-shadow:0 1px 3px var(--hair),0 0 10px var(--glow-gold);
+  animation:floatUp 1.25s cubic-bezier(.2,.8,.3,1) both;
+}
+.floatter.gold{color:var(--gold-bright)}
+.floatter.bad{color:var(--war-soft);text-shadow:0 1px 3px var(--hair)}
+@keyframes floatUp{
+  0%{opacity:0;transform:translate(-50%,6px) scale(.92)}
+  18%{opacity:1;transform:translate(-50%,0) scale(1)}
+  70%{opacity:1}
+  100%{opacity:0;transform:translate(-50%,-24px) scale(1)}
+}
+
+/* 战功条扫光：升级那一下给一条走过的亮带 */
+.merit-bar.sweep::after{
+  content:"";position:absolute;inset:0;border-radius:inherit;
+  background:linear-gradient(90deg,transparent 0%,var(--gold-pale) 50%,transparent 100%);
+  transform:translateX(-100%);
+  animation:sweep 0.75s ease-out 1;
+  pointer-events:none;
+}
+.merit-bar{position:relative}
+@keyframes sweep{to{transform:translateX(100%)}}
+
+/* 晋升：卡片描金一圈（与破城同一套正反馈语言） */
+#rankCard.promote{
+  animation:promoteGlow 1.3s ease-out 1;
+}
+@keyframes promoteGlow{
+  0%{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold),0 0 18px var(--glow-gold)}
+  100%{border-color:var(--line);box-shadow:none}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .floatter{animation-duration:.01ms}
+  .merit-bar.sweep::after{display:none}
+  #rankCard.promote{animation:none}
+}
