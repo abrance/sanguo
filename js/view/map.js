@@ -267,36 +267,100 @@ const GameMap = {
       pass(p, '#3d6a7e', 6, 0.85);
     }
 
-    // ── 3. 山形 / 树丛 / 沙丘：老地图式符号 ──
+    // ── 3. 山形 / 树丛 / 沙丘：按低频聚簇分布（ART.md §2.2 ③）──
+    // 原来是每格二值随机（n1 > 0.5），密度均匀 → 看过去像均匀贴纸，读不出山脉与林地。
+    // 现在用一层波长 ≈ 460px 的 fbm 当密度遮罩：同一片山会堆成山，空地就是空地。
+    const clusterAt = (wx, wy) => GameMap._fbm(wx / 460 + 311 + ox, wy / 460 + 173 + ox);
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const t = grid[r][c];
         const n1 = GameMap._hash(c * 11 + 5, r * 17 + 2);
         const bx = c * CELL, by = r * CELL;
+        const cl = clusterAt(bx + CELL / 2, by + CELL / 2);
 
         if (t === 'mountain') {
-          if (n1 > 0.5) continue;
-          const px = bx + CELL * (0.2 + GameMap._hash(c, r) * 0.6);
+          if (n1 > 0.14 + cl * 1.35) continue;
+          const px = bx + CELL * (0.18 + GameMap._hash(c, r) * 0.64);
           const py = by + CELL * (0.34 + GameMap._hash(c + 3, r + 7) * 0.46);
-          GameMap._peak(g, px, py, 9 + GameMap._hash(c + 9, r + 1) * 13);
+          const roll = GameMap._hash(c + 17, r + 23);
+          // 三档尺寸：大峰是“山”，小峰是“丘”
+          const s = roll > 0.82 ? 19 + GameMap._hash(c + 31, r + 3) * 9
+            : roll > 0.45 ? 12 + GameMap._hash(c + 41, r + 11) * 4
+              : 7 + GameMap._hash(c + 53, r + 19) * 3;
+          // 两种形态：单峰 / 连峰（山脊）
+          if (GameMap._hash(c + 5, r + 9) > 0.58) GameMap._ridge(g, px, py, s);
+          else GameMap._peak(g, px, py, s);
         } else if (t === 'forest') {
-          if (n1 > 0.55) continue;
-          for (let k = 0; k < 3; k++) {
-            const px = bx + 6 + GameMap._hash(c * 3 + k, r * 5 + k) * (CELL - 12);
-            const py = by + 6 + GameMap._hash(c * 7 + k, r * 3 + k + 9) * (CELL - 12);
-            GameMap._tree(g, px, py, 2.4 + GameMap._hash(c + k, r + k) * 1.6);
+          if (n1 > 0.12 + cl * 1.45) continue;
+          const nTree = 2 + Math.floor(GameMap._hash(c + 3, r + 5) * 4);
+          for (let k = 0; k < nTree; k++) {
+            const px = bx + 5 + GameMap._hash(c * 3 + k, r * 5 + k) * (CELL - 10);
+            const py = by + 5 + GameMap._hash(c * 7 + k, r * 3 + k + 9) * (CELL - 10);
+            const sz = GameMap._hash(c + k, r + k);
+            GameMap._tree(g, px, py,
+              2.2 + sz * 2.2,
+              GameMap._hash(c + 11 + k, r + 13 + k) > 0.55);   // true = 尖冠
           }
         } else if (t === 'desert') {
-          if (n1 > 0.35) continue;
+          if (n1 > 0.12 + cl * 0.5) continue;
           g.beginPath();
-          const px = bx + CELL * 0.2, py = by + CELL * (0.3 + n1);
-          g.moveTo(px, py);
-          g.quadraticCurveTo(px + CELL * 0.3, py - 5, px + CELL * 0.62, py + 1);
-          g.strokeStyle = 'rgba(190,170,130,0.16)';
-          g.lineWidth = 1.4;
+          const px = bx + CELL * 0.2, py = by + CELL * (0.3 + n1 * 0.5);
+          // 沙丘：两三道平行弧，而不是单根弧线
+          for (let k = 0; k < 3; k++) {
+            g.moveTo(px, py + k * 4);
+            g.quadraticCurveTo(px + CELL * 0.3, py - 5 + k * 4, px + CELL * (0.62 - k * 0.08), py + 1 + k * 4);
+          }
+          g.strokeStyle = 'rgba(190,170,130,0.15)';
+          g.lineWidth = 1.3;
           g.stroke();
         }
       }
+    }
+
+    // ── 3.5 等高线（ART.md §2.2 ②）：只在山地/丘陵里画
+    // 一开始写成一个一个 1px 点，实测在 0.4 倍色床上降采样后基本看不见（全图只差 1.5 万px）。
+    // 改成「按梯度取切向、连成短线段」+ 按高程档分两档深浅，才真的像等高线。
+    {
+      const LEVELS = [0.30, 0.36, 0.42, 0.48, 0.54, 0.60, 0.66, 0.72];
+      const pts = LEVELS.map(() => []);
+      const terrainOf = (wx, wy) => {
+        const gy2 = Math.min(rows - 1, Math.floor(wy / CELL));
+        const gx2 = Math.min(cols - 1, Math.floor(wx / CELL));
+        return grid[gy2][gx2];
+      };
+      for (let y = 1; y < LH - 1; y++) {
+        const wy = y / S;
+        for (let x = 1; x < LW - 1; x++) {
+          const wx = x / S;
+          const tt = terrainOf(wx, wy);
+          if (tt !== 'mountain' && tt !== 'hill') continue;
+          const i = y * LW + x;
+          const h = HF[i];
+          for (let li = 0; li < LEVELS.length; li++) {
+            const L = LEVELS[li];
+            if ((h - L) * (HF[i + 1] - L) >= 0 && (h - L) * (HF[i + LW] - L) >= 0) continue;
+            // 切向垂直于梯度：线段方向 = 等值线方向（不然点阵会散成一团沙子）
+            const gx2 = HF[i + 1] - HF[i - 1];
+            const gy2 = HF[i + LW] - HF[i - LW];
+            const m = Math.hypot(gx2, gy2) || 1;
+            const tx = (-gy2 / m) * 1.9, ty = (gx2 / m) * 1.9;
+            pts[li].push(wx - tx, wy - ty, wx + tx, wy + ty);
+            break;
+          }
+        }
+      }
+      LEVELS.forEach((L, li) => {
+        const a = pts[li];
+        if (!a.length) return;
+        g.beginPath();
+        for (let i = 0; i < a.length; i += 4) {
+          g.moveTo(a[i], a[i + 1]);
+          g.lineTo(a[i + 2], a[i + 3]);
+        }
+        g.strokeStyle = li % 2 ? 'rgba(58,46,32,0.30)' : 'rgba(58,46,32,0.21)';
+        g.lineWidth = 1;
+        g.stroke();
+      });
     }
 
     // ── 4. 州界与州名印章 ──
@@ -471,6 +535,13 @@ const GameMap = {
 
   /** 山峰符号：受光面 + 背光面 + 脊线 */
   _peak(g, x, y, s) {
+    // 山脚投影：东南向，与城池/军队同一光向（不然整张图的光是散的）
+    g.beginPath();
+    g.ellipse(x + s * 0.3, y + s * 0.46, s * 0.92, s * 0.26, 0, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(26,24,19,0.20)';
+    g.fill();
+
+    // 山体（暗）
     g.beginPath();
     g.moveTo(x, y - s);
     g.lineTo(x + s * 0.82, y + s * 0.46);
@@ -479,6 +550,7 @@ const GameMap = {
     g.fillStyle = 'rgba(46,43,35,0.66)';
     g.fill();
 
+    // 西北受光面
     g.beginPath();
     g.moveTo(x, y - s);
     g.lineTo(x - s * 0.82, y + s * 0.46);
@@ -487,6 +559,16 @@ const GameMap = {
     g.fillStyle = 'rgba(196,186,162,0.26)';
     g.fill();
 
+    // 东南背光面：单独压暗一层，山峰才有“两个坡”而不是两块色
+    g.beginPath();
+    g.moveTo(x, y - s);
+    g.lineTo(x + s * 0.82, y + s * 0.46);
+    g.lineTo(x + s * 0.10, y + s * 0.18);
+    g.closePath();
+    g.fillStyle = 'rgba(14,12,9,0.22)';
+    g.fill();
+
+    // 脊线
     g.beginPath();
     g.moveTo(x, y - s);
     g.lineTo(x + s * 0.1, y + s * 0.22);
@@ -495,8 +577,41 @@ const GameMap = {
     g.stroke();
   },
 
-  /** 树丛符号 */
-  _tree(g, x, y, s) {
+  /** 连峰：三个高矮不一的山尖沿西北→东南排开，天然比单峰更像“山脉” */
+  _ridge(g, x, y, s) {
+    const hi = s, mid = s * 0.72, lo = s * 0.5;
+    GameMap._peak(g, x - s * 0.62, y + s * 0.1, mid);
+    GameMap._peak(g, x + s * 0.66, y + s * 0.16, lo);
+    GameMap._peak(g, x, y, hi);
+  },
+
+  /** 树丛符号：两种冠形（圆冠 / 尖冠），尖冠更像松柏，混用才不会一片“圆点” */
+  _tree(g, x, y, s, pointed) {
+    // 树脚投影
+    g.beginPath();
+    g.ellipse(x + s * 0.25, y + s * 0.62, s * 0.8, s * 0.24, 0, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(22,26,18,0.18)';
+    g.fill();
+
+    if (pointed) {
+      g.beginPath();
+      g.moveTo(x, y - s * 1.1);
+      g.lineTo(x + s * 0.72, y + s * 0.7);
+      g.lineTo(x - s * 0.72, y + s * 0.7);
+      g.closePath();
+      g.fillStyle = 'rgba(26,40,26,0.74)';
+      g.fill();
+      // 受光侧
+      g.beginPath();
+      g.moveTo(x, y - s * 1.1);
+      g.lineTo(x - s * 0.72, y + s * 0.7);
+      g.lineTo(x - s * 0.12, y + s * 0.3);
+      g.closePath();
+      g.fillStyle = 'rgba(74,98,58,0.44)';
+      g.fill();
+      return;
+    }
+
     g.beginPath();
     g.arc(x, y + s * 0.2, s, 0, Math.PI * 2);
     g.fillStyle = 'rgba(26,40,26,0.72)';
