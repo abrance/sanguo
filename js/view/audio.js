@@ -28,14 +28,15 @@ const Audio = {
     try { localStorage.setItem('sanguo.muted', this.muted ? '1' : '0'); } catch (e) { /* ignore */ }
   },
 
-  /** 单音：{ type, from, to, dur, gain, noise } */
+  /** 单音：{ type, from, to, dur, gain, noise, at, bp, bpTo } */
   _blip(spec) {
     const ctx = this.ctx;
     if (!ctx) return;
-    const t0 = ctx.currentTime;
+    const t0 = ctx.currentTime + (spec.at || 0);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(spec.gain == null ? 0.1 : spec.gain, t0 + 0.01);
+    // attack 显式给 4ms：默认 10ms 的爬升会把“撞击”听成“布嗡”
+    g.gain.exponentialRampToValueAtTime(spec.gain == null ? 0.1 : spec.gain, t0 + (spec.attack || 0.01));
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + spec.dur);
     g.connect(ctx.destination);
 
@@ -47,8 +48,10 @@ const Audio = {
       const src = ctx.createBufferSource();
       src.buffer = buf;
       const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = spec.noise;
+      lp.type = spec.bp ? 'bandpass' : 'lowpass';
+      lp.frequency.setValueAtTime(spec.bp || spec.noise, t0);
+      if (spec.bpTo) lp.frequency.exponentialRampToValueAtTime(spec.bpTo, t0 + spec.dur);
+      lp.Q.value = spec.bp ? 0.9 : 0.7;
       src.connect(lp); lp.connect(g);
       src.start(t0);
       return;
@@ -60,7 +63,14 @@ const Audio = {
     if (spec.to && spec.to !== spec.from) {
       osc.frequency.exponentialRampToValueAtTime(spec.to, t0 + spec.dur);
     }
-    osc.connect(g);
+    if (spec.lp) {
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = spec.lp;
+      osc.connect(f); f.connect(g);
+    } else {
+      osc.connect(g);
+    }
     osc.start(t0);
     osc.stop(t0 + spec.dur + 0.02);
   },
@@ -83,9 +93,24 @@ const Audio = {
       case 'march':  // 号角：220 → 330 上滑
         this._blip({ type: 'sawtooth', from: 220, to: 330, dur: 0.26, gain: 0.07 });
         break;
-      case 'siege':  // 破城：低频撞击 + 噪声
-        this._blip({ type: 'triangle', from: 120, to: 60, dur: 0.4, gain: 0.1 });
-        this._blip({ noise: 400, dur: 0.4, gain: 0.09 });
+      case 'siege':  // 旧名保留：破城（中立视角）
+      case 'capture':  // 破城：撞击 → 瓦砾扬尘（战报里别人的城破了也响，但轻一档）
+        this._blip({ type: 'sine', from: 95, to: 42, dur: 0.35, gain: 0.12, attack: 0.004 });
+        this._blip({ noise: 320, dur: 0.12, gain: 0.09, attack: 0.003 });
+        this._blip({ noise: 500, bp: 900, bpTo: 300, dur: 0.9, gain: 0.07, at: 0.08 });
+        break;
+      case 'captureWin':  // 我破的城：撞击 + 瓦砾 + 三音号角（A4-C5-E5）
+        this._blip({ type: 'sine', from: 95, to: 42, dur: 0.35, gain: 0.15, attack: 0.004 });
+        this._blip({ noise: 320, dur: 0.12, gain: 0.1, attack: 0.003 });
+        this._blip({ noise: 500, bp: 900, bpTo: 300, dur: 0.9, gain: 0.075, at: 0.08 });
+        [440, 523.25, 659.25].forEach((f, i) => {
+          this._blip({ type: 'triangle', from: f, to: f, dur: i === 2 ? 0.42 : 0.14, gain: 0.1, lp: 2400, at: 0.34 + i * 0.14 });
+        });
+        break;
+      case 'captureLose':  // 我的城破了：下行小二度 + 更闷的低频（听感是“沉下去”）
+        this._blip({ type: 'sine', from: 80, to: 38, dur: 0.5, gain: 0.14, attack: 0.005 });
+        this._blip({ noise: 220, dur: 0.3, gain: 0.09, attack: 0.004 });
+        this._blip({ type: 'triangle', from: 392, to: 349.23, dur: 0.5, gain: 0.07, lp: 900, at: 0.2 });
         break;
       case 'alarm':  // 警报：两短音
         this._blip({ type: 'triangle', from: 660, to: 660, dur: 0.09, gain: 0.07 });

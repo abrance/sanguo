@@ -74,6 +74,25 @@
       UI.sideTab = q.get('tab');
       UI.syncTabs();
     }
+
+    // fx=1：把「破城那一瞬」冻在 t=150ms —— 不然截图时特效早已过期，像素回归根本拍不到。
+    // 碎块用 hash 而不是 Math.random，同一场仗每次轨迹一样，比对才有意义。
+    if (q.get('fx')) {
+      const gx = Store.get();
+      const near = Object.values(gx.cities).find(c => c.owner !== gx.player.factionId && c.owner !== 'free');
+      if (near) {
+        Renderer.fx = [];        // 只留这一场：历史 AI 交战的特效堆在一起会成为噪声
+        Bus.emit('combat', {
+          cityId: near.id, captured: true,
+          atkFactionId: gx.player.factionId, defFactionId: near.owner,
+          defColor: (gx.factions[near.owner] || {}).color,
+        });
+        Renderer.centerOn(near.x, near.y);
+        Renderer.fx.forEach(f => { f.at = 0; });
+        Renderer.shake = null;         // 震动偏移会画成半像素糊，冻帧机位只看特效本身
+      }
+      Renderer.clockHold = 150;
+    }
     UI.render(g);
     // 浮层机位：视觉回归除了地图，也要拍到面板与弹窗（rank=1 官阶台 / start=1 开局界面）
     if (q.get('rank')) {

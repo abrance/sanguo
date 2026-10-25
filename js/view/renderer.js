@@ -54,8 +54,22 @@ const Renderer = {
 
   /** 本帧要不要重画：静止时返回 false，主循环据此跳过整幅重绘 */
   moving() {
-    return !!(Renderer.stale || Renderer._fly || Renderer._inertia
+    return !!(Renderer.stale || Renderer._fly || Renderer._inertia || Renderer.shake
       || (Renderer.fx && Renderer.fx.length));
+  },
+
+  /**
+   * 镜头震动（docs/ART.md §3.3）：只算出绘制偏移，不碰 cam / toWorld，
+   * 所以拖拽、命中、悬浮在震的那 200ms 里都还是准的。
+   */
+  shakeOffset(now) {
+    const s = Renderer.shake;
+    if (!s) return [0, 0];
+    const t = (now - s.at) / s.ms;
+    if (t >= 1) { Renderer.shake = null; return [0, 0]; }
+    const k = (1 - t) * (1 - t) * s.amp;
+    const ph = now / 18;
+    return [Math.sin(ph * 1.7) * k, Math.sin(ph * 2.3 + 1.1) * k * 0.7];
   },
 
   centerOn(x, y) { Renderer.cam.x = x; Renderer.cam.y = y; },
@@ -226,23 +240,28 @@ const Renderer = {
   // ───────── 绘制 ─────────
   draw(G, dt) {
     Renderer._t += dt;
-    Renderer._now = performance.now();
+    // clockHold：截图模式把时间钉住，特效才能被像素回归拍到（ART.md §3.5）
+    Renderer._now = Renderer.clockHold != null ? Renderer.clockHold : performance.now();
     Renderer.tickCam(dt);
     const ctx = Renderer.ctx;
     const dpr = Renderer._dpr || 1;
     const cw = Renderer.cw, ch = Renderer.ch;
     const z = Renderer.cam.zoom;
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // 震动偏移经 dpr 进到各 setTransform（只影响画面，不影响坐标换算）
+    const [shx, shy] = Renderer.shakeOffset(Renderer._now);
+    const ox = dpr * shx, oy = dpr * shy;
+
+    ctx.setTransform(dpr, 0, 0, dpr, ox, oy);
     ctx.fillStyle = '#0d0c0a';
-    ctx.fillRect(0, 0, cw, ch);
+    ctx.fillRect(-Math.abs(shx) - 4, -Math.abs(shy) - 4, cw + Math.abs(shx) * 2 + 8, ch + Math.abs(shy) * 2 + 8);
 
     // 地形（世界坐标变换）
     if (Renderer.terrain) {
       ctx.save();
       ctx.setTransform(dpr * z, 0, 0, dpr * z,
-        dpr * (cw / 2 - Renderer.cam.x * z),
-        dpr * (ch / 2 - Renderer.cam.y * z));
+        dpr * (cw / 2 - Renderer.cam.x * z) + ox,
+        dpr * (ch / 2 - Renderer.cam.y * z) + oy);
       ctx.imageSmoothingEnabled = true;
       // 只贴可见的那块世界：整图 blit 会把 2400×1800 全过一遍，视野小的时候纯浪费
       const vb = Renderer.viewBounds();
@@ -250,7 +269,7 @@ const Renderer = {
       ctx.restore();
     }
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, ox, oy);
 
     const playerFid = G.player.factionId;
 
@@ -258,8 +277,8 @@ const Renderer = {
     if (Renderer.terrain && G) {
       ctx.save();
       ctx.setTransform(dpr * z, 0, 0, dpr * z,
-        dpr * (cw / 2 - Renderer.cam.x * z),
-        dpr * (ch / 2 - Renderer.cam.y * z));
+        dpr * (cw / 2 - Renderer.cam.x * z) + ox,
+        dpr * (ch / 2 - Renderer.cam.y * z) + oy);
       // 领地层是半分辨率：源矩形按 0.5 缩放取
       const vb = Renderer.viewBounds();
       const layer = Renderer.territoryLayer(G);
@@ -365,9 +384,12 @@ const Renderer = {
       }
 
       // 势力旗：旗色即势力色，放大时旗上写势力首字；杆随立面上抬，插在城头
+      // （破城 700ms 内插一段“翻旗”：旧旗降下 → 换色升起）
       if (f && c.owner !== 'free') {
+        const fx = Renderer.fxOf(c.id);
+        const flip = fx ? { t: (Renderer._now - fx.at) / 700, from: fx.fromColor } : null;
         Renderer.drawFlag(ctx, p.x, p.y, r, color, lod >= 2 ? f.name.slice(0, 1) : '',
-          cz * Renderer.ISO.flagLift);
+          cz * Renderer.ISO.flagLift, flip);
       }
 
       // 治所：城头一颗小星（中景也画 —— 2~3px 的亮点比一排雉堞更能读出"这是治所"）
@@ -443,39 +465,145 @@ const Renderer = {
   /** 交战特效入队（由 Bus 的 combat 事件驱动，纯视觉，不参与规则） */
   addFx(e) {
     if (!e || !e.cityId) return;
-    Renderer.fx.push({ cityId: e.cityId, captured: !!e.captured, at: performance.now() });
+    const now = Renderer._now || performance.now();
+    const G = Renderer.G;
+    const pid = G && G.player ? G.player.factionId : null;
+    // 视角分四种：我破城 / 我失城 / 别人的城破了 / 攻城不克
+    const kind = e.captured
+      ? (pid && e.atkFactionId === pid ? 'win' : pid && e.defFactionId === pid ? 'lose' : 'capture')
+      : 'repel';
+
+    // 城门碎块：初速向外扇开，受重力；at = 起飞延迟（先有撞击，再有碎块）
+    // 减少动效：不震动、不碎块（白闪与颜色变化保留 —— 信息不能丢）
+    const calm = Renderer.reducedMotion();
+    const particles = [];
+    if (e.captured && kind !== 'lose' && !calm) {
+      const n = kind === 'win' ? 14 : 9;
+      // 用 hash 而不是 Math.random：同一场仗每次碎块轨迹一样，像素回归才能比
+      const seed = e.cityId.length * 31 + e.cityId.charCodeAt(0) * 7;
+      for (let i = 0; i < n; i++) {
+        const a = -Math.PI / 2 + (GameMap._hash(i * 13 + seed, 17) - 0.5) * 2.4;
+        const sp = 45 + GameMap._hash(i * 29 + seed, 41) * 75;
+        particles.push({
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          s: 1.1 + GameMap._hash(i * 7 + seed, 53) * 1.9,
+          at: 80 + GameMap._hash(i * 11 + seed, 67) * 140,
+          dark: GameMap._hash(i * 5 + seed, 71) < 0.45,
+        });
+      }
+    }
+
+    Renderer.fx.push({
+      cityId: e.cityId, captured: !!e.captured, kind,
+      fromColor: e.defColor || null,
+      particles,
+      at: now,
+      life: e.captured ? 1600 : 900,
+    });
     if (Renderer.fx.length > 8) Renderer.fx.shift();
+
+    // 震动：我破城给足，失败/失城反而更闷（负反馈不需要爽）
+    Renderer.shake = calm ? null : {
+      amp: kind === 'win' ? 3.4 : kind === 'lose' ? 2.4 : e.captured ? 2 : 1.2,
+      at: now,
+      ms: kind === 'win' ? 260 : 200,
+    };
+    Renderer.stale = true;
   },
 
-  /** 短促交战特效：0.7s 扩环 + 火光 */
+  /** 系统级「减少动效」：震动/粒子/滑入都停，白闪与颜色变化保留 */
+  reducedMotion() {
+    if (Renderer._calm == null) {
+      try {
+        Renderer._calm = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+      } catch (e) { Renderer._calm = false; }
+    }
+    return Renderer._calm;
+  },
+
+  /** 某城正在播的破城特效（翻旗用），只认最近 700ms 内的那一条 */
+  fxOf(cityId) {
+    if (!Renderer.fx || !Renderer.fx.length) return null;
+    const now = Renderer._now || performance.now();
+    for (let i = Renderer.fx.length - 1; i >= 0; i--) {
+      const f = Renderer.fx[i];
+      if (f.cityId === cityId && f.captured && now - f.at < 700) return f;
+    }
+    return null;
+  },
+
+  /** 交战/破城特效：0.7s 扩环 + 火光 + 白闪；破城另加尘土与城门碎块（docs/ART.md §3.3） */
   drawFx(ctx, G) {
     if (!Renderer.fx.length) return;
-    const now = performance.now();
-    Renderer.fx = Renderer.fx.filter(f => now - f.at < 700);
+    const now = Renderer._now || performance.now();
+    Renderer.fx = Renderer.fx.filter(f => now - f.at < f.life);
     const z = Math.max(0.75, Renderer.cam.zoom);
     for (const f of Renderer.fx) {
       const c = G.cities[f.cityId];
       if (!c) continue;
       const p = Renderer.toScreen(c.x, c.y);
-      const t = (now - f.at) / 700;
-      const rr = (10 + t * 30) * z;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, rr, 0, Math.PI * 2);
-      ctx.strokeStyle = f.captured
-        ? `rgba(224,96,80,${((1 - t) * 0.9).toFixed(3)})`
-        : `rgba(224,185,58,${((1 - t) * 0.7).toFixed(3)})`;
-      ctx.lineWidth = 2.4 * (1 - t) + 0.6;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, rr * 0.42, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(240,140,60,${((1 - t) * 0.22).toFixed(3)})`;
-      ctx.fill();
-      // 易主闪白
-      if (f.captured && t < 0.32) {
+      const win = f.kind === 'win';
+      const lose = f.kind === 'lose';
+
+      // 1) 冲击环：我破城是金，失城是闷红，其余是交战的灰红
+      const span = f.captured ? 900 : 700;
+      if (now - f.at < span) {
+        const t = (now - f.at) / span;
+        const rr = (10 + t * 34) * z;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, rr * 0.62, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255,250,235,${((0.32 - t) * 1.6).toFixed(3)})`;
+        ctx.arc(p.x, p.y, rr, 0, Math.PI * 2);
+        ctx.strokeStyle = win
+          ? `rgba(240,200,90,${((1 - t) * 0.95).toFixed(3)})`
+          : lose
+            ? `rgba(170,70,60,${((1 - t) * 0.8).toFixed(3)})`
+            : f.captured
+              ? `rgba(224,96,80,${((1 - t) * 0.9).toFixed(3)})`
+              : `rgba(224,185,58,${((1 - t) * 0.7).toFixed(3)})`;
+        ctx.lineWidth = 2.4 * (1 - t) + 0.6;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, rr * 0.42, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(240,140,60,${((1 - t) * 0.22).toFixed(3)})`;
         ctx.fill();
+      }
+
+      // 2) 易主闪白（前 180ms，失城不闪 —— 不要让负反馈看着像奖励）
+      if (f.captured && !lose && now - f.at < 180) {
+        const t = (now - f.at) / 180;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, (10 + t * 20) * z, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,250,235,${((1 - t) * 0.55).toFixed(3)})`;
+        ctx.fill();
+      }
+
+      // 3) 尘土：三个渐扩软圆，破城后 0.15~0.9s
+      if (f.captured && f.kind !== 'lose') {
+        const dt = now - f.at;
+        if (dt > 120 && dt < 900) {
+          const t = (dt - 120) / 780;
+          for (let i = 0; i < 3; i++) {
+            const a = (i / 3) * Math.PI * 2 + 0.6;
+            const off = (6 + t * 16) * z;
+            ctx.beginPath();
+            ctx.arc(p.x + Math.cos(a) * off, p.y + Math.sin(a) * off * 0.6, (3 + t * 9) * z, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(150,138,116,${((1 - t) * 0.16).toFixed(3)})`;
+            ctx.fill();
+          }
+        }
+      }
+
+      // 4) 城门碎块：p = p0 + v·t − g·t²/2，落地（p.y > p0.y + 10）就淡出
+      if (f.particles && f.particles.length) {
+        const dt = now - f.at;
+        for (const q of f.particles) {
+          const t = (dt - q.at) / 1000;
+          if (t <= 0 || t > 0.9) continue;
+          const x = p.x + q.vx * t * z;
+          const y = p.y + (q.vy * t + 240 * t * t) * z;
+          const fade = Math.max(0, 1 - t / 0.9);
+          ctx.fillStyle = q.dark ? `rgba(58,52,44,${fade})` : `rgba(150,140,120,${fade})`;
+          ctx.fillRect(x, y, q.s * z, q.s * z * 0.9);
+        }
       }
     }
   },
@@ -1040,14 +1168,25 @@ const Renderer = {
     }
   },
 
-  /** 势力旗：旗色即势力色；旗面轻微飘动；放大时写势力首字；lift = 随城抬升量 */
-  drawFlag(ctx, x, y, r, color, label, lift) {
+  /** 势力旗：旗色即势力色；旗面轻微飘动；放大时写势力首字；lift = 随城抬升量
+   *  flip = { t: 0~1, from: 旧势力色 }：破城瞬间旗降下再升起并换色（ART.md §3.3） */
+  drawFlag(ctx, x, y, r, color, label, lift, flip) {
     const px = x + r * 1.35;
     const up = lift || 0;
     const y0 = y - r * 1.55 - up;
     const fw = Math.max(8, r * 1.15);
-    const fh = Math.max(5.5, r * 0.78);
+    const baseH = Math.max(5.5, r * 0.78);
     const flap = Math.sin(Renderer._t / 240 + x * 0.04) * Math.max(0.5, r * 0.09);
+
+    // 翻旗：旗面高度 |1-2t| 塌下再展开；前半程还是旧主家色
+    let fh = baseH;
+    let fill = color;
+    if (flip) {
+      const k = Math.abs(1 - 2 * flip.t);
+      fh = Math.max(0.6, baseH * k);
+      fill = flip.t < 0.5 ? (flip.from || color) : color;
+      label = '';
+    }
 
     ctx.strokeStyle = 'rgba(24,20,15,0.85)';
     ctx.lineWidth = Math.max(1, r * 0.09);
@@ -1063,7 +1202,7 @@ const Renderer = {
     ctx.lineTo(px + fw + flap, y0 + fh * 0.82);
     ctx.lineTo(px, y0 + fh);
     ctx.closePath();
-    ctx.fillStyle = color;
+    ctx.fillStyle = fill;
     ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.45)';
     ctx.lineWidth = 0.8;

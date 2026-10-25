@@ -535,15 +535,18 @@ const UI = {
   },
 
   // ───────── 按钮 ─────────
-  /** 音效挂钩：破城一声、我军失城一声警报 */
+  /** 音效挂钩：破城分三档（我破城 / 我失城 / 别人的），不克一声轻的 */
   bindAudioHooks() {
     if (typeof Bus === 'undefined') return;
     Bus.on('combat', e => {
       if (!e) return;
       const g = Store.get();
-      const mine = g && (e.atkLoss != null) && (e.cityId === g.player.homeCityId);
-      Audio.play(e.captured ? 'siege' : 'march');
-      void mine;
+      const pid = g && g.player ? g.player.factionId : null;
+      if (e.captured) {
+        Audio.play(e.atkFactionId === pid ? 'captureWin' : e.defFactionId === pid ? 'captureLose' : 'capture');
+      } else {
+        Audio.play('march');
+      }
     });
     // 我军失城 / 势力覆灭：纪事里出现关键字就响一次（Audio 内部有节流）
     UI._lastLogLen = 0;

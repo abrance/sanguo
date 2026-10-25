@@ -39,6 +39,8 @@ const SHOTS = [
   { name: 'panel-army', query: PANEL + '&turn=6&tab=army' },
   { name: 'panel-rank', query: PANEL + '&turn=6&tab=city&sel=chenliu&rank=1' },
   { name: 'start', query: 'start=1' },
+  // 破城特效冻帧：t=150ms 那一刻（环 + 白闪 + 尘土 + 城门碎块 + 翻旗）
+  { name: 'fx-capture', query: 'zoom=1.4&cx=1180&cy=760&seed=11&turn=6&fx=1' },
 ];
 
 function findChrome() {
