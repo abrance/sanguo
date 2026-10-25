@@ -367,6 +367,7 @@ const Renderer = {
         wallMax: State.wallMaxOf(c),
         detail: lod >= 2,
         tint: lod >= 2 ? 0.1 : 1,   // 中景保留势力色（归属一眼可读）；近景才换成建材色
+        seedId: Renderer.citySeed(c.id),
         imperial: !!(G.court && G.court.emperorCityId === c.id),
         demesne: isDemesne,
         player: isPlayer,
@@ -819,6 +820,13 @@ const Renderer = {
     return 0;
   },
 
+  /** 城池稳定哈希：按 id 播种城内布局，同一座城每次长一样 */
+  citySeed(id) {
+    let n = 7;
+    for (let i = 0; i < id.length; i++) n = (n * 31 + id.charCodeAt(i)) & 0xffff;
+    return n;
+  },
+
   /** 城池底平面尺寸：drawCity 与选中高亮共用这一份比例，别再各写一遍 */
   cityFoot(r, tier) {
     return { w: r * (tier === 2 ? 2.12 : 1.92), h: r * (tier === 2 ? 1.62 : 1.44) };
@@ -992,6 +1000,26 @@ const Renderer = {
       const gh = Math.min(dy * 0.6, gw * 1.8);
       ctx.fillStyle = 'rgba(10,9,7,0.92)';
       ctx.fillRect(x - gw / 2, bt - gh, gw, gh);
+
+      // 砖纹（城墙等级驱动，ART.md §1.3 ⑤）：一级墙是素圹土，三级以上才有砖缝
+      if (opts.detail !== false && (opts.wall || 1) >= 3) {
+        const rows = (opts.wall || 1) >= 5 ? 3 : 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.13)';
+        for (let k = 1; k <= rows; k++) {
+          const f = k / (rows + 1);
+          ctx.fillRect(left + dx * f, bt - (bt - tt) * f, w, 1);
+        }
+      }
+
+      // 马面：都城才有的一排凸台（城头正面外挑），让它与郡城一眼分得开
+      if (opts.detail !== false && tier === 2) {
+        ctx.fillStyle = shadeTint(wall, 0.52, -1);
+        for (let i = 0; i < walls; i += 2) {
+          if (i === gapIdx) continue;
+          const mx = left + bw * (0.7 + i * ((w - bw * 1.4) / Math.max(1, walls - 1)));
+          ctx.fillRect(mx - bw * 0.18, bt - gh * 0.34, bw * 0.36, 2);
+        }
+      }
       // 接地暗线
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fillRect(left, bt - 0.8, w + dx, 1.2);
@@ -1029,6 +1057,25 @@ const Renderer = {
     }
 
     const detail = opts.detail !== false;
+
+    // 城内小屋（ART.md §1.3 ⑥）：按城 id 播种 —— 院子不再是“一块空地套个框”
+    if (detail && tier >= 1) {
+      const sd = opts.seedId || 7;
+      const n = tier === 2 ? 5 : 3;
+      const ix0 = left + thick + 0.5, iy0 = top + thick + 0.5;
+      const iw0 = w - thick * 2 - 1.5, ih0 = h - thick * 2 - 1.5;
+      const hwMax = Math.max(2.2, w * 0.13), hhMax = Math.max(1.6, h * 0.14);
+      for (let i = 0; i < n; i++) {
+        const hx = ix0 + GameMap._hash(sd + i * 7, 11) * Math.max(1, iw0 - hwMax);
+        const hy = iy0 + GameMap._hash(sd + i * 13, 23) * Math.max(1, ih0 - hhMax);
+        const hw = hwMax * (0.7 + GameMap._hash(sd + i * 3, 31) * 0.5);
+        const hh = hhMax * (0.7 + GameMap._hash(sd + i * 5, 41) * 0.5);
+        ctx.fillStyle = shadeTint(wall, 0.80, -1);
+        ctx.fillRect(hx, hy, hw, hh);
+        ctx.fillStyle = hexA(mat.roof.base, 0.8);
+        ctx.fillRect(hx - 0.5, hy - 0.8, hw + 1, 1);     // 一条屋顶线就有“屋”的意思
+      }
+    }
 
     // 门楼：南墙正中一座小楼（城墙 2 级起），城越大越显眼
     if (detail && (opts.wall || 1) >= 2) {
