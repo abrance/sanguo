@@ -386,7 +386,12 @@ const Combat = {
         `【${city.name}】${b.atkName}${b.atkLead}攻${b.defName}，${captured ? '城破' : '不克'}（攻折 ${U.num(b.atkLoss)}，守折 ${U.num(b.defLoss)}）。`);
     }
     G.stats.battles++;
-    Bus.emit('combat', { cityId: city.id, captured, atkLoss: b.atkLoss, defLoss: b.defLoss });
+    Bus.emit('combat', {
+      cityId: city.id, captured, atkLoss: b.atkLoss, defLoss: b.defLoss,
+      // 视图层要靠这两个字段判断“是我破的城”还是“我的城破了”（此时 owner 还没变）
+      atkFactionId: army.factionId, defFactionId: city.owner,
+      defColor: (G.factions[city.owner] || {}).color,
+    });
 
     return {
       captured, atkLoss: b.atkLoss, defLoss: b.defLoss,

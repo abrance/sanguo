@@ -227,6 +227,12 @@ const UI = {
       if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !typing) {
         if (UI.cycleCity(e.key === 'ArrowRight' ? 1 : -1)) e.preventDefault();
       }
+      // 用 div 做的可点行（军队行 / 直辖城切换条）：Enter 与空格等价于点击。
+      // 没这一条，鼠标能点到的东西键盘用户永远够不到（cursor:pointer 不能代替 tabindex）。
+      if ((e.key === 'Enter' || e.key === ' ') && !typing) {
+        const el = t && t.closest && t.closest('[data-keyclick]');
+        if (el) { e.preventDefault(); el.click(); }
+      }
     });
   },
 
@@ -370,6 +376,72 @@ const UI = {
       UI.render(G);
     }
     UI.flash(msg);
+  },
+
+  /**
+   * 城池冒字（ART.md §3.3）：在城的位置上浮一行金字，1.2s 后自清。
+   * 用 DOM 而不是 canvas —— 文本动画交给 CSS，不用每帧重绘，也不占「静止不重绘」的预算。
+   */
+  floatCity(cityId, text, kind) {
+    const G = Store.get();
+    const c = G && G.cities[cityId];
+    if (!c || !Renderer.cw) return;
+    const p = Renderer.toScreen(c.x, c.y);
+    const wrap = document.getElementById('mapwrap');
+    if (!wrap) return;
+    // 目标城在视野外就别冒字了：冒到屏幕外只会得到一条负 top 的隐形元素
+    if (p.x < 20 || p.y < 30 || p.x > Renderer.cw - 20 || p.y > Renderer.ch - 10) return;
+    const el = document.createElement('div');
+    el.className = 'floatter' + (kind ? ' ' + kind : '');
+    el.textContent = text;
+    el.style.left = Math.round(p.x) + 'px';
+    el.style.top = Math.round(p.y - 18 * Math.max(0.9, Renderer.cam.zoom)) + 'px';
+    wrap.appendChild(el);
+    setTimeout(() => el.remove(), 1300);
+  },
+
+  /**
+   * 数字滚动：只动 DOM 文本，不触发重渲染。
+   * 渲染函数每次都会把数字覆盖成真值，所以这里把结束值记在 el 上，被覆盖也不会算错。
+   */
+  countUp(el, to) {
+    if (!el) return;
+    const from = Number(el._cuFrom == null ? el.textContent.replace(/[^\d-]/g, '') : el._cuFrom);
+    el._cuFrom = to;
+    if (Renderer.reducedMotion() || !isFinite(from) || from === to) { el.textContent = to; return; }
+    const t0 = performance.now();
+    const ms = 300;
+    cancelAnimationFrame(el._cuRaf || 0);
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / ms);
+      const v = Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3)));
+      el.textContent = v;
+      if (k < 1) el._cuRaf = requestAnimationFrame(step);
+      else el.textContent = to;
+    };
+    el._cuRaf = requestAnimationFrame(step);
+  },
+
+  /** 晋升仪式：战功条扫光 + 卡片金描一圈 + 冒字 + 一声两音（复用破城的正反馈语言） */
+  promoteFx(rk) {
+    const card = document.getElementById('rankCard');
+    const bar = document.querySelector('.merit-bar');
+    if (card) {
+      card.classList.remove('promote');
+      void card.offsetWidth;              // 强制重排：同一招连升两级也要重新播
+      card.classList.add('promote');
+      setTimeout(() => card.classList.remove('promote'), 1400);
+    }
+    if (bar) {
+      bar.classList.remove('sweep');
+      void bar.offsetWidth;
+      bar.classList.add('sweep');
+      setTimeout(() => bar.classList.remove('sweep'), 900);
+    }
+    const G = Store.get();
+    const home = G && G.cities[G.player.homeCityId];
+    if (home) UI.floatCity(home.id, '升 ' + rk.name, 'gold');
+    Audio.play('promote');
   },
 
   /** 地图上方的浮层提示（不写纪事，不打断操作） */
@@ -529,15 +601,28 @@ const UI = {
   },
 
   // ───────── 按钮 ─────────
-  /** 音效挂钩：破城一声、我军失城一声警报 */
+  /** 音效挂钩：破城分三档（我破城 / 我失城 / 别人的），不克一声轻的 */
   bindAudioHooks() {
     if (typeof Bus === 'undefined') return;
     Bus.on('combat', e => {
       if (!e) return;
       const g = Store.get();
-      const mine = g && (e.atkLoss != null) && (e.cityId === g.player.homeCityId);
-      Audio.play(e.captured ? 'siege' : 'march');
-      void mine;
+      const pid = g && g.player ? g.player.factionId : null;
+      if (e.captured) {
+        const mine = e.atkFactionId === pid;
+        if (mine) {
+          // 连破计数：同一回合第 n 城，号角升调（Audio 侧封顶 4 城）
+          const turn = g && g.meta ? g.meta.turn : null;
+          if (UI._capTurn !== turn) { UI._capTurn = turn; UI._capStreak = 0; }   // 换月就重新数
+          UI._capStreak += 1;
+          Audio.streak = UI._capStreak;
+          UI.floatCity(e.cityId, UI._capStreak > 1 ? '连破 ×' + UI._capStreak : '城破', 'gold');
+          UI.countUp(UI.$('meritVal'), g.player.merit);
+        }
+        Audio.play(mine ? 'captureWin' : e.defFactionId === pid ? 'captureLose' : 'capture');
+      } else {
+        Audio.play('march');
+      }
     });
     // 我军失城 / 势力覆灭：纪事里出现关键字就响一次（Audio 内部有节流）
     UI._lastLogLen = 0;
@@ -699,6 +784,8 @@ const UI = {
 
     const rk = rankOf(G.player.rank);
     const route = ROUTES[G.player.route];
+    if (UI._lastRank != null && G.player.rank > UI._lastRank) UI.promoteFx(rk);
+    UI._lastRank = G.player.rank;
     UI.$('rankName').textContent = rk.name;
     UI.$('rankRoute').textContent = route.name;
     UI.$('rankRoute').style.color = route.color;
@@ -709,10 +796,10 @@ const UI = {
       ? 100
       : U.clamp((G.player.merit - prev) / Math.max(1, need - prev), 0, 1) * 100;
     UI.$('meritFill').style.width = shown + '%';
-    UI.$('meritVal').textContent = G.player.merit;
+    UI.countUp(UI.$('meritVal'), G.player.merit);
     UI.$('meritNext').textContent = isFinite(need) ? need : '—';
     const repNow = Math.round(State.playerReputation(G));
-    UI.$('repVal').textContent = repNow;
+    UI.countUp(UI.$('repVal'), repNow);
     UI.$('repVal').title = `名望 ${repNow}：${repTitle(repNow)}`
       + '（登用成功率受它影响；每 +8 点名望约提高 1%）';
 

@@ -54,8 +54,22 @@ const Renderer = {
 
   /** 本帧要不要重画：静止时返回 false，主循环据此跳过整幅重绘 */
   moving() {
-    return !!(Renderer.stale || Renderer._fly || Renderer._inertia
+    return !!(Renderer.stale || Renderer._fly || Renderer._inertia || Renderer.shake
       || (Renderer.fx && Renderer.fx.length));
+  },
+
+  /**
+   * 镜头震动（docs/ART.md §3.3）：只算出绘制偏移，不碰 cam / toWorld，
+   * 所以拖拽、命中、悬浮在震的那 200ms 里都还是准的。
+   */
+  shakeOffset(now) {
+    const s = Renderer.shake;
+    if (!s) return [0, 0];
+    const t = (now - s.at) / s.ms;
+    if (t >= 1) { Renderer.shake = null; return [0, 0]; }
+    const k = (1 - t) * (1 - t) * s.amp;
+    const ph = now / 18;
+    return [Math.sin(ph * 1.7) * k, Math.sin(ph * 2.3 + 1.1) * k * 0.7];
   },
 
   centerOn(x, y) { Renderer.cam.x = x; Renderer.cam.y = y; },
@@ -226,23 +240,28 @@ const Renderer = {
   // ───────── 绘制 ─────────
   draw(G, dt) {
     Renderer._t += dt;
-    Renderer._now = performance.now();
+    // clockHold：截图模式把时间钉住，特效才能被像素回归拍到（ART.md §3.5）
+    Renderer._now = Renderer.clockHold != null ? Renderer.clockHold : performance.now();
     Renderer.tickCam(dt);
     const ctx = Renderer.ctx;
     const dpr = Renderer._dpr || 1;
     const cw = Renderer.cw, ch = Renderer.ch;
     const z = Renderer.cam.zoom;
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // 震动偏移经 dpr 进到各 setTransform（只影响画面，不影响坐标换算）
+    const [shx, shy] = Renderer.shakeOffset(Renderer._now);
+    const ox = dpr * shx, oy = dpr * shy;
+
+    ctx.setTransform(dpr, 0, 0, dpr, ox, oy);
     ctx.fillStyle = '#0d0c0a';
-    ctx.fillRect(0, 0, cw, ch);
+    ctx.fillRect(-Math.abs(shx) - 4, -Math.abs(shy) - 4, cw + Math.abs(shx) * 2 + 8, ch + Math.abs(shy) * 2 + 8);
 
     // 地形（世界坐标变换）
     if (Renderer.terrain) {
       ctx.save();
       ctx.setTransform(dpr * z, 0, 0, dpr * z,
-        dpr * (cw / 2 - Renderer.cam.x * z),
-        dpr * (ch / 2 - Renderer.cam.y * z));
+        dpr * (cw / 2 - Renderer.cam.x * z) + ox,
+        dpr * (ch / 2 - Renderer.cam.y * z) + oy);
       ctx.imageSmoothingEnabled = true;
       // 只贴可见的那块世界：整图 blit 会把 2400×1800 全过一遍，视野小的时候纯浪费
       const vb = Renderer.viewBounds();
@@ -250,7 +269,7 @@ const Renderer = {
       ctx.restore();
     }
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, ox, oy);
 
     const playerFid = G.player.factionId;
 
@@ -258,8 +277,8 @@ const Renderer = {
     if (Renderer.terrain && G) {
       ctx.save();
       ctx.setTransform(dpr * z, 0, 0, dpr * z,
-        dpr * (cw / 2 - Renderer.cam.x * z),
-        dpr * (ch / 2 - Renderer.cam.y * z));
+        dpr * (cw / 2 - Renderer.cam.x * z) + ox,
+        dpr * (ch / 2 - Renderer.cam.y * z) + oy);
       // 领地层是半分辨率：源矩形按 0.5 缩放取
       const vb = Renderer.viewBounds();
       const layer = Renderer.territoryLayer(G);
@@ -347,6 +366,8 @@ const Renderer = {
         wall: c.wall,
         wallMax: State.wallMaxOf(c),
         detail: lod >= 2,
+        tint: lod >= 2 ? 0.1 : 1,   // 中景保留势力色（归属一眼可读）；近景才换成建材色
+        seedId: Renderer.citySeed(c.id),
         imperial: !!(G.court && G.court.emperorCityId === c.id),
         demesne: isDemesne,
         player: isPlayer,
@@ -364,9 +385,12 @@ const Renderer = {
       }
 
       // 势力旗：旗色即势力色，放大时旗上写势力首字；杆随立面上抬，插在城头
+      // （破城 700ms 内插一段“翻旗”：旧旗降下 → 换色升起）
       if (f && c.owner !== 'free') {
+        const fx = Renderer.fxOf(c.id);
+        const flip = fx ? { t: (Renderer._now - fx.at) / 700, from: fx.fromColor } : null;
         Renderer.drawFlag(ctx, p.x, p.y, r, color, lod >= 2 ? f.name.slice(0, 1) : '',
-          cz * Renderer.ISO.flagLift);
+          cz * Renderer.ISO.flagLift, flip);
       }
 
       // 治所：城头一颗小星（中景也画 —— 2~3px 的亮点比一排雉堞更能读出"这是治所"）
@@ -442,39 +466,145 @@ const Renderer = {
   /** 交战特效入队（由 Bus 的 combat 事件驱动，纯视觉，不参与规则） */
   addFx(e) {
     if (!e || !e.cityId) return;
-    Renderer.fx.push({ cityId: e.cityId, captured: !!e.captured, at: performance.now() });
+    const now = Renderer._now || performance.now();
+    const G = Renderer.G;
+    const pid = G && G.player ? G.player.factionId : null;
+    // 视角分四种：我破城 / 我失城 / 别人的城破了 / 攻城不克
+    const kind = e.captured
+      ? (pid && e.atkFactionId === pid ? 'win' : pid && e.defFactionId === pid ? 'lose' : 'capture')
+      : 'repel';
+
+    // 城门碎块：初速向外扇开，受重力；at = 起飞延迟（先有撞击，再有碎块）
+    // 减少动效：不震动、不碎块（白闪与颜色变化保留 —— 信息不能丢）
+    const calm = Renderer.reducedMotion();
+    const particles = [];
+    if (e.captured && kind !== 'lose' && !calm) {
+      const n = kind === 'win' ? 14 : 9;
+      // 用 hash 而不是 Math.random：同一场仗每次碎块轨迹一样，像素回归才能比
+      const seed = e.cityId.length * 31 + e.cityId.charCodeAt(0) * 7;
+      for (let i = 0; i < n; i++) {
+        const a = -Math.PI / 2 + (GameMap._hash(i * 13 + seed, 17) - 0.5) * 2.4;
+        const sp = 45 + GameMap._hash(i * 29 + seed, 41) * 75;
+        particles.push({
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          s: 1.1 + GameMap._hash(i * 7 + seed, 53) * 1.9,
+          at: 80 + GameMap._hash(i * 11 + seed, 67) * 140,
+          dark: GameMap._hash(i * 5 + seed, 71) < 0.45,
+        });
+      }
+    }
+
+    Renderer.fx.push({
+      cityId: e.cityId, captured: !!e.captured, kind,
+      fromColor: e.defColor || null,
+      particles,
+      at: now,
+      life: e.captured ? 1600 : 900,
+    });
     if (Renderer.fx.length > 8) Renderer.fx.shift();
+
+    // 震动：我破城给足，失败/失城反而更闷（负反馈不需要爽）
+    Renderer.shake = calm ? null : {
+      amp: kind === 'win' ? 3.4 : kind === 'lose' ? 2.4 : e.captured ? 2 : 1.2,
+      at: now,
+      ms: kind === 'win' ? 260 : 200,
+    };
+    Renderer.stale = true;
   },
 
-  /** 短促交战特效：0.7s 扩环 + 火光 */
+  /** 系统级「减少动效」：震动/粒子/滑入都停，白闪与颜色变化保留 */
+  reducedMotion() {
+    if (Renderer._calm == null) {
+      try {
+        Renderer._calm = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+      } catch (e) { Renderer._calm = false; }
+    }
+    return Renderer._calm;
+  },
+
+  /** 某城正在播的破城特效（翻旗用），只认最近 700ms 内的那一条 */
+  fxOf(cityId) {
+    if (!Renderer.fx || !Renderer.fx.length) return null;
+    const now = Renderer._now || performance.now();
+    for (let i = Renderer.fx.length - 1; i >= 0; i--) {
+      const f = Renderer.fx[i];
+      if (f.cityId === cityId && f.captured && now - f.at < 700) return f;
+    }
+    return null;
+  },
+
+  /** 交战/破城特效：0.7s 扩环 + 火光 + 白闪；破城另加尘土与城门碎块（docs/ART.md §3.3） */
   drawFx(ctx, G) {
     if (!Renderer.fx.length) return;
-    const now = performance.now();
-    Renderer.fx = Renderer.fx.filter(f => now - f.at < 700);
+    const now = Renderer._now || performance.now();
+    Renderer.fx = Renderer.fx.filter(f => now - f.at < f.life);
     const z = Math.max(0.75, Renderer.cam.zoom);
     for (const f of Renderer.fx) {
       const c = G.cities[f.cityId];
       if (!c) continue;
       const p = Renderer.toScreen(c.x, c.y);
-      const t = (now - f.at) / 700;
-      const rr = (10 + t * 30) * z;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, rr, 0, Math.PI * 2);
-      ctx.strokeStyle = f.captured
-        ? `rgba(224,96,80,${((1 - t) * 0.9).toFixed(3)})`
-        : `rgba(224,185,58,${((1 - t) * 0.7).toFixed(3)})`;
-      ctx.lineWidth = 2.4 * (1 - t) + 0.6;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, rr * 0.42, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(240,140,60,${((1 - t) * 0.22).toFixed(3)})`;
-      ctx.fill();
-      // 易主闪白
-      if (f.captured && t < 0.32) {
+      const win = f.kind === 'win';
+      const lose = f.kind === 'lose';
+
+      // 1) 冲击环：我破城是金，失城是闷红，其余是交战的灰红
+      const span = f.captured ? 900 : 700;
+      if (now - f.at < span) {
+        const t = (now - f.at) / span;
+        const rr = (10 + t * 34) * z;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, rr * 0.62, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255,250,235,${((0.32 - t) * 1.6).toFixed(3)})`;
+        ctx.arc(p.x, p.y, rr, 0, Math.PI * 2);
+        ctx.strokeStyle = win
+          ? `rgba(240,200,90,${((1 - t) * 0.95).toFixed(3)})`
+          : lose
+            ? `rgba(170,70,60,${((1 - t) * 0.8).toFixed(3)})`
+            : f.captured
+              ? `rgba(224,96,80,${((1 - t) * 0.9).toFixed(3)})`
+              : `rgba(224,185,58,${((1 - t) * 0.7).toFixed(3)})`;
+        ctx.lineWidth = 2.4 * (1 - t) + 0.6;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, rr * 0.42, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(240,140,60,${((1 - t) * 0.22).toFixed(3)})`;
         ctx.fill();
+      }
+
+      // 2) 易主闪白（前 180ms，失城不闪 —— 不要让负反馈看着像奖励）
+      if (f.captured && !lose && now - f.at < 180) {
+        const t = (now - f.at) / 180;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, (10 + t * 20) * z, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,250,235,${((1 - t) * 0.55).toFixed(3)})`;
+        ctx.fill();
+      }
+
+      // 3) 尘土：三个渐扩软圆，破城后 0.15~0.9s
+      if (f.captured && f.kind !== 'lose') {
+        const dt = now - f.at;
+        if (dt > 120 && dt < 900) {
+          const t = (dt - 120) / 780;
+          for (let i = 0; i < 3; i++) {
+            const a = (i / 3) * Math.PI * 2 + 0.6;
+            const off = (6 + t * 16) * z;
+            ctx.beginPath();
+            ctx.arc(p.x + Math.cos(a) * off, p.y + Math.sin(a) * off * 0.6, (3 + t * 9) * z, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(150,138,116,${((1 - t) * 0.16).toFixed(3)})`;
+            ctx.fill();
+          }
+        }
+      }
+
+      // 4) 城门碎块：p = p0 + v·t − g·t²/2，落地（p.y > p0.y + 10）就淡出
+      if (f.particles && f.particles.length) {
+        const dt = now - f.at;
+        for (const q of f.particles) {
+          const t = (dt - q.at) / 1000;
+          if (t <= 0 || t > 0.9) continue;
+          const x = p.x + q.vx * t * z;
+          const y = p.y + (q.vy * t + 240 * t * t) * z;
+          const fade = Math.max(0, 1 - t / 0.9);
+          ctx.fillStyle = q.dark ? `rgba(58,52,44,${fade})` : `rgba(150,140,120,${fade})`;
+          ctx.fillRect(x, y, q.s * z, q.s * z * 0.9);
+        }
       }
     }
   },
@@ -690,9 +820,75 @@ const Renderer = {
     return 0;
   },
 
+  /** 城池稳定哈希：按 id 播种城内布局，同一座城每次长一样 */
+  citySeed(id) {
+    let n = 7;
+    for (let i = 0; i < id.length; i++) n = (n * 31 + id.charCodeAt(i)) & 0xffff;
+    return n;
+  },
+
   /** 城池底平面尺寸：drawCity 与选中高亮共用这一份比例，别再各写一遍 */
   cityFoot(r, tier) {
     return { w: r * (tier === 2 ? 2.12 : 1.92), h: r * (tier === 2 ? 1.62 : 1.44) };
+  },
+
+  /**
+   * 城池材质（docs/ART.md §1.3 ①）：城体是**建材**，不是势力色。
+   * 势力色只留四处：旗 / 檐口 / 门匾 / 城下地环（+ 顶面 10% 染色，见 drawCity）。
+   * 以前城体直接用势力色 → 地图上是一堆大色块，看不出是建筑。
+   */
+  CITY_MAT: {
+    rammed: { base: '#6b6152', light: '#80745f', dark: '#443c32' },   // 夯土墙（县城）
+    stone: { base: '#6e6a60', light: '#86806f', dark: '#48443c' },    // 砖石墙（郡城 / 都城）
+    inner: { base: '#5c564a', light: '#6e6758', dark: '#3a352d' },    // 内城墙
+    tileBlue: { base: '#3c4550', light: '#4e5867', dark: '#262c34' }, // 青瓦
+    tileRed: { base: '#5a352f', light: '#71453b', dark: '#38201c' },  // 朱瓦（都城 / 帝都）
+  },
+
+  /** 档次定墙、档次+帝都定瓦 */
+  cityMat(tier, imperial) {
+    const M = Renderer.CITY_MAT;
+    return {
+      wall: tier >= 1 ? M.stone : M.rammed,
+      roof: (imperial || tier >= 2) ? M.tileRed : M.tileBlue,
+      inner: M.inner,
+    };
+  },
+
+  /**
+   * 双坡屋顶（ART.md §1.3 ②）：山墙朝南，西北来光 → 左坡受光。
+   * bx/by = 墙身左上角，bw = 墙身宽，rise = 屋脊高，eave = 檐口色（势力色，可空）。
+   */
+  drawRoof(ctx, bx, by, bw, rise, mat, eave) {
+    const inset = bw * 0.16;
+    const ridge = by - rise;
+    const mid = bx + bw / 2;
+    // 左坡（受光）
+    ctx.beginPath();
+    ctx.moveTo(bx, by); ctx.lineTo(bx + inset, ridge);
+    ctx.lineTo(mid, ridge); ctx.lineTo(mid, by);
+    ctx.closePath();
+    ctx.fillStyle = mat.light;
+    ctx.fill();
+    // 右坡（背光）
+    ctx.beginPath();
+    ctx.moveTo(mid, by); ctx.lineTo(mid, ridge);
+    ctx.lineTo(bx + bw - inset, ridge); ctx.lineTo(bx + bw, by);
+    ctx.closePath();
+    ctx.fillStyle = mat.dark;
+    ctx.fill();
+    // 正脊高光
+    if (bw >= 5) {
+      ctx.beginPath();
+      ctx.moveTo(bx + inset, ridge + 0.5);
+      ctx.lineTo(bx + bw - inset, ridge + 0.5);
+      ctx.strokeStyle = mat.light;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    // 檐口：1px 压暗；给了 eave 就用势力色描一层（归属的“瓦当”感）
+    ctx.fillStyle = eave ? eave : hexA(mat.dark, 0.9);
+    ctx.fillRect(bx - 0.5, by - 1, bw + 1, 1);
   },
 
   /**
@@ -702,6 +898,10 @@ const Renderer = {
    */
   drawCity(ctx, x, y, r, color, opts) {
     const tier = opts.tier || 0;
+    const mat = Renderer.cityMat(tier, opts.imperial);
+    // 顶面染势力色：近景（lod2）只染 10%——城体靠材质与坡顶读，旗/门匾/檐口说归属；
+    // 中景（lod1）不画门窗屋顶，且城只有十来个像素，颜色仍是唯一的归属线索，所以 tint=1 保留势力色。
+    const wall = mixOf(mat.wall.base, color, opts.tint == null ? 0.1 : opts.tint);
     const foot = Renderer.cityFoot(r, tier);
     const w = foot.w;
     const h = foot.h;
@@ -775,7 +975,16 @@ const Renderer = {
       ctx.lineTo(left + w + dx, tt);
       ctx.lineTo(left + dx, tt);
       ctx.closePath();
-      ctx.fillStyle = shade(color, Renderer.ISO.front);
+      ctx.fillStyle = shadeTint(wall, 0.62, -1);      // 南面：背光，偏冷
+      ctx.fill();
+      // 墙根 AO：下 1/3 再压一层，墙不再“飘”在地上
+      ctx.beginPath();
+      ctx.moveTo(left, bt - (bt - tt) * 0.34);
+      ctx.lineTo(left + w, bt - (bt - tt) * 0.34);
+      ctx.lineTo(left + w, bt);
+      ctx.lineTo(left, bt);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(0,0,0,0.16)';
       ctx.fill();
       // 东面
       ctx.beginPath();
@@ -784,13 +993,33 @@ const Renderer = {
       ctx.lineTo(left + w + dx, tt);
       ctx.lineTo(left + w + dx, top - dy);
       ctx.closePath();
-      ctx.fillStyle = shade(color, Renderer.ISO.side);
+      ctx.fillStyle = shadeTint(wall, 1.08, 1);       // 东面：受光，偏暖
       ctx.fill();
       // 城门：开在南面墙上，贴底边画（顶面盖不到）；高度约贴墙一半，门道才显气派
       const gw = Math.max(2.2, r * 0.34);
       const gh = Math.min(dy * 0.6, gw * 1.8);
       ctx.fillStyle = 'rgba(10,9,7,0.92)';
       ctx.fillRect(x - gw / 2, bt - gh, gw, gh);
+
+      // 砖纹（城墙等级驱动，ART.md §1.3 ⑤）：一级墙是素圹土，三级以上才有砖缝
+      if (opts.detail !== false && (opts.wall || 1) >= 3) {
+        const rows = (opts.wall || 1) >= 5 ? 3 : 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.13)';
+        for (let k = 1; k <= rows; k++) {
+          const f = k / (rows + 1);
+          ctx.fillRect(left + dx * f, bt - (bt - tt) * f, w, 1);
+        }
+      }
+
+      // 马面：都城才有的一排凸台（城头正面外挑），让它与郡城一眼分得开
+      if (opts.detail !== false && tier === 2) {
+        ctx.fillStyle = shadeTint(wall, 0.52, -1);
+        for (let i = 0; i < walls; i += 2) {
+          if (i === gapIdx) continue;
+          const mx = left + bw * (0.7 + i * ((w - bw * 1.4) / Math.max(1, walls - 1)));
+          ctx.fillRect(mx - bw * 0.18, bt - gh * 0.34, bw * 0.36, 2);
+        }
+      }
       // 接地暗线
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fillRect(left, bt - 0.8, w + dx, 1.2);
@@ -801,7 +1030,7 @@ const Renderer = {
         const gwd = bw * 1.6, ght = dy * 0.62;
         ctx.fillStyle = 'rgba(8,7,5,0.5)';
         ctx.fillRect(gx - gwd / 2, bt - ght, gwd, ght);
-        ctx.fillStyle = shade(color, 0.4);
+        ctx.fillStyle = shadeTint(wall, 0.4, -1);
         for (let k = 0; k < 3; k++) {
           ctx.fillRect(gx - gwd / 2 + k * gwd * 0.34, bt - 1.4, gwd * 0.2, 1.4 + (k % 2));
         }
@@ -813,14 +1042,14 @@ const Renderer = {
     ctx.translate(dx, -dy);
 
     // 外墙
-    ctx.fillStyle = color;
+    ctx.fillStyle = wall;
     ctx.fillRect(left, top, w, h);
     // 院内（压暗，显出墙厚 = 城墙等级）
     ctx.fillStyle = 'rgba(12,10,8,0.34)';
     ctx.fillRect(left + thick, top + thick, w - thick * 2, h - thick * 2);
 
     // 雉堞
-    ctx.fillStyle = color;
+    ctx.fillStyle = wall;
     for (let i = 0; i < walls; i++) {
       if (i === gapIdx && tier > 0) continue;   // 塌掉一段
       const mx = left + bw * (0.7 + i * ((w - bw * 1.4) / Math.max(1, walls - 1)));
@@ -829,15 +1058,39 @@ const Renderer = {
 
     const detail = opts.detail !== false;
 
+    // 城内小屋（ART.md §1.3 ⑥）：按城 id 播种 —— 院子不再是“一块空地套个框”
+    if (detail && tier >= 1) {
+      const sd = opts.seedId || 7;
+      const n = tier === 2 ? 5 : 3;
+      const ix0 = left + thick + 0.5, iy0 = top + thick + 0.5;
+      const iw0 = w - thick * 2 - 1.5, ih0 = h - thick * 2 - 1.5;
+      const hwMax = Math.max(2.2, w * 0.13), hhMax = Math.max(1.6, h * 0.14);
+      for (let i = 0; i < n; i++) {
+        const hx = ix0 + GameMap._hash(sd + i * 7, 11) * Math.max(1, iw0 - hwMax);
+        const hy = iy0 + GameMap._hash(sd + i * 13, 23) * Math.max(1, ih0 - hhMax);
+        const hw = hwMax * (0.7 + GameMap._hash(sd + i * 3, 31) * 0.5);
+        const hh = hhMax * (0.7 + GameMap._hash(sd + i * 5, 41) * 0.5);
+        ctx.fillStyle = shadeTint(wall, 0.80, -1);
+        ctx.fillRect(hx, hy, hw, hh);
+        ctx.fillStyle = hexA(mat.roof.base, 0.8);
+        ctx.fillRect(hx - 0.5, hy - 0.8, hw + 1, 1);     // 一条屋顶线就有“屋”的意思
+      }
+    }
+
     // 门楼：南墙正中一座小楼（城墙 2 级起），城越大越显眼
     if (detail && (opts.wall || 1) >= 2) {
       const gw = Math.max(3, w * 0.12), gh = Math.max(3, h * 0.16);
       const gx = left + w / 2 - gw / 2;
       const gy = top + h - gh * 0.35;
-      ctx.fillStyle = shade(color, 0.86);
+      ctx.fillStyle = mat.wall.light;
       ctx.fillRect(gx, gy, gw, gh);
       ctx.fillStyle = 'rgba(10,9,7,0.55)';
       ctx.fillRect(gx + gw * 0.3, gy + gh * 0.55, gw * 0.4, gh * 0.45);   // 门洞
+      // 门匾：势力色，很小但一眼是“谁家城门”
+      ctx.fillStyle = hexA(color, 0.85);
+      ctx.fillRect(gx + gw * 0.28, gy + gh * 0.1, gw * 0.44, 1.5);
+      // 坡顶门楼：天际线就在这里变好看
+      Renderer.drawRoof(ctx, gx - gw * 0.06, gy, gw * 1.12, Math.max(1.6, gh * 0.62), mat.roof, hexA(color, 0.7));
     }
 
     // 角楼 / 箭楼：座数随城墙等级走（郡城 1~2 座后角，都城 2~4 座、前角即箭楼）
@@ -847,13 +1100,15 @@ const Renderer = {
       const towers = tier === 2
         ? [[-1, -1], [1, -1], [-1, 1], [1, 1]].slice(0, wallLv >= 3 ? 4 : 2)
         : [[-1, -1], [1, -1]].slice(0, wallLv >= 2 ? 2 : 1);
-      ctx.fillStyle = color;
+      ctx.fillStyle = mat.wall.base;
       towers.forEach(([sx, sy], i) => {
         // 城墙被打塌：塌掉最后一座角楼，只在原地留一堆碎石
         if (damaged && i === towers.length - 1) return;
         const tx = sx < 0 ? left - t * 0.5 : left + w - t * 0.5;
         const ty = sy < 0 ? top - t * 0.5 : top + h - t * 0.5;
         ctx.fillRect(tx, ty, t, t);
+        // 角楼檐帽：只画大一点的（小楼加了反而脏），势力色檐口
+        if (t >= 5) Renderer.drawRoof(ctx, tx, ty, t, Math.max(1.4, t * 0.55), mat.roof, t >= 7 ? hexA(color, 0.55) : null);
       });
       if (damaged) {
         const [sx, sy] = towers[towers.length - 1];
@@ -861,30 +1116,36 @@ const Renderer = {
         const ty = sy < 0 ? top - t * 0.5 : top + h - t * 0.5;
         ctx.fillStyle = 'rgba(10,9,7,0.55)';
         ctx.fillRect(tx, ty, t, t);
-        ctx.fillStyle = shade(color, 0.42);
+        ctx.fillStyle = shadeTint(wall, 0.42, -1);
         for (let k = 0; k < 4; k++) {
           ctx.fillRect(tx - t * 0.2 + k * t * 0.36, ty + t * 0.72, t * 0.24, t * 0.3);
         }
       }
     }
 
-    // 内城（都城）
+    // 内城（都城）：内墙用更深的石色，主楼给朱瓦重檐
     if (detail && tier === 2) {
       const iw = w * 0.44, ih = h * 0.46;
-      ctx.fillStyle = color;
-      ctx.fillRect(x - iw / 2, y - h * 0.16 - ih, iw, ih);
+      const iy = y - h * 0.16 - ih;
+      ctx.fillStyle = mat.inner.base;
+      ctx.fillRect(x - iw / 2, iy, iw, ih);
       ctx.fillStyle = 'rgba(12,10,8,0.42)';
-      ctx.fillRect(x - iw / 2 + thick * 0.7, y - h * 0.16 - ih + thick * 0.7, iw - thick * 1.4, ih - thick * 1.4);
+      ctx.fillRect(x - iw / 2 + thick * 0.7, iy + thick * 0.7, iw - thick * 1.4, ih - thick * 1.4);
       // 内城雉堞：都城是"双重城墙"，顶上还有一圈小堞
-      ctx.fillStyle = color;
+      ctx.fillStyle = mat.inner.base;
       const inm = 5, imw = Math.max(1.2, bw * 0.4), imh = Math.max(1.2, merlon * 0.68);
       for (let i = 0; i < inm; i++) {
         const mx = x - iw / 2 + imw * 0.9 + i * ((iw - imw * 1.8) / (inm - 1));
-        ctx.fillRect(mx - imw / 2, y - h * 0.16 - ih - imh, imw, imh + 1);
+        ctx.fillRect(mx - imw / 2, iy - imh, imw, imh + 1);
       }
-      // 主楼檐顶
-      ctx.fillStyle = 'rgba(20,16,12,0.75)';
-      ctx.fillRect(x - iw * 0.58, y - h * 0.16 - ih - Math.max(1.4, r * 0.14), iw * 1.16, Math.max(1.4, r * 0.14));
+      // 主楼：墙身 + 朱瓦坡顶（原来的平檐改成真正的屋顶）
+      const hw = iw * 0.56, hh = ih * 0.4;
+      const hx = x - hw / 2, hy = iy + ih * 0.16;
+      ctx.fillStyle = mat.inner.light;
+      ctx.fillRect(hx, hy, hw, hh);
+      ctx.fillStyle = 'rgba(10,9,7,0.5)';
+      ctx.fillRect(hx + hw * 0.34, hy + hh * 0.5, hw * 0.32, hh * 0.5);   // 主楼门洞
+      Renderer.drawRoof(ctx, hx - hw * 0.08, hy, hw * 1.16, Math.max(2, r * 0.34), mat.roof, hexA(color, 0.6));
     }
 
     // 城门已画在南面墙上（见上）
@@ -926,7 +1187,7 @@ const Renderer = {
       const tt = top + h - dy;
       const mw = bw * 0.64;
       const mh = merlon * 0.8;
-      ctx.fillStyle = shade(color, Math.min(1, Renderer.ISO.front * 1.15));
+      ctx.fillStyle = shadeTint(wall, 0.72, -1);
       for (let i = 0; i < walls; i++) {
         if (i === gapIdx && tier > 0) continue;
         const mx = left + bw * (0.7 + i * ((w - bw * 1.4) / Math.max(1, walls - 1)));
@@ -954,14 +1215,25 @@ const Renderer = {
     }
   },
 
-  /** 势力旗：旗色即势力色；旗面轻微飘动；放大时写势力首字；lift = 随城抬升量 */
-  drawFlag(ctx, x, y, r, color, label, lift) {
+  /** 势力旗：旗色即势力色；旗面轻微飘动；放大时写势力首字；lift = 随城抬升量
+   *  flip = { t: 0~1, from: 旧势力色 }：破城瞬间旗降下再升起并换色（ART.md §3.3） */
+  drawFlag(ctx, x, y, r, color, label, lift, flip) {
     const px = x + r * 1.35;
     const up = lift || 0;
     const y0 = y - r * 1.55 - up;
     const fw = Math.max(8, r * 1.15);
-    const fh = Math.max(5.5, r * 0.78);
+    const baseH = Math.max(5.5, r * 0.78);
     const flap = Math.sin(Renderer._t / 240 + x * 0.04) * Math.max(0.5, r * 0.09);
+
+    // 翻旗：旗面高度 |1-2t| 塌下再展开；前半程还是旧主家色
+    let fh = baseH;
+    let fill = color;
+    if (flip) {
+      const k = Math.abs(1 - 2 * flip.t);
+      fh = Math.max(0.6, baseH * k);
+      fill = flip.t < 0.5 ? (flip.from || color) : color;
+      label = '';
+    }
 
     ctx.strokeStyle = 'rgba(24,20,15,0.85)';
     ctx.lineWidth = Math.max(1, r * 0.09);
@@ -977,7 +1249,7 @@ const Renderer = {
     ctx.lineTo(px + fw + flap, y0 + fh * 0.82);
     ctx.lineTo(px, y0 + fh);
     ctx.closePath();
-    ctx.fillStyle = color;
+    ctx.fillStyle = fill;
     ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.45)';
     ctx.lineWidth = 0.8;
@@ -1085,4 +1357,21 @@ function hexA(hex, a) {
 function shade(hex, k) {
   const [r, g, b] = rgbOf(hex);
   return `rgb(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)})`;
+}
+
+/**
+ * 带色温的明暗（ART.md §1.3 ③）：立体感靠冷暖，不只靠明度。
+ * warm = 1 → 往暖推（受光面），-1 → 往冷推（背光面）。
+ */
+function shadeTint(hex, k, warm) {
+  const [r, g, b] = rgbOf(hex);
+  const t = (warm || 0) * 5;
+  return `rgb(${Math.round(U.clamp(r * k + t, 0, 255))},${Math.round(U.clamp(g * k + t * 0.4, 0, 255))},${Math.round(U.clamp(b * k - t, 0, 255))})`;
+}
+
+/** 两色混合：城池顶面 = 材质色 + 10% 势力色（返回 hex，下游 shadeTint/hexA 只认 hex） */
+function mixOf(a, b, t) {
+  const A = rgbOf(a), B = rgbOf(b);
+  const m = i => Math.round(A[i] + (B[i] - A[i]) * t);
+  return '#' + [m(0), m(1), m(2)].map(v => v.toString(16).padStart(2, '0')).join('');
 }

@@ -64,7 +64,7 @@ const UI_CITY = {
       if (c.food < State.foodCapOf(G, c) * 0.3) bd.push(['粮', 'bad']);
       const on = c.id === UI.selectedId;
       const tags = bd.map(([k, cls]) => `<span class="bdg ${cls}">${k}</span>`).join('');
-      return `<span class="chip ${on ? 'on' : ''}" data-city="${c.id}" title="${U.esc(c.name)} · 兵 ${U.num(troopTotal(c.garrison))}/${U.num(State.troopCapOf(G, c))} · 士族 ${Math.round(State.clanSat(c))}${c.policy ? ' · ' + POLICIES[c.policy].name : ''}">${U.esc(c.name)}${tags}</span>`;
+      return `<span class="chip ${on ? 'on' : ''}" data-city="${c.id}" tabindex="0" role="button" data-keyclick title="${U.esc(c.name)} · 兵 ${U.num(troopTotal(c.garrison))}/${U.num(State.troopCapOf(G, c))} · 士族 ${Math.round(State.clanSat(c))}${c.policy ? ' · ' + POLICIES[c.policy].name : ''}">${U.esc(c.name)}${tags}</span>`;
     }).join('');
 
     rail.onclick = e => {

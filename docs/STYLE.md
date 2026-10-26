@@ -11,6 +11,7 @@
 |---|---|---|
 | token | `style.css` 的 `:root` | 颜色 / 字号 / 圆角 |
 | 组件 | `style.css` 各 `/* ---------- 域 ---------- */` 段 | 这类组件长什么样 |
+| 原语 | `style.css` 「原语层」段（`:where()`，权重 0） | 进度条轨道 / 列表行这类要反复用的小东西，只写一次 |
 | 工具 | `style.css` 末尾「工具层」 | 纯间距 / 字号（`.fs-label .mt-6 .p-4 …`） |
 | 数据变量 | JS 写 `style="--w:…"`，CSS 译成属性 | 数值、数据层配色 |
 
@@ -43,7 +44,8 @@
 另有一批颜色活在 JS 模板字符串的内联样式里（改配色得全局搜 `#`）。
 现在全部收进 `:root`；写新样式时找不到合适 token，说明要么该复用现有语义，要么这是一类新语义（那就加 token 并写注释）。
 
-**当前状态**：规则区裸色值 = 0（只有 `#icon-sprite` 里没有颜色，图标统一走 `currentColor`）。
+**当前状态**：规则区裸色值与裸 `rgba()` = 0（只有 `#icon-sprite` 里没有颜色，图标统一走 `currentColor`）。
+半透明浮层一律走 `--veil-*` / `--tint-row` / `--glow-gold`，`verify.js` 会拦裸 `rgba(`。
 
 ---
 
@@ -98,6 +100,9 @@
 - 图例（与画布同源）：`--legend-faction` `--legend-own` `--legend-free` `--arc-war` `--arc-truce` `--arc-ally`
 - 资源：`--food` `--food-deep` `--goldres` `--troop` `--mat` `--iron` `--rp` `--inf` `--inf-deep`
 - 阴影/黑：`--scrim-1` `--scrim-2` `--hair` `--glint` `--black`
+- 浮层表面（半透明）：`--veil-hud`（地图角标 / 图例）`--veil-tip`（城池速览）`--veil-toast`（浮层提示）`--tint-row`（表格斑马纹）`--glow-gold`（金色外发光）`--meter-bg`（进度条轨道底）
+- 离地高度（阴影）：`--elev-1` 贴地图的常驻件 / `--elev-2` 跟指针的临时件 / `--elev-3` 弹窗。
+  只这三档，按「离地多高」选；`.card` 的 `inset` 高光不算离地高度，留在原处。
 
 ### 已知的近似色（**故意保留，未合并**）
 
@@ -119,10 +124,66 @@
 
 规则区已无 `font-size:<px>` 与 `border-radius:<px>` 裸值。
 
-**间距**：没做成 token，而是工具层固定几档（`.mt-3 .mt-4 .mt-5 .mt-6 .mt-8` / `.mb-4 .mb-5 .mb-6` /
-`.my-6 .my-6-3 .my-8-3` / `.ml-auto` / `.p-4 .py-4 .p-6-2`）。
-只用这几种，别现编 `margin-top:7px`；确实需要新档就加到工具层里（这样它能被 grep 到）。
-上 4px 栅格会真实改变布局，属于下一轮，届时必须逐个机位看截图。
+**字体**：`--font-cjk` 一处定义，`body{font-family:var(--font-cjk)}`。栈里除了思源宋体 / 苹方宋还列了 Linux 的
+「Noto Serif CJK SC」「Source Han Serif CN」——少列一个，缺字机器就会掉到黑体，「古风衬线」的意图静默丢失。
+`body` 带 `font-variant-numeric:tabular-nums`：每月刷新的数字不左右抖。
+
+**动效**：`--t-fast:.12s`（悬停 / 按下 / 数值过渡）、`--t-med:.22s`（浮层进出 / 进度条填充）。
+新增过渡只用这两档，别现编 `.18s`。过场、印章这类编舞动效（`turnfx` / `end-seal`）仍用自己的时长。
+
+**控件**：`--ctl-h-sm:18px`（行内小按钮 / `.mini`）、`--ctl-h:22px`（普通按钮 / `select`）、
+`--ctl-h-lg:26px`（底部存读档 / 结束回合）。`select` 已在「控件基线」段统一接管：
+`appearance:none` + 两道 token 化的 `linear-gradient` 拼箭头 + `--btn-bg` 底——不接管就会露出
+浏览器默认的浅灰底、黑字、Arial 13.3px，那是全界面最刺眼的一块。
+
+**侧栏宽**：`--sidebar-w`（默认 456px），文件尾三个 `@media` 按屏幕宽 / 高逐步让地：
+≤1500px → 430px，≤1300px → 404px，屏幕高 ≤700px 时收紧 `gap` 与卡片内边距。
+地图侧全部走 flex + `Renderer.resize`，不需额外改代码；改宽度后必须逐个 tab 看有无截断。
+
+**间距（2px 栅格）**：`padding` / `margin` / `gap` 只用**偶数 px**（优先 4 的倍数），`verify.js` 会拦奇数。
+没做成 token：这套 11px 字号 + 3–8px 行距的密集界面，真要 4px 栅格会把列表撑开、
+600px 高的屏上侧栏直接溢出截断，所以取 2px 作为实际节奇 —— 目标是“不再有 3/5/7/9 这种手滑值”，
+不是把密度拉成网页。工具层仍固定几档（`.mt-3 .mt-4 .mt-5 .mt-6 .mt-8` / `.mb-4 .mb-5 .mb-6` /
+`.my-6 .my-6-3 .my-8-3` / `.ml-auto` / `.p-4 .py-4 .p-6-2`），别现编 `margin-top:7px`。
+
+---
+
+## 3.1 原语层（进度条 / 列表行）
+
+同一件东西只写一次：轨道底、填充过渡、行分隔线、行悬停都在 `style.css` 的「原语层」段，
+用 `:where()` 包起来（权重 0），组件层随时能覆盖。
+
+| 原语 | 覆盖的类 | 各组件只准再写 |
+|---|---|---|
+| 进度条轨道 | `.qbar .bar .dbar .merit-bar .mline-bar .mbar` | 高度、外边距、渐变配色（`.dbar` 用 `--meter-bg` 换更暗一档） |
+| 列表行 | `.row .brow .qrow .clan .crow-pick .diplo-row .prow` | 内边距（密度）、列宽 |
+| 可点行 | `.row .brow .crow-pick` | — |
+| 色点 | `.dot .csw .sw` | 尺寸、颜色（形状与 `flex:0 0 auto` 已统一） |
+
+新增一种「条」或「行」时，先看能不能加进上面这几组，别再复制一份
+`background:var(--surface-3);border-radius:var(--r-sm);overflow:hidden`。
+
+## 3.2 选中态（`.on` / `.cur` / `.sel`）
+
+选中样式**全站只有一处**：`style.css` 的「选中态」段（在分层契约注释前面）。
+三个修饰类共 14 个组件，原先散在 14 处（其中 5 份字面完全一样）。只有三种语义：
+
+| 语义 | 用在哪 | 表现 |
+|---|---|---|
+| 按钮 / 行选中 | `.mini` `.chip` `.bulkbar button` `.prow .pct button` `.pick` `.rcard` `.crow-pick` | `--surface-6`（或 `--surface-5`）+ 金色描边 |
+| 页签选中 | `#sideTabs` / `.subtabs` / `.logfilters .chip` | 同上；一级导航描 `--gold`、二级描 `--gold-line`（层级靠描金色区分，别抹平） |
+| 行/槽内高亮 | `.titem.cur` `.ladder-row.cur` `.tslot.on` `.actions button.sel` | 各自保留原样，不合并 |
+
+新增选中样式先看能不能用上面三种，**别再抄一份 `background:var(--surface-6);border-color:var(--gold)`**。
+这整段放在组件层末尾：权重与组件基础类持平，靠 DOM 顺序取胜。所以 `#bulkBar` 的容器
+已改名为 `.bulkbar` 类（id 选择器高一级，会把 `.on` 压掉）。
+
+### 可点的 div 必须三件套
+
+用 `<div>` 冒充按钮时（军队行、直辖城切换条），模板里必须同时给
+`tabindex="0" role="button" data-keyclick`，`ui.js` 的全局 keydown 会把
+Enter / 空格 转成 `el.click()`，焦点环由 `[data-keyclick]:focus-visible` 接管。
+只写 `cursor:pointer` 等于键盘用户永远够不到这一行。
 
 ---
 
@@ -154,14 +215,18 @@
 
 ## 5. 改样式的流程
 
-1. 先判断这值属于哪层：颜色/字号 → token；重复的间距 → 工具类；数据（宽度/势力色）→ 数据变量；都不是 → 组件类
+1. 先判断这值属于哪层：颜色/字号 → token；重复的间距 → 工具类；数据（宽度/势力色）→ 数据变量；
+   已经是「条 / 行 / 控件」→ 先看原语层能不能覆盖；都不是 → 组件类
 2. 找不到 token 就判断“复用 / 新增”（新 token 必须配注释说明语义）
 3. 跑 `node tools/verify.js`，确认「分层守护」仍全绿
-4. 跑 `node tools/shots.js`
+4. 跑 `node tools/shots.js`（8 个机位：地图 3 + 侧栏面板 4 + 开局浮层 1）
    - **0 px**：纯等价改动，直接提交
    - 有差异：打印的是像素数，人眼看 `tools/shots/*.png` 与运行页面
+   - 只改控件（padding / 字号 / 高度）时看 `panel-*`，地图机位基本不动
 5. 确认是有意的改动 → `node tools/shots.js --update` 重写基线
-6. 提交时一起带上 `tools/shots/*.png`，否则下一个人会看到“凭空多了差异”
+6. **基线不入库**（`.gitignore` 排除了 `tools/shots/`，截图受本机字体与显卡影响）。
+   所以第一次跑会自己生成基线，比对结果是「本机改前 vs 本机改后」；要跟别人的基线比，先把
+   他的基线拷过来再跑 `node tools/shots.js -v`。
 
 ## 结局弹窗（`js/view/panels/end.js`）
 

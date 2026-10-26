@@ -123,11 +123,26 @@ section('分层守护');
     /(^|[^.\w])G\.[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*\s*=[^=]/.test(read(f)));
   ok('view 不直接改状态', !bad.length, bad.join(', '));
 
-  // 5) 样式：裸色值只允许在 :root token 区
+  // 5) 样式：裸色值只允许在 :root token 区（十六进制与 rgba 都算）
   const css = read('style.css');
   const rootEnd = css.indexOf('\n}', css.indexOf(':root{'));
   const bareHex = css.slice(rootEnd).match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+  const bareRgba = css.slice(rootEnd).match(/rgba?\(/g) || [];
   ok('style.css 规则区无裸色值', !bareHex.length, bareHex.slice(0, 5).join(', '));
+  ok('style.css 规则区无裸 rgba', !bareRgba.length, `rgba() 出现 ${bareRgba.length} 次`);
+
+  // 5.1) 间距只用偶数 px：4px 栅格太粗，会把 11px 字号的密集列表撑开；
+  // 2px 是这套界面的实际节奏（但优先用 4 的倍数）。奇数 px 一律当手滑。
+  const spacingBad = [];
+  css.split('\n').forEach((line, i) => {
+    for (const seg of line.split(';')) {
+      const m = /^\s*(padding|margin|gap|row-gap|column-gap)(-(top|right|bottom|left))?\s*:\s*([^;]+)$/.exec(seg);
+      if (!m) continue;
+      const odd = [...m[4].matchAll(/(\d+(?:\.\d+)?)px/g)].map(x => Number(x[1])).filter(v => v % 2);
+      if (odd.length) spacingBad.push(`L${i + 1} ${seg.trim()}`);
+    }
+  });
+  ok('间距只用偶数 px（2px 栅格）', !spacingBad.length, spacingBad.slice(0, 3).join(' | '));
 
   // 6) 内联 style 只允许自定义属性（JS 传值，CSS 翻译成属性）
   const inline = [];
@@ -2877,10 +2892,11 @@ section('渲染层纯函数（js/view 里不碰 DOM 的那部分）');
   const vm = require('vm');
   const src = fs.readFileSync(path.join(h.ROOT, 'js/view/renderer.js'), 'utf8');
   const ctx = { console, Math, Object, Array, String, Number, JSON, Set, Map, isFinite, isNaN };
+  ctx.U = { clamp: (v, a, b) => Math.min(b, Math.max(a, v)) };   // shadeTint 只用到 clamp
   ctx.globalThis = ctx;
   ctx.window = ctx;
   vm.createContext(ctx);
-  vm.runInContext(src + '\n;globalThis.__R = Renderer;', ctx, { filename: 'renderer.js' });
+  vm.runInContext(src + '\n;globalThis.__R = Renderer; globalThis.__C = { mixOf, shadeTint, hexA, shade, rgbOf };', ctx, { filename: 'renderer.js' });
   const R = ctx.__R;
 
   // 画家算法：城与军队按世界 y 混排。
@@ -2894,6 +2910,20 @@ section('渲染层纯函数（js/view 里不碰 DOM 的那部分）');
   ok('城军混排：北→南，队尾军队不丢', kinds === 'army,city,army,city,army', kinds);
   ok('城军混排：无城时军队全出', R.mergeDrawOrder([], armies).length === 3);
   ok('城军混排：无军时城全出', R.mergeDrawOrder(cities, []).length === 2);
+
+  // 城池取色（docs/ART.md §1.3）：canvas 对非法颜色是静默忽略 —— 着色字符串一旦不是 hex，
+  // rgbOf 算出 NaN、fillStyle 赋值失败、继续用上一个颜色，城池直接变黑块。
+  // 踩过一次（mixOf 返回 rgb() 又喂给只认 hex 的 shadeTint），这里盯住。
+  {
+    const C = ctx.__C;
+    const asHex = v => /^#[0-9a-f]{6}$/i.test(String(v));
+    const mixed = C.mixOf('#6e6a60', '#8b2f2f', 0.1);
+    ok('城池取色：mixOf 返回 hex', asHex(mixed), String(mixed));
+    const roundTrip = [C.shadeTint(mixed, 0.62, -1), C.shadeTint(mixed, 1.08, 1), C.hexA(mixed, 0.5)];
+    const parsed = roundTrip.map(s => C.rgbOf(s));
+    ok('城池取色：shadeTint / hexA 输出可被 rgbOf 解回',
+      parsed.every(p => p.every(n => Number.isFinite(n))), roundTrip.join(' | '));
+  }
   ok('城军混排：全部军队只在最后出现一次',
     order.filter(o => o.kind === 'army').length === 3
     && new Set(order.filter(o => o.kind === 'army').map(o => o.o.a.y)).size === 3);

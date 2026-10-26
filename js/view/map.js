@@ -177,7 +177,6 @@ const GameMap = {
       rock: [104, 98, 82], snow: [172, 166, 150],
       desert: [108, 94, 66], desertHi: [130, 116, 86],
     };
-    const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 
     // 先把噪声格双线性展开到整张低分辨率画布，主循环里就只剩数组读取
     const HF = new Float32Array(LW * LH);
@@ -191,30 +190,59 @@ const GameMap = {
       }
     }
 
+    // 地形色函数：写进 out（预分配的 3 元数组），避免逐像素分配
+    const CA = new Float32Array(3), CB = new Float32Array(3);
+    const CC = new Float32Array(3), CD = new Float32Array(3);
+    const colFor = (key, h, wet, out) => {
+      let a, b, t;
+      if (key === 'water') { a = C.water; b = C.waterHi; t = U.clamp((h - 0.28) * 2.4, 0, 1); }
+      else if (key === 'marsh') { a = C.marsh; b = C.water; t = U.clamp(wet * 0.55, 0, 0.4); }
+      else if (key === 'forest') { a = C.forest; b = C.forestHi; t = wet; }
+      else if (key === 'hill') { a = C.hill; b = C.plain; t = U.clamp((0.56 - h) * 2.2, 0, 1); }
+      else if (key === 'mountain') { a = C.rock; b = C.snow; t = U.clamp((h - 0.6) * 3.2, 0, 0.8); }
+      else if (key === 'desert') { a = C.desert; b = C.desertHi; t = U.clamp(h * 1.7, 0, 1); }
+      else { a = C.plain; b = C.plainHi; t = U.clamp((wet - 0.34) * 2, 0, 1); }
+      out[0] = a[0] + (b[0] - a[0]) * t;
+      out[1] = a[1] + (b[1] - a[1]) * t;
+      out[2] = a[2] + (b[2] - a[2]) * t;
+      return out;
+    };
+
     const data = img.data;
     const rows = grid.length, cols = grid[0].length;
     for (let y = 0; y < LH; y++) {
       const wy = y / S;
       const gy = Math.min(rows - 1, Math.floor(wy / CELL));
       const rowBase = y * LW;
-      const up = y > 0 ? -LW : 0;
-      const dn = y < LH - 1 ? LW : 0;
+      // 按格心位置取 4 邻（一像素也不会走出数组）
+      const cyF = wy / CELL - 0.5;
+      const r0 = U.clamp(Math.floor(cyF), 0, rows - 1);
+      const r1 = Math.min(rows - 1, r0 + 1);
+      const ty0 = U.clamp(cyF - r0, 0, 1);
+      const gRow0 = grid[r0], gRow1 = grid[r1];
       for (let x = 0; x < LW; x++) {
         const wx = x / S;
-        const key = grid[gy][Math.min(cols - 1, Math.floor(wx / CELL))];
 
         const i = rowBase + x;
         const h = HF[i];
         const wet = WF[i];
 
-        let col;
-        if (key === 'water') col = mix(C.water, C.waterHi, U.clamp((h - 0.28) * 2.4, 0, 1));
-        else if (key === 'marsh') col = mix(C.marsh, C.water, U.clamp(wet * 0.55, 0, 0.4));
-        else if (key === 'forest') col = mix(C.forest, C.forestHi, wet);
-        else if (key === 'hill') col = mix(C.hill, C.plain, U.clamp((0.56 - h) * 2.2, 0, 1));
-        else if (key === 'mountain') col = mix(C.rock, C.snow, U.clamp((h - 0.6) * 3.2, 0, 0.8));
-        else if (key === 'desert') col = mix(C.desert, C.desertHi, U.clamp(h * 1.7, 0, 1));
-        else col = mix(C.plain, C.plainHi, U.clamp((wet - 0.34) * 2, 0, 1));
+        // ── 软权重混合（ART.md §2.2 ①）：按格心插值取 4 邻地形色。
+        // 原来是「按 40px 网格硬分类」—— 地形边界是一圈直角台阶，放大就能看出棋盘格。
+        // 权重再叠一层 hash 抖动（±0.08）：边界变成手绘毛边，而不是数学上的等值线。
+        const cxF = wx / CELL - 0.5;
+        const c0 = U.clamp(Math.floor(cxF), 0, cols - 1);
+        const c1 = Math.min(cols - 1, c0 + 1);
+        const wob = (GameMap._hash(x * 7 + 3, y * 11 + 5) - 0.5) * 0.16;
+        const tx = U.clamp(cxF - c0 + wob, 0, 1);
+        const ty = U.clamp(ty0 + wob, 0, 1);
+        colFor(gRow0[c0], h, wet, CA);
+        colFor(gRow0[c1], h, wet, CB);
+        colFor(gRow1[c0], h, wet, CC);
+        colFor(gRow1[c1], h, wet, CD);
+        const col0 = (CA[0] + (CB[0] - CA[0]) * tx) * (1 - ty) + (CC[0] + (CD[0] - CC[0]) * tx) * ty;
+        const col1 = (CA[1] + (CB[1] - CA[1]) * tx) * (1 - ty) + (CC[1] + (CD[1] - CC[1]) * tx) * ty;
+        const col2 = (CA[2] + (CB[2] - CA[2]) * tx) * (1 - ty) + (CC[2] + (CD[2] - CC[2]) * tx) * ty;
 
         // 西北来光的山体侧影（差分步长必须仍是噪声格 STEP，否则光照强度会变）
         const dhx = (x + STEP < LW ? HF[i + STEP] : h) - (x >= STEP ? HF[i - STEP] : h);
@@ -224,9 +252,9 @@ const GameMap = {
 
         const n = (GameMap._hash(x * 3 + 7, y * 5 + 11) - 0.5) * 9;
         const o = i * 4;
-        data[o] = U.clamp(col[0] * k + n, 0, 255);
-        data[o + 1] = U.clamp(col[1] * k + n, 0, 255);
-        data[o + 2] = U.clamp(col[2] * k + n * 0.8, 0, 255);
+        data[o] = U.clamp(col0 * k + n, 0, 255);
+        data[o + 1] = U.clamp(col1 * k + n, 0, 255);
+        data[o + 2] = U.clamp(col2 * k + n * 0.8, 0, 255);
         data[o + 3] = 255;
       }
     }
@@ -234,7 +262,7 @@ const GameMap = {
     lg.putImageData(img, 0, 0);
     g.drawImage(low, 0, 0, W, H);
 
-    // ── 2. 河川：岸 / 水体 / 高光三叠 ──
+    // ── 2. 河川：岸 / 水体 / 高光三叠（宽随流程渐变，源窄尾宽）──
     const pass = (pts, style, width, alpha) => {
       g.beginPath();
       g.moveTo(pts[0][0], pts[0][1]);
@@ -253,54 +281,211 @@ const GameMap = {
       g.stroke();
       g.globalAlpha = 1;
     };
-    // 主干：滩涂 → 湿岸 → 水体 → 高光（宽到窄四叠，才有水岸过渡）
+
+    /** 沿同一套平滑曲线采样成折线 —— 变宽只能逐段描，单次 stroke 只能一个宽度 */
+    const samplePath = (pts, perSeg) => {
+      const out = [];
+      let prev = pts[0];
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i][0] + pts[i + 1][0]) / 2;
+        const my = (pts[i][1] + pts[i + 1][1]) / 2;
+        for (let k = 0; k < perSeg; k++) {
+          const t = k / perSeg, mt = 1 - t;
+          out.push([
+            mt * mt * prev[0] + 2 * mt * t * pts[i][0] + t * t * mx,
+            mt * mt * prev[1] + 2 * mt * t * pts[i][1] + t * t * my,
+          ]);
+        }
+        prev = [mx, my];
+      }
+      out.push(pts[pts.length - 1]);
+      return out;
+    };
+
+    /** 渐变宽度描边（ART.md §2.2 ④）：原来是等宽 15/6px，河像一根绳子 */
+    const passTaper = (pts, style, w0, w1, alpha) => {
+      const line = samplePath(pts, 10);
+      g.strokeStyle = style;
+      g.globalAlpha = alpha;
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      for (let i = 1; i < line.length; i++) {
+        const t = i / (line.length - 1);
+        g.lineWidth = w0 + (w1 - w0) * t;
+        g.beginPath();
+        g.moveTo(line[i - 1][0], line[i - 1][1]);
+        g.lineTo(line[i][0], line[i][1]);
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    };
+
+    // 主干：滩涂 → 湿岸 → 水体 → 高光（四叠，宽度按流程 0.55× → 1.15× 渐变）
     for (const p of GameMap.RIVERS) {
-      pass(p, 'rgba(112,100,72,0.34)', 42, 1);
-      pass(p, 'rgba(58,74,70,0.65)', 24, 1);
-      pass(p, '#3d6a7e', 15, 0.92);
+      passTaper(p, 'rgba(112,100,72,0.34)', 42 * 0.55, 42 * 1.15, 1);
+      passTaper(p, 'rgba(58,74,70,0.65)', 24 * 0.5, 24 * 1.15, 1);
+      passTaper(p, '#3d6a7e', 15 * 0.5, 15 * 1.15, 0.92);
       pass(p, 'rgba(127,179,201,0.30)', 3, 1);
     }
-    // 支流：细一档，只有湿岸 + 水体
+    // 支流：细一档，只有湿岸 + 水体，同样渐变
     for (const p of GameMap.TRIBUTARIES) {
-      pass(p, 'rgba(112,100,72,0.20)', 20, 1);
-      pass(p, 'rgba(58,74,70,0.48)', 11, 1);
-      pass(p, '#3d6a7e', 6, 0.85);
+      passTaper(p, 'rgba(112,100,72,0.20)', 20 * 0.5, 20 * 1.0, 1);
+      passTaper(p, 'rgba(58,74,70,0.48)', 11 * 0.45, 11 * 1.0, 1);
+      passTaper(p, '#3d6a7e', 6 * 0.45, 6 * 1.0, 0.85);
     }
 
-    // ── 3. 山形 / 树丛 / 沙丘：老地图式符号 ──
+    // 沙洲：主河道里零星几块浅滩 —— 没有这个，河道就是一条均匀的帯
+    for (const p of GameMap.RIVERS) {
+      for (let i = 1; i < p.length; i++) {
+        if (GameMap._hash(i * 17 + 3, 29) > 0.5) continue;
+        const rw = 3 + GameMap._hash(i * 7 + 1, 41) * 4;
+        g.beginPath();
+        g.ellipse(p[i][0] + (GameMap._hash(i, 7) - 0.5) * 8, p[i][1] + (GameMap._hash(i, 13) - 0.5) * 8,
+          rw, rw * 0.55, GameMap._hash(i, 3) * Math.PI, 0, Math.PI * 2);
+        g.fillStyle = 'rgba(118,106,78,0.42)';
+        g.fill();
+        g.strokeStyle = 'rgba(150,180,190,0.18)';
+        g.lineWidth = 1;
+        g.stroke();
+      }
+    }
+
+    // ── 3. 山形 / 树丛 / 沙丘：按低频聚簇分布（ART.md §2.2 ③）──
+    // 原来是每格二值随机（n1 > 0.5），密度均匀 → 看过去像均匀贴纸，读不出山脉与林地。
+    // 现在用一层波长 ≈ 460px 的 fbm 当密度遮罩：同一片山会堆成山，空地就是空地。
+    const clusterAt = (wx, wy) => GameMap._fbm(wx / 460 + 311 + ox, wy / 460 + 173 + ox);
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const t = grid[r][c];
         const n1 = GameMap._hash(c * 11 + 5, r * 17 + 2);
         const bx = c * CELL, by = r * CELL;
+        const cl = clusterAt(bx + CELL / 2, by + CELL / 2);
 
         if (t === 'mountain') {
-          if (n1 > 0.5) continue;
-          const px = bx + CELL * (0.2 + GameMap._hash(c, r) * 0.6);
+          if (n1 > 0.14 + cl * 1.35) continue;
+          const px = bx + CELL * (0.18 + GameMap._hash(c, r) * 0.64);
           const py = by + CELL * (0.34 + GameMap._hash(c + 3, r + 7) * 0.46);
-          GameMap._peak(g, px, py, 9 + GameMap._hash(c + 9, r + 1) * 13);
+          const roll = GameMap._hash(c + 17, r + 23);
+          // 三档尺寸：大峰是“山”，小峰是“丘”
+          const s = roll > 0.82 ? 19 + GameMap._hash(c + 31, r + 3) * 9
+            : roll > 0.45 ? 12 + GameMap._hash(c + 41, r + 11) * 4
+              : 7 + GameMap._hash(c + 53, r + 19) * 3;
+          // 两种形态：单峰 / 连峰（山脊）
+          if (GameMap._hash(c + 5, r + 9) > 0.58) GameMap._ridge(g, px, py, s);
+          else GameMap._peak(g, px, py, s);
         } else if (t === 'forest') {
-          if (n1 > 0.55) continue;
-          for (let k = 0; k < 3; k++) {
-            const px = bx + 6 + GameMap._hash(c * 3 + k, r * 5 + k) * (CELL - 12);
-            const py = by + 6 + GameMap._hash(c * 7 + k, r * 3 + k + 9) * (CELL - 12);
-            GameMap._tree(g, px, py, 2.4 + GameMap._hash(c + k, r + k) * 1.6);
+          if (n1 > 0.12 + cl * 1.45) continue;
+          const nTree = 2 + Math.floor(GameMap._hash(c + 3, r + 5) * 4);
+          for (let k = 0; k < nTree; k++) {
+            const px = bx + 5 + GameMap._hash(c * 3 + k, r * 5 + k) * (CELL - 10);
+            const py = by + 5 + GameMap._hash(c * 7 + k, r * 3 + k + 9) * (CELL - 10);
+            const sz = GameMap._hash(c + k, r + k);
+            GameMap._tree(g, px, py,
+              2.2 + sz * 2.2,
+              GameMap._hash(c + 11 + k, r + 13 + k) > 0.55);   // true = 尖冠
           }
         } else if (t === 'desert') {
-          if (n1 > 0.35) continue;
+          if (n1 > 0.12 + cl * 0.5) continue;
           g.beginPath();
-          const px = bx + CELL * 0.2, py = by + CELL * (0.3 + n1);
-          g.moveTo(px, py);
-          g.quadraticCurveTo(px + CELL * 0.3, py - 5, px + CELL * 0.62, py + 1);
-          g.strokeStyle = 'rgba(190,170,130,0.16)';
-          g.lineWidth = 1.4;
+          const px = bx + CELL * 0.2, py = by + CELL * (0.3 + n1 * 0.5);
+          // 沙丘：两三道平行弧，而不是单根弧线
+          for (let k = 0; k < 3; k++) {
+            g.moveTo(px, py + k * 4);
+            g.quadraticCurveTo(px + CELL * 0.3, py - 5 + k * 4, px + CELL * (0.62 - k * 0.08), py + 1 + k * 4);
+          }
+          g.strokeStyle = 'rgba(190,170,130,0.15)';
+          g.lineWidth = 1.3;
           g.stroke();
         }
       }
     }
 
+    // ── 3.5 等高线（ART.md §2.2 ②）：只在山地/丘陵里画
+    // 一开始写成一个一个 1px 点，实测在 0.4 倍色床上降采样后基本看不见（全图只差 1.5 万px）。
+    // 改成「按梯度取切向、连成短线段」+ 按高程档分两档深浅，才真的像等高线。
+    {
+      const LEVELS = [0.30, 0.36, 0.42, 0.48, 0.54, 0.60, 0.66, 0.72];
+      const pts = LEVELS.map(() => []);
+      const terrainOf = (wx, wy) => {
+        const gy2 = Math.min(rows - 1, Math.floor(wy / CELL));
+        const gx2 = Math.min(cols - 1, Math.floor(wx / CELL));
+        return grid[gy2][gx2];
+      };
+      for (let y = 1; y < LH - 1; y++) {
+        const wy = y / S;
+        for (let x = 1; x < LW - 1; x++) {
+          const wx = x / S;
+          const tt = terrainOf(wx, wy);
+          if (tt !== 'mountain' && tt !== 'hill') continue;
+          const i = y * LW + x;
+          const h = HF[i];
+          for (let li = 0; li < LEVELS.length; li++) {
+            const L = LEVELS[li];
+            if ((h - L) * (HF[i + 1] - L) >= 0 && (h - L) * (HF[i + LW] - L) >= 0) continue;
+            // 切向垂直于梯度：线段方向 = 等值线方向（不然点阵会散成一团沙子）
+            const gx2 = HF[i + 1] - HF[i - 1];
+            const gy2 = HF[i + LW] - HF[i - LW];
+            const m = Math.hypot(gx2, gy2) || 1;
+            const tx = (-gy2 / m) * 1.9, ty = (gx2 / m) * 1.9;
+            pts[li].push(wx - tx, wy - ty, wx + tx, wy + ty);
+            break;
+          }
+        }
+      }
+      LEVELS.forEach((L, li) => {
+        const a = pts[li];
+        if (!a.length) return;
+        g.beginPath();
+        for (let i = 0; i < a.length; i += 4) {
+          g.moveTo(a[i], a[i + 1]);
+          g.lineTo(a[i + 2], a[i + 3]);
+        }
+        g.strokeStyle = li % 2 ? 'rgba(58,46,32,0.30)' : 'rgba(58,46,32,0.21)';
+        g.lineWidth = 1;
+        g.stroke();
+      });
+    }
+
     // ── 4. 州界与州名印章 ──
     GameMap.drawRegions(g, cities);
+
+    // ── 4.5 纸的三层（ART.md §2.2 ⑤）：大尺度淡渍 → 折痕 → 纤维 → 细颗粒 ──
+    // 原只有后两层，纸面平得像一张贴图；加一层低频“水渍”与旧地图折痕才有层次。
+    {
+      const ox2 = GameMap._ox || 0;
+      const SS = 0.12;                       // 低分辨率算渍后放大，省得逐像素画
+      const sw = Math.round(W * SS), sh = Math.round(H * SS);
+      const st = document.createElement('canvas');
+      st.width = sw; st.height = sh;
+      const sg = st.getContext('2d');
+      const simg = sg.createImageData(sw, sh);
+      const sd = simg.data;
+      for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+        const n = GameMap._fbm((x / SS) / 520 + 91 + ox2, (y / SS) / 520 + 43 + ox2);
+        // 只取一个窄带：渍是一圈“边”，不是整片刷一层
+        const band = Math.max(0, 1 - Math.abs(n - 0.58) * 9);
+        const o = (y * sw + x) * 4;
+        sd[o] = 120; sd[o + 1] = 96; sd[o + 2] = 60;
+        sd[o + 3] = band * 26;
+      }
+      sg.putImageData(simg, 0, 0);
+      g.drawImage(st, 0, 0, W, H);
+    }
+    // 折痕：旧地图对折过的那种软暗带（竖 2 道 + 横 1 道），比画法更便宜且不出错
+    const fold = (x0, y0, x1, y1) => {
+      const gr = g.createLinearGradient(x0, y0, x1, y1);
+      gr.addColorStop(0, 'rgba(40,30,18,0)');
+      gr.addColorStop(0.5, 'rgba(40,30,18,0.055)');
+      gr.addColorStop(1, 'rgba(40,30,18,0)');
+      return gr;
+    };
+    const FW = 34;
+    g.fillStyle = fold(W * 0.34 - FW, 0, W * 0.34 + FW, 0);
+    g.fillRect(W * 0.34 - FW, 0, FW * 2, H);
+    g.fillStyle = fold(W * 0.67 - FW, 0, W * 0.67 + FW, 0);
+    g.fillRect(W * 0.67 - FW, 0, FW * 2, H);
+    g.fillStyle = fold(0, H * 0.5 - FW, 0, H * 0.5 + FW);
+    g.fillRect(0, H * 0.5 - FW, W, FW * 2);
 
     // ── 5. 纸纹与纤维 ──
     for (let i = 0; i < 5200; i++) {
@@ -320,10 +505,17 @@ const GameMap = {
     }
 
     // ── 6. 四周暗角 ──
+    // 试过改成暖褐 rgba(58,44,28,.46)，实测角/心亮度比从 0.77 变成 1.06 —— 暖色不够沉，
+    // 暗角直接失效（四角反而比中心亮）。所以保留黑底，另叠一层很淡的暖色只去“死黑”感。
     const grad = g.createRadialGradient(W / 2, H / 2, H * 0.34, W / 2, H / 2, H * 0.92);
     grad.addColorStop(0, 'rgba(0,0,0,0)');
     grad.addColorStop(1, 'rgba(0,0,0,0.58)');
     g.fillStyle = grad;
+    g.fillRect(0, 0, W, H);
+    const warm = g.createRadialGradient(W / 2, H / 2, H * 0.40, W / 2, H / 2, H * 0.95);
+    warm.addColorStop(0, 'rgba(72,52,28,0)');
+    warm.addColorStop(1, 'rgba(72,52,28,0.10)');
+    g.fillStyle = warm;
     g.fillRect(0, 0, W, H);
 
     return cv;
@@ -471,6 +663,13 @@ const GameMap = {
 
   /** 山峰符号：受光面 + 背光面 + 脊线 */
   _peak(g, x, y, s) {
+    // 山脚投影：东南向，与城池/军队同一光向（不然整张图的光是散的）
+    g.beginPath();
+    g.ellipse(x + s * 0.3, y + s * 0.46, s * 0.92, s * 0.26, 0, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(26,24,19,0.20)';
+    g.fill();
+
+    // 山体（暗）
     g.beginPath();
     g.moveTo(x, y - s);
     g.lineTo(x + s * 0.82, y + s * 0.46);
@@ -479,6 +678,7 @@ const GameMap = {
     g.fillStyle = 'rgba(46,43,35,0.66)';
     g.fill();
 
+    // 西北受光面
     g.beginPath();
     g.moveTo(x, y - s);
     g.lineTo(x - s * 0.82, y + s * 0.46);
@@ -487,6 +687,16 @@ const GameMap = {
     g.fillStyle = 'rgba(196,186,162,0.26)';
     g.fill();
 
+    // 东南背光面：单独压暗一层，山峰才有“两个坡”而不是两块色
+    g.beginPath();
+    g.moveTo(x, y - s);
+    g.lineTo(x + s * 0.82, y + s * 0.46);
+    g.lineTo(x + s * 0.10, y + s * 0.18);
+    g.closePath();
+    g.fillStyle = 'rgba(14,12,9,0.22)';
+    g.fill();
+
+    // 脊线
     g.beginPath();
     g.moveTo(x, y - s);
     g.lineTo(x + s * 0.1, y + s * 0.22);
@@ -495,8 +705,41 @@ const GameMap = {
     g.stroke();
   },
 
-  /** 树丛符号 */
-  _tree(g, x, y, s) {
+  /** 连峰：三个高矮不一的山尖沿西北→东南排开，天然比单峰更像“山脉” */
+  _ridge(g, x, y, s) {
+    const hi = s, mid = s * 0.72, lo = s * 0.5;
+    GameMap._peak(g, x - s * 0.62, y + s * 0.1, mid);
+    GameMap._peak(g, x + s * 0.66, y + s * 0.16, lo);
+    GameMap._peak(g, x, y, hi);
+  },
+
+  /** 树丛符号：两种冠形（圆冠 / 尖冠），尖冠更像松柏，混用才不会一片“圆点” */
+  _tree(g, x, y, s, pointed) {
+    // 树脚投影
+    g.beginPath();
+    g.ellipse(x + s * 0.25, y + s * 0.62, s * 0.8, s * 0.24, 0, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(22,26,18,0.18)';
+    g.fill();
+
+    if (pointed) {
+      g.beginPath();
+      g.moveTo(x, y - s * 1.1);
+      g.lineTo(x + s * 0.72, y + s * 0.7);
+      g.lineTo(x - s * 0.72, y + s * 0.7);
+      g.closePath();
+      g.fillStyle = 'rgba(26,40,26,0.74)';
+      g.fill();
+      // 受光侧
+      g.beginPath();
+      g.moveTo(x, y - s * 1.1);
+      g.lineTo(x - s * 0.72, y + s * 0.7);
+      g.lineTo(x - s * 0.12, y + s * 0.3);
+      g.closePath();
+      g.fillStyle = 'rgba(74,98,58,0.44)';
+      g.fill();
+      return;
+    }
+
     g.beginPath();
     g.arc(x, y + s * 0.2, s, 0, Math.PI * 2);
     g.fillStyle = 'rgba(26,40,26,0.72)';
