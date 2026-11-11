@@ -2911,6 +2911,28 @@ section('渲染层纯函数（js/view 里不碰 DOM 的那部分）');
   ok('城军混排：无城时军队全出', R.mergeDrawOrder([], armies).length === 3);
   ok('城军混排：无军时城全出', R.mergeDrawOrder(cities, []).length === 2);
 
+  // 行军路线几何（docs/VISUAL.md §12）：① 曲线首尾必须就是出发地/目标 ② 同段两支 ③ 切分点跟位置走
+  {
+    const A = { x: 100, y: 100 }, B = { x: 300, y: 200 };
+    const p0 = R.routeSamples(A, B, 0);
+    const start = p0[0], end = p0[p0.length - 1];
+    const mid = p0[8];
+    const lineY = A.y + (B.y - A.y) * 0.5;          // 中点在直线上应处的 y
+    ok('路线：曲线首尾正好是出发地与目标，且中间确实弯开',
+      start.x === A.x && start.y === A.y && end.x === B.x && end.y === B.y
+      && Math.abs(mid.y - lineY) > 4,
+      `mid=(${mid.x.toFixed(1)},${mid.y.toFixed(1)}) 直线 y=${lineY}`);
+
+    const p1 = R.routeSamples(A, B, 1);
+    ok('路线：同段第二支错开（不重叠）', Math.abs(p1[8].y - mid.y) > 1,
+      `lane0 ${mid.y.toFixed(1)} / lane1 ${p1[8].y.toFixed(1)}`);
+
+    // 军队走在靠近起点 → 切分点在早段；快到目标 → 切分点在末段
+    ok('路线：切分点跟着军队位置走',
+      R.routeSplit(p0, A.x + 10, A.y + 10) < 4 && R.routeSplit(p0, B.x - 10, B.y - 10) > 12,
+      `${R.routeSplit(p0, A.x + 10, A.y + 10)} / ${R.routeSplit(p0, B.x - 10, B.y - 10)}`);
+  }
+
   // 城池取色（docs/ART.md §1.3）：canvas 对非法颜色是静默忽略 —— 着色字符串一旦不是 hex，
   // rgbOf 算出 NaN、fillStyle 赋值失败、继续用上一个颜色，城池直接变黑块。
   // 踩过一次（mixOf 返回 rgb() 又喂给只认 hex 的 shadeTint），这里盯住。

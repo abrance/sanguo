@@ -290,24 +290,7 @@ const Renderer = {
     }
 
     // 军队路线（先画线，压在城市下）
-    for (const a of Object.values(G.armies)) {
-      const from = G.cities[a.from], to = G.cities[a.to];
-      if (!from || !to) continue;
-      const p1 = Renderer.toScreen(a.x, a.y);
-      const p2 = Renderer.toScreen(to.x, to.y);
-      const f = G.factions[a.factionId];
-      const hostile = a.factionId !== playerFid && to.owner === playerFid;
-
-      ctx.save();
-      ctx.setLineDash(hostile ? [6, 5] : [4, 6]);
-      ctx.lineWidth = hostile ? 2 : 1.4;
-      ctx.strokeStyle = hostile ? 'rgba(224,96,80,0.85)' : hexA(f ? f.color : '#888', 0.55);
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
-      ctx.stroke();
-      ctx.restore();
-    }
+    Renderer.drawArmyRoutes(ctx, G, playerFid, z);
 
     // 城池：按世界 y 升序画（画家算法）—— 城有立面后，北边的城必须先画
     const cityDraw = [];
@@ -512,9 +495,215 @@ const Renderer = {
     Renderer.stale = true;
   },
 
+  // ───────────────────────── 行军路线（VISUAL §12） ─────────────────────────
+
+  /** 路线开关：出问题一行退回旧虚线（§12.3 可回退） */
+  OPTS: { routeStyle: true },
+
+  _routePal: null,
+
+  /** 路线用到的 token：canvas 拿不到 CSS 继承，读一次缓存（无 DOM 时用字面量兼底） */
+  routePal() {
+    if (Renderer._routePal) return Renderer._routePal;
+    const hasDom = typeof document !== 'undefined' && typeof getComputedStyle === 'function';
+    const cs = hasDom ? getComputedStyle(document.documentElement) : null;
+    const g = (name, fb) => {
+      const v = cs ? cs.getPropertyValue(name).trim() : '';
+      return v || fb;
+    };
+    Renderer._routePal = {
+      war: g('--war', '#d96a6a'),
+      ally: g('--ally', '#7fb37f'),
+      gold: g('--gold-line', '#7a6a3a'),
+      ink: g('--ink-faint', '#8a7f6c'),
+      bg: g('--bg-deep', '#0d0c0a'),
+    };
+    return Renderer._routePal;
+  },
+
+  /**
+   * 路线几何：from→to 的二次贝塞尔采样（纯函数，verify 直接测）。
+   * 控制点 = 中点沿法线偏移 k·d（k=0.08，上限 40 世界像素）；lane 让同段多军错开。
+   */
+  routeSamples(from, to, lane) {
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const off = U.clamp((0.08 + (lane || 0) * 0.06) * d, -40, 40);
+    const cx = (from.x + to.x) / 2 - (dy / d) * off;
+    const cy = (from.y + to.y) / 2 + (dx / d) * off;
+    const out = [];
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16, mt = 1 - t;
+      out.push({
+        x: mt * mt * from.x + 2 * mt * t * cx + t * t * to.x,
+        y: mt * mt * from.y + 2 * mt * t * cy + t * t * to.y,
+      });
+    }
+    return out;
+  },
+
+  /** 军队在路线上的切分点：取离当前位置最近的采样点（纯函数） */
+  routeSplit(pts, x, y) {
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const d = (pts[i].x - x) ** 2 + (pts[i].y - y) ** 2;
+      if (d < bd) { bd = d; bi = i; }
+    }
+    return bi;
+  },
+
+  /**
+   * 行军路线：起点标记 + 已走实线 + 未走流动虚线 + 箭镞，语义色分四档。
+   * 旧版只画剩下那段直线：看不出出发地、方向，同段多军还完全重叠（§12.1 四条毛病）。
+   */
+  drawArmyRoutes(ctx, G, playerFid, z) {
+    const list = Object.values(G.armies || {});
+    if (!list.length) return;
+    const lod = z < 0.45 ? 0 : z < 0.8 ? 1 : 2;
+    if (lod === 0) return;                     // 远景不画：军队标记自己就够
+    const P = Renderer.routePal();
+    const now = Renderer._t || 0;
+    const calm = Renderer.reducedMotion();
+    const dashShift = calm ? 0 : -(now * 0.02) % 12;
+    const lanes = new Map();
+
+    for (const a of list) {
+      const from = G.cities[a.from], to = G.cities[a.to];
+      if (!from || !to) continue;
+      const f = G.factions[a.factionId];
+      const color = f ? f.color : '#888';
+      const mine = a.factionId === playerFid;
+      const hostile = !mine && to.owner === playerFid;
+      const ally = !mine && !hostile && Diplo.statusOf(G, playerFid, a.factionId) === 'ally';
+
+      // 旧虚线（开关关掉时一行回车）
+      if (!Renderer.OPTS.routeStyle || lod === 1) {
+        const p1 = Renderer.toScreen(a.x, a.y);
+        const p2 = Renderer.toScreen(to.x, to.y);
+        ctx.save();
+        ctx.setLineDash(hostile ? [6, 5] : [4, 6]);
+        ctx.lineWidth = hostile ? 2 : 1.4;
+        ctx.strokeStyle = hostile ? hexA(P.war, 0.85) : hexA(color, 0.55);
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+        ctx.restore();
+        continue;
+      }
+
+      // 同段（同一 from → to）多支军队按顺序错开，第 0 支走基础弧线
+      const key = a.from + '>' + a.to;
+      const n = lanes.get(key) || 0;
+      lanes.set(key, n + 1);
+      const lane = n === 0 ? 0 : (n % 2 ? 1 : -1) * Math.ceil(n / 2);
+
+      const world = Renderer.routeSamples(from, to, lane);
+      const pts = world.map(p => Renderer.toScreen(p.x, p.y));
+      const cut = Renderer.routeSplit(world, a.x, a.y);
+
+      // 避让：路线穿过第三方城池时打断，做出「从城后绕过去」的读感
+      const blocks = [];
+      for (const c of Object.values(G.cities)) {
+        if (c.id === a.from || c.id === a.to) continue;
+        const p = Renderer.toScreen(c.x, c.y);
+        const r = (7 + c.pop / 45) * Math.max(0.75, z) + 3;
+        blocks.push({ x: p.x, y: p.y, r });
+      }
+      const blocked = (x, y) => {
+        for (const b of blocks) {
+          const dx = x - b.x, dy = y - b.y;
+          if (dx * dx + dy * dy < b.r * b.r) return true;
+        }
+        return false;
+      };
+
+      const stroke = (i0, i1) => {
+        let open = false;
+        for (let i = i0; i < i1; i++) {
+          const p = pts[i], q = pts[i + 1];
+          if (blocked((p.x + q.x) / 2, (p.y + q.y) / 2)) {
+            if (open) { ctx.stroke(); open = false; }
+            continue;
+          }
+          if (!open) { ctx.beginPath(); ctx.moveTo(p.x, p.y); open = true; }
+          ctx.lineTo(q.x, q.y);
+        }
+        if (open) ctx.stroke();
+      };
+
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      const main = hostile ? P.war : ally ? P.ally : color;
+      const width = hostile ? 2.6 : ally ? 1.6 : mine ? 2.2 : 1.4;
+      const dash = hostile ? [5, 4] : ally ? [2, 6] : mine ? [7, 5] : [4, 6];
+
+      // 已走段：实线，缄得很好 —— 它只是“从哪来”的线索
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+      ctx.lineWidth = width;
+      ctx.strokeStyle = hexA(main, 0.28);
+      stroke(0, Math.max(1, cut));
+
+      // 未走段：势力色 + （我出征时）金色内描边；虚线朝目标流动 = 前进方向
+      if (mine) {
+        ctx.lineWidth = width + 1;
+        ctx.strokeStyle = hexA(P.gold, 0.55);
+        stroke(Math.max(0, cut), pts.length - 1);
+      }
+      ctx.setLineDash(dash);
+      ctx.lineDashOffset = dashShift;
+      ctx.lineWidth = width;
+      ctx.strokeStyle = hostile ? P.war : ally ? P.ally : hexA(main, mine ? 0.95 : 0.55);
+      stroke(Math.max(0, cut), pts.length - 1);
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+
+      // 起点标记：空心圆，让“这兵从哪冒出来的”一眼有答案
+      const s0 = pts[0];
+      ctx.beginPath();
+      ctx.arc(s0.x, s0.y, 2.5, 0, Math.PI * 2);
+      ctx.strokeStyle = hexA(main, 0.85);
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+
+      // 箭镞：目标端双线，静态也能看出朝哪走
+      const e1 = pts[pts.length - 2], e2 = pts[pts.length - 1];
+      const ang = Math.atan2(e2.y - e1.y, e2.x - e1.x);
+      const spread = 30 * Math.PI / 180, al = 8;
+      ctx.strokeStyle = hostile ? P.war : ally ? P.ally : hexA(main, mine ? 0.95 : 0.6);
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(e2.x - al * Math.cos(ang - spread), e2.y - al * Math.sin(ang - spread));
+      ctx.lineTo(e2.x, e2.y);
+      ctx.lineTo(e2.x - al * Math.cos(ang + spread), e2.y - al * Math.sin(ang + spread));
+      ctx.stroke();
+
+      // 敌军来袭：目标城加脉冲环（减少动效时静止）
+      if (hostile) {
+        const tp = Renderer.toScreen(to.x, to.y);
+        const boost = calm ? 0 : 0.5 + 0.5 * Math.sin(now / 175);   // 周期 ≈ 1.1s
+        ctx.beginPath();
+        ctx.arc(tp.x, tp.y, 10 + boost * 3, 0, Math.PI * 2);
+        ctx.strokeStyle = hexA(P.war, 0.35 + boost * 0.25);
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+      }
+
+      // 起点城名：只写出发地（目标城自己有铭牌，重复写反而糊）
+      if (z >= 0.8) {
+        ctx.font = `${U.clamp(9 * z, 9, 11)}px "Noto Serif SC",serif`;
+        ctx.fillStyle = hexA(P.ink, 0.75);
+        ctx.textAlign = 'center';
+        ctx.fillText(from.name, s0.x, s0.y - 6);
+      }
+      ctx.restore();
+    }
+  },
+
   /** 系统级「减少动效」：震动/粒子/滑入都停，白闪与颜色变化保留 */
-  reducedMotion() {
-    if (Renderer._calm == null) {
+  reducedMotion() {    if (Renderer._calm == null) {
       try {
         Renderer._calm = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
       } catch (e) { Renderer._calm = false; }
