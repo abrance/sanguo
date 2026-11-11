@@ -32,6 +32,7 @@ const UI = {
     UI.bindPeace();
     UI.bindEvent();
     UI.bindTurnFx();
+    UI.bindFocus();
     Audio.init();
     UI.bindMute();
     UI.bindAudioHooks();
@@ -39,6 +40,80 @@ const UI = {
     UI.buildStart();
     UI.resizeCanvasSoon();
     window.addEventListener('resize', () => { UI._wrapRect = null; });   // 悬浮提示缓存的容器矩形作废
+  },
+
+  // ───────── 浮层焦点锁（无障碍 P5-4）─────────
+  // 浮层开着时 Tab / Shift+Tab 只在本层里循环（第一次 Tab 就把焦点收进来，不逃到地图和侧栏）；
+  // 关闭后焦点回到打开它的那个按钮。开合有十几个调用点，用 MutationObserver 盯 class 变化
+  // 统一处理，免得漏一处就多一个焦点陷阱。
+  _overlayIds: ['startOverlay', 'rankOverlay', 'endOverlay', 'peaceOverlay',
+    'eventOverlay', 'saveOverlay', 'helpOverlay'],
+  _trap: { el: null, ret: null },
+
+  _focusables(root) {
+    const sel = 'button:not([disabled]),[href],input:not([disabled]),select:not([disabled]),'
+      + 'textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+    return Array.from(root.querySelectorAll(sel)).filter(el => !el.classList.contains('hidden'));
+  },
+
+  _openOverlayEl() {
+    for (const id of UI._overlayIds) {
+      const el = UI.$(id);
+      if (el && !el.classList.contains('hidden')) return el;
+    }
+    return null;
+  },
+
+  /** 焦点跟着浮层开合走：开着锁进去，关掉送回来 */
+  syncFocus() {
+    const open = UI._openOverlayEl();
+    if (open) {
+      if (UI._trap.el === open) return;
+      UI._trap.ret = (typeof document !== 'undefined' && document.activeElement) || null;
+      UI._trap.el = open;
+      // 打开时不动焦点：浮层本身以及它的第一节点的 :focus 会改变整帧合成（像素基线全灭），
+      // 而第一批 Tab 按下去 trapTab 就会把焦点收进本层，所以这里不抢焦点。
+      return;
+    }
+    const back = UI._trap.ret;
+    UI._trap.el = null;
+    UI._trap.ret = null;
+    if (back && back.isConnected !== false && back.focus) back.focus();
+  },
+
+  /** Tab / Shift+Tab 在浮层内循环；返回 true 表示已接管 */
+  trapTab(e) {
+    const open = UI._trap.el || UI._openOverlayEl();
+    if (!open) return false;
+    UI._trap.el = open;
+    const list = UI._focusables(open);
+    if (!list.length) return false;
+    const first = list[0], last = list[list.length - 1];
+    const cur = typeof document !== 'undefined' ? document.activeElement : null;
+    const inside = !!cur && open.contains(cur);
+    // 焦点在层外（刚打开，仍在背后的按钮上）或落在浮层本身时：Tab 进第一项 / Shift+Tab 去末项
+    if (e.shiftKey ? (!inside || cur === first || cur === open) : (!inside || cur === last || cur === open)) {
+      (e.shiftKey ? last : first).focus();
+      if (e.preventDefault) e.preventDefault();
+      return true;
+    }
+    return false;    // 层内还有下一项 → 交给浏览器默认行为
+  },
+
+  bindFocus() {
+    UI.syncFocus();
+    if (typeof MutationObserver === 'undefined' || !document.body) return;
+    new MutationObserver(() => UI.syncFocus())
+      .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'] });
+  },
+
+  /** 顶栏资源：图标是 aria-hidden，屏幕阅读器只看得见一个数字 —— 把名字补进可读名 */
+  _labelRes(id, name, text) {
+    const v = UI.$(id);
+    if (!v) return;
+    v.textContent = text;
+    const box = v.closest && v.closest('.res');
+    if (box) box.setAttribute('aria-label', `${name} ${text}`);
   },
 
   resizeCanvasSoon() { requestAnimationFrame(() => Renderer.resize()); },
@@ -223,6 +298,8 @@ const UI = {
     }, { passive: false });
 
     window.addEventListener('keydown', e => {
+      // 浮层开着时 Tab 只在本层里转，先把这一条拦下（见 bindFocus）
+      if (e.key === 'Tab') { UI.trapTab(e); return; }
       if (e.key === 'Escape' && UI.pending) UI.cancelPending();
       if (e.key === 'Escape') UI.$('helpOverlay').classList.add('hidden');
       // ← → 在直辖城之间切换，省得回地图点
@@ -519,6 +596,9 @@ const UI = {
         ${city.policy ? ' · ' + POLICIES[city.policy].name : ''}
         ${building ? ' · 兴建' + building : ''}</div>`;
       tip.classList.remove('hidden');
+      // 关键数值的读屏版：行内「标签 + 数值」在屏幕阅读器里是散的，拼成一句（P5-4）
+      tip.setAttribute('aria-label', `${city.name} 守军 ${U.num(troops)} / ${U.num(cap)}`
+        + `　城墙 ${city.wall.toFixed(1)}　治安 ${Math.round(city.order)}　士气 ${Math.round(city.morale)}`);
       UI._tipSize = { w: tip.offsetWidth, h: tip.offsetHeight };   // 只有重建时才量尺寸
     } else if (tip.classList.contains('hidden')) {
       tip.classList.remove('hidden');
@@ -805,13 +885,13 @@ const UI = {
     const s = U.season(G.meta.month);
     UI.$('dateText').textContent = `${G.meta.year}年 ${G.meta.month}月`;
     UI.$('turnText').textContent = `第 ${G.meta.turn} 回合 · ${SEASON[s].name}`;
-    UI.$('resFood').textContent = U.num(State.playerFood(G));
-    UI.$('resGold').textContent = U.num(State.playerGold(G));
-    UI.$('resTroop').textContent = U.num(State.playerTroops(G));
-    UI.$('resMat').textContent = U.num(State.playerMat(G));
-    UI.$('resIron').textContent = U.num(State.playerIron(G));
+    UI._labelRes('resFood', '粮草', U.num(State.playerFood(G)));
+    UI._labelRes('resGold', '钱币', U.num(State.playerGold(G)));
+    UI._labelRes('resTroop', '总兵力', U.num(State.playerTroops(G)));
+    UI._labelRes('resMat', '建材', U.num(State.playerMat(G)));
+    UI._labelRes('resIron', '铁料', U.num(State.playerIron(G)));
     const rpInc = State.playerRPIncome(G);
-    UI.$('resRP').textContent = '+' + rpInc.toFixed(1) + '/月';
+    UI._labelRes('resRP', '科研点', '+' + rpInc.toFixed(1) + '/月');
     UI.$('resRP').title = `科研产出 ${rpInc.toFixed(1)}/月 · 未分配库存 ${State.playerRP(G)}`;
 
     const rk = rankOf(G.player.rank);

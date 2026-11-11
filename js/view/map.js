@@ -41,6 +41,71 @@ const GameMap = {
     [[1176, 722], [1232, 822], [1264, 902]],              // 泗水
   ],
 
+  // ── 湖泽（只作视觉，与 TRIBUTARIES 同口径：不进地形分类、不影响行军）──
+  // VISUAL §1.3 要的「岸线 + 滩涂 + 浅深双色」需要一片面状水体才成立：本图没有海域，
+  // 河道又是四叠（§1.4），在河道上再描边只会变成双描边。所以岸线只画在湖上，湖一律避开河道。
+  LAKES: [
+    { x: 872, y: 1240, rx: 46, ry: 27, rot: -0.12 },   // 洞庭
+    { x: 1286, y: 1276, rx: 28, ry: 17, rot: 0.18 },   // 彭蠡
+    { x: 1566, y: 1128, rx: 34, ry: 21, rot: -0.06 },  // 震泽
+    { x: 1300, y: 1104, rx: 26, ry: 16, rot: 0.14 },   // 巢湖
+    { x: 1000, y: 706, rx: 30, ry: 18, rot: 0.10 },    // 巨野泽
+  ],
+
+  /** 湖岸多边形：半径按 hash 抖一圈（每局形状固定 → 像素回归可比），k<1 用于内缩的深水区 */
+  lakePath(lk, k) {
+    const N = 16, s = k == null ? 1 : k, pts = [];
+    const cr = Math.cos(lk.rot), sr = Math.sin(lk.rot);
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      const w = 1 + (GameMap._hash(i + Math.round(lk.x), Math.round(lk.y)) - 0.5) * 0.30;
+      const x = Math.cos(a) * lk.rx * w * s, y = Math.sin(a) * lk.ry * w * s;
+      pts.push([lk.x + x * cr - y * sr, lk.y + x * sr + y * cr]);
+    }
+    return pts;
+  },
+
+  /** 湖泊：滩涂带 → 浅水 → 深水 → 1px 岸线 → 水纹（VISUAL §1.3） */
+  drawLake(g, lk) {
+    const path = pts => {
+      g.beginPath();
+      g.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+      g.closePath();
+    };
+    const poly = GameMap.lakePath(lk);
+    g.save();                      // 线型碰到全局 ctx，不 restore 会把等高线的接头也改掉
+    g.lineJoin = 'round';
+    // 1) 滩涂：先描 5.5px 沙色，填水后只剩岸外 2–3px 的一圈湿沙
+    path(poly);
+    g.strokeStyle = 'rgba(120,106,76,0.30)';
+    g.lineWidth = 5.5;
+    g.stroke();
+    // 2) 浅水：与河道水体同色，读起来是同一套水系
+    g.fillStyle = '#3d6a7e';
+    g.fill();
+    // 3) 深水：内缩 55%（按离岸距离分档，不引新数据）
+    path(GameMap.lakePath(lk, 0.55));
+    g.fillStyle = '#27414f';
+    g.fill();
+    // 4) 岸线：1px，比水体亮一档
+    path(poly);
+    g.strokeStyle = 'rgba(150,184,196,0.55)';
+    g.lineWidth = 1;
+    g.stroke();
+    // 5) 水纹：两三道短弧，湖面才像水而不是一块色斑
+    g.lineWidth = 1;
+    g.strokeStyle = 'rgba(150,196,214,0.22)';
+    for (let i = 0; i < 3; i++) {
+      const dy = (i - 1) * lk.ry * 0.34;
+      g.beginPath();
+      g.moveTo(lk.x - lk.rx * 0.30, lk.y + dy);
+      g.quadraticCurveTo(lk.x, lk.y + dy - 2.4, lk.x + lk.rx * 0.30, lk.y + dy);
+      g.stroke();
+    }
+    g.restore();
+  },
+
   // 点到折线的最近距离
   _distToPath(x, y, pts) {
     let best = Infinity;
@@ -261,6 +326,9 @@ const GameMap = {
 
     lg.putImageData(img, 0, 0);
     g.drawImage(low, 0, 0, W, H);
+
+    // ── 1.5 湖泽（VISUAL §1.3）：岸线 + 滩涂 + 浅深双色。画在河道之前，河从湖口穿过时压在上面
+    for (const lk of GameMap.LAKES) GameMap.drawLake(g, lk);
 
     // ── 2. 河川：岸 / 水体 / 高光三叠（宽随流程渐变，源窄尾宽）──
     const pass = (pts, style, width, alpha) => {

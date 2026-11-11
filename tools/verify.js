@@ -3847,6 +3847,219 @@ section('州名与州界（地图上的州标识必须认得出）');
 }
 
 // ─────────────────────────────────────────────
+section('湖泽：岸线 / 滩涂 / 浅深双色（VISUAL 1.3）');
+{
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+  const { api, get } = h.boot({ seed: 7 });
+  const cities = Object.values(get().cities);
+
+  // 记录型 ctx：canvas 调用全记下来，就能断言「该画的两层水、1px 岸线、滩涂带都画了」
+  const mk = () => {
+    const ops = [];
+    const ctx = new Proxy({}, {
+      get(t, k) {
+        if (k === 'createImageData') return (w, hh) => ({ width: w, height: hh, data: new Uint8ClampedArray(w * hh * 4) });
+        if (k === 'measureText') return () => ({ width: 12 });
+        if (k === 'createLinearGradient' || k === 'createRadialGradient') return () => ({ addColorStop() {} });
+        if (k in t) return t[k];
+        return () => { ops.push({ op: String(k) }); return { addColorStop() {}, width: 12 }; };
+      },
+      set(t, k, v) { t[k] = v; ops.push({ op: 'set:' + String(k), v }); return true; },
+    });
+    return { ctx, ops };
+  };
+
+  const loadMap = () => {
+    const box = mk();
+    const mctx = {
+      console, Math, Object, Array, String, Number, JSON, Set, Map, Float32Array, Int16Array, U: api.U,
+      document: { createElement: () => ({ width: 0, height: 0, getContext: () => box.ctx }) },
+    };
+    mctx.globalThis = mctx;
+    vm.createContext(mctx);
+    vm.runInContext(fs.readFileSync(path.join(h.ROOT, 'js/view/map.js'), 'utf8')
+      + '\n;globalThis.__GM = GameMap;', mctx, { filename: 'map.js' });
+    return { GM: mctx.__GM, ops: box.ops, ctx: box.ctx };
+  };
+
+  const { GM, ctx, ops } = loadMap();
+
+  // 硬约束：河道已有四叠，在河道上再描岸线就是双描边 —— 湖必须离河道留出净空
+  const onRiver = GM.LAKES.filter(lk => Math.min(
+    ...[...GM.RIVERS, ...GM.TRIBUTARIES].map(p => GM._distToPath(lk.x, lk.y, p))) < Math.max(lk.rx, lk.ry) + 12);
+  ok('湖都离河道够远（不与河道叠出双描边）', !onRiver.length,
+    onRiver.map(l => `(${l.x},${l.y})`).join(' ') || `${GM.LAKES.length} 个湖`);
+
+  // 也别压在城池标记上（地图上点城会捡不到）
+  const onCity = GM.LAKES.filter(lk => Math.min(
+    ...cities.map(c => api.U.dist(lk.x, lk.y, c.x, c.y))) < Math.max(lk.rx, lk.ry) + 8);
+  ok('湖不压城池标记', !onCity.length, onCity.map(l => `(${l.x},${l.y})`).join(' '));
+
+  const poly = GM.lakePath(GM.LAKES[0]);
+  const inner = GM.lakePath(GM.LAKES[0], 0.55);
+  const area = pts => Math.abs(pts.reduce((s, p, i) => {
+    const q = pts[(i + 1) % pts.length];
+    return s + (p[0] * q[1] - q[0] * p[1]);
+  }, 0)) / 2;
+  const lk0 = GM.LAKES[0];
+  const radii = poly.map(p => Math.hypot(p[0] - lk0.x, p[1] - lk0.y));
+  ok('湖岸是多边形且形状有手绘抖动（不是正圆）',
+    poly.length === 16 && (Math.max(...radii) - Math.min(...radii)) / Math.max(...radii) > 0.08,
+    `半径 ${Math.min(...radii).toFixed(1)}–${Math.max(...radii).toFixed(1)}`);
+  ok('深水区内缩（浅 / 深两档按离岸距离分）', area(inner) < area(poly) * 0.45,
+    `${Math.round(area(inner))} < ${Math.round(area(poly) * 0.45)}`);
+
+  GM.drawLake(ctx, lk0);
+  const fills = ops.filter(o => o.op === 'fill').length;
+  const widths = ops.filter(o => o.op === 'set:lineWidth').map(o => o.v);
+  const arcs = ops.filter(o => o.op === 'stroke').length;
+  ok('单个湖画两层水（浅水 + 深水）', fills === 2, `${fills} 次 fill`);
+  ok('1px 岸线 + 2–3px 滩涂带都在（5.5px 描边有一半被水体盖掉）',
+    widths.indexOf(1) >= 0 && widths.indexOf(5.5) >= 0, widths.join('/'));
+  ok('湖面有水纹（不是一块平色斑）', arcs >= 4, `${arcs} 次 stroke`);
+
+  // prerender 里必须真的调用了湖：把 LAKES 清空跑一次，对比 fill 次数与耗时
+  const grid = GM.generate(7);
+  ops.length = 0;
+  let t0 = process.hrtime.bigint();
+  GM.prerender(grid, cities);
+  const msLake = Number(process.hrtime.bigint() - t0) / 1e6;
+  const fillsLake = ops.filter(o => o.op === 'fill').length;
+  const saved = GM.LAKES;
+  GM.LAKES = [];
+  ops.length = 0;
+  t0 = process.hrtime.bigint();
+  GM.prerender(grid, cities);
+  const msBare = Number(process.hrtime.bigint() - t0) / 1e6;
+  const fillsBare = ops.filter(o => o.op === 'fill').length;
+  GM.LAKES = saved;
+  ok('prerender 里画了全部湖（每湖 2 次填充）', fillsLake - fillsBare === saved.length * 2,
+    `${fillsLake} vs ${fillsBare}，${saved.length} 个湖`);
+  ok('湖对 prerender 的耗时增量 < 150ms 预算', msLake - msBare < 150,
+    `+${(msLake - msBare).toFixed(1)}ms（node 桩 ctx，含 ${saved.length} 个湖）`);
+}
+
+// ─────────────────────────────────────────────
+section('无障碍：浮层焦点锁 + 面板数值读屏标签（P5-4）');
+{
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+
+  // 极简 DOM：只实现 focus trap 用到的那几个口子
+  const doc = { activeElement: null, body: null };
+  const mkEl = tag => {
+    const el = {
+      tag, attrs: {}, children: [], _cls: new Set(),
+      classList: {
+        add(c) { el._cls.add(c); }, remove(c) { el._cls.delete(c); },
+        contains(c) { return el._cls.has(c); }, toggle(c, on) { if (on) el._cls.add(c); else el._cls.delete(c); },
+      },
+      setAttribute(k, v) { el.attrs[k] = v; },
+      getAttribute(k) { return el.attrs[k]; },
+      focus() { doc.activeElement = el; },
+      contains(o) { return o === el || el.children.indexOf(o) >= 0; },
+      querySelectorAll() { return el.children; },
+    };
+    return el;
+  };
+  doc.body = mkEl('body');
+
+  const ctx = {
+    console, Math, Object, Array, String, Number, JSON, Set, Map, Boolean, isFinite, isNaN, Date,
+    document: doc, window: {}, requestAnimationFrame: () => {}, MutationObserver: undefined,
+  };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  const src = fs.readFileSync(path.join(h.ROOT, 'js/view/ui.js'), 'utf8')
+    .replace(/Object\.assign\(UI,[\s\S]*?\);/, '');   // 面板装配在浏览器里做
+  vm.runInContext(src + '\n;globalThis.__UI = UI;', ctx, { filename: 'ui.js' });
+  const UI = ctx.__UI;
+
+  const opener = mkEl('button');
+  const overlay = mkEl('div');
+  const b1 = mkEl('button'), b2 = mkEl('button'), b3 = mkEl('button');
+  overlay.children.push(b1, b2, b3);
+  overlay.classList.add('hidden');
+  const table = { helpOverlay: overlay };
+  UI.$ = id => table[id] || null;
+  UI._trap = { el: null, ret: null };
+
+  UI.syncFocus();
+  ok('没有浮层时不抢焦点', doc.activeElement === null && UI._trap.el === null);
+
+  doc.activeElement = opener;          // 用户点了「机制」按钮
+  overlay.classList.remove('hidden');  // 浮层打开
+  UI.syncFocus();
+  ok('浮层打开时不动焦点（不抢背后按钮的焦点、不滚内容）',
+    doc.activeElement === opener && UI._trap.el === overlay);
+
+  // 第一次 Tab：焦点从层外的按钮被收进本层第一项
+  let prevented = false;
+  const grab = UI.trapTab({ shiftKey: false, preventDefault() { prevented = true; } });
+  ok('Tab 把层外焦点收进本层第一项（不逃到地图上）', grab === true && doc.activeElement === b1 && prevented);
+
+  doc.activeElement = b3;              // Tab 到末项
+  prevented = false;
+  const took = UI.trapTab({ shiftKey: false, preventDefault() { prevented = true; } });
+  ok('Tab 在末项回卷到首项', took === true && doc.activeElement === b1 && prevented);
+
+  doc.activeElement = b1;
+  prevented = false;
+  const pass = UI.trapTab({ shiftKey: false, preventDefault() { prevented = true; } });
+  ok('Tab 在层中间不拦截（按正常顺序往下走）', pass === false && prevented === false);
+
+  doc.activeElement = overlay;         // 焦点落在浮层本身（可聚焦容器）
+  const enter = UI.trapTab({ shiftKey: false, preventDefault() {} });
+  ok('Tab 从浮层本身进第一项', enter === true && doc.activeElement === b1);
+
+  doc.activeElement = b1;
+  const back = UI.trapTab({ shiftKey: true, preventDefault() {} });
+  ok('Shift+Tab 在首项回卷到末项', back === true && doc.activeElement === b3);
+
+  doc.activeElement = opener;          // 焦点被别的脚本挪到层外
+  const pull = UI.trapTab({ shiftKey: false, preventDefault() {} });
+  ok('焦点在层外时被拉回层内', pull === true && doc.activeElement === b1);
+
+  overlay.classList.add('hidden');     // 关掉浮层
+  UI.syncFocus();
+  ok('关闭后焦点回到打开它的按钮', doc.activeElement === opener && UI._trap.el === null);
+
+  // 顶栏资源：图标 aria-hidden，必须把名字写进可读名
+  const resBox = mkEl('span');  const resVal = mkEl('b');
+  resVal.closest = sel => (sel === '.res' ? resBox : null);
+  table.resFood = resVal;
+  UI._labelRes('resFood', '粮草', '1234');
+  ok('顶栏资源有读屏文案（粮草 1234）',
+    resVal.textContent === '1234' && resBox.attrs['aria-label'] === '粮草 1234',
+    String(resBox.attrs['aria-label']));
+
+  // 城池面板的数值格：标签 + 数值拼成一句
+  const uctx = { console, Math, Object, Array, String, Number, JSON, Set, Map };
+  uctx.globalThis = uctx;
+  vm.createContext(uctx);
+  vm.runInContext(fs.readFileSync(path.join(h.ROOT, 'js/core/util.js'), 'utf8')
+    + '\n;globalThis.__U = U;', uctx, { filename: 'util.js' });
+  const cctx = {
+    console, Math, Object, Array, String, Number, JSON, Set, Map, Boolean, isFinite, isNaN, Date,
+    document: doc, U: uctx.__U, TERRAIN: {}, POLICIES: {}, TROOPS: {}, TROOP_KEYS: [], BUILDINGS: {},
+  };
+  cctx.globalThis = cctx;
+  vm.createContext(cctx);
+  vm.runInContext(fs.readFileSync(path.join(h.ROOT, 'js/view/panels/city.js'), 'utf8')
+    + '\n;globalThis.__C = UI_CITY;', cctx, { filename: 'panels/city.js' });
+  const grid = cctx.__C._statGrid([['驻军', '300 / 500'], ['城墙', '3.0 / 5']]);
+  ok('城池面板数值带读屏标签（驻军 / 城墙）',
+    grid.indexOf('aria-label="驻军 300 / 500"') >= 0 && grid.indexOf('aria-label="城墙 3.0 / 5"') >= 0,
+    grid.replace(/\s+/g, ' ').slice(0, 120));
+  ok('城池概览的数值格走同一个渲染函数（不是手改模板）',
+    /<div class="statgrid">\$\{UI\._statGrid\(rows\)\}/.test(
+      fs.readFileSync(path.join(h.ROOT, 'js/view/panels/city.js'), 'utf8')));
+}
+
+// ─────────────────────────────────────────────
 section('视图面板（用 stub 装进 vm 跑，不碰真 DOM）');
 {
   const fs = require('fs');
@@ -3998,6 +4211,8 @@ section('城池悬停速览（守将 / 都督）');
 
   const tip = {
     innerHTML: '', className: '', offsetWidth: 220, offsetHeight: 90,
+    attrs: {},
+    setAttribute(k, v) { tip.attrs[k] = v; },
     classList: { add() {}, remove() {}, contains: () => false },
     style: {},
   };
@@ -4028,6 +4243,11 @@ section('城池悬停速览（守将 / 都督）');
   const html = tip.innerHTML;
   ok('悬停显示守将与属性', html.indexOf(govHero.name) >= 0 && /守将/.test(html)
     && html.indexOf(`统${govHero.tong}`) >= 0, html.slice(0, 120).replace(/\s+/g, ' '));
+  // 数值行在屏幕阅读器里是散的，容器必须有一句完整的可读名（P5-4）
+  ok('速览的关键数值有读屏文案（守军 / 城墙 / 治安 / 士气）',
+    /守军/.test(tip.attrs['aria-label'] || '') && /城墙/.test(tip.attrs['aria-label'] || '')
+    && /治安/.test(tip.attrs['aria-label'] || '') && /士气/.test(tip.attrs['aria-label'] || ''),
+    tip.attrs['aria-label']);
 
   UIObj._tipSig = '';
   UIObj.showCityTip(g2.cities[other.id], 100, 100);

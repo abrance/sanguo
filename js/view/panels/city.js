@@ -250,7 +250,9 @@ const UI_CITY = {
   },
 
   _statGrid(rows) {
-    return rows.map(([k, v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join('');
+    // 数值单独一个 span：屏幕阅读器读到这里只有一个孤零零的数字，把标签拼进可读名（P5-4）
+    return rows.map(([k, v]) =>
+      `<span class="k">${k}</span><span class="v" aria-label="${U.esc(k + ' ' + v)}">${v}</span>`).join('');
   },
 
   _btn(label, sub, onclick, reason) {
