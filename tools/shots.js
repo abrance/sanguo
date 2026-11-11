@@ -33,6 +33,7 @@ const PANEL = 'zoom=1.0&cx=1180&cy=760&seed=11';
 const SHOTS = [
   { name: 'map-far', query: 'zoom=0.5&cx=1200&cy=900&seed=11' },
   { name: 'map-near', query: 'zoom=1.2&cx=1180&cy=760&seed=11&turn=6' },
+  { name: 'map-war', query: 'zoom=1.2&cx=1180&cy=760&seed=11&turn=6&war=1' },
   { name: 'log-battle', query: 'zoom=1.0&cx=1180&cy=760&seed=11&turn=4&fight=1&turn2=2&tab=log' },
   { name: 'panel-city', query: PANEL + '&turn=4&tab=city&sel=chenliu' },
   { name: 'panel-tech', query: PANEL + '&turn=6&tab=tech' },

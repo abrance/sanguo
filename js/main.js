@@ -29,6 +29,19 @@
       if (Store.get().over) break;
     }
 
+    // war=1：与最近的两个势力开战，保证截图里有「敌境冷色」的城（§2.11）
+    if (q.get('war')) {
+      const g1 = Store.get();
+      const from = g1.cities[g1.player.homeCityId];
+      Object.values(g1.cities)
+        .filter(c => c.owner !== g1.player.factionId && c.owner !== 'free')
+        .map(c => ({ c, d: U.dist(from.x, from.y, c.x, c.y) }))
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 2)
+        .forEach(o => { try { Diplo.declareWar(g1, g1.player.factionId, o.c.owner); } catch (e) { } });
+      Store.replace(g1);
+    }
+
     // fight=1：造一支大军直接结算一场攻城，保证截图里有稳定的战报卡
     //（截图夹具：直接调用规则层结算，不走命令层，避免 AI 中途议和把战斗跳过去）
     if (q.get('fight')) {

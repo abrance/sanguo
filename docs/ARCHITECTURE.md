@@ -228,7 +228,7 @@ Diplo.ai → 判定 losing → 目标是最强敌国
 
 ### 4.2 军区（一将统辖多城）
 
-玩家嫌逐城点太累时，把若干直辖城交给一名武将托管：
+玩家嫌逐城点太累时，把若干**本方城池**（直辖城或被直辖上限挡在外面的属下城）交给一名武将托管：
 
 ```js
 G.player.legions = [{ id, heroId, cityIds[], policy, stance, targetFid, stats:{attacks,taken} }]
@@ -239,13 +239,37 @@ G.player.legions = [{ id, heroId, cityIds[], policy, stance, targetFid, stats:{a
 - 号令 `stance`：
   - `defend` 守土 —— 只营建征兵，不出兵
   - `expand` 拓边 —— 只打已交战势力与在野，**不主动开新战线**
-  - `strike` 征讨 —— 只打 `targetFid`；下号令即宣战（玩家授权的战争）
-- 战果：军区派出的军队带 `a.legionId`，出兵时 `stats.attacks++`，该军队克城时 `stats.taken++`
+  - `strike` 征讨 —— 优先打 `targetFid`，顺路也可打已交战势力与在野（否则隔着一两家永远兵锋不及）；**点名 `targetFid` 才宣战**（玩家授权的战争）。未定目标时可以只立号令：不自作主张挑对手、也不开新战线，只在已交战势力与在野范围内用兵，且不会被「所征之敌不可攻」的逻辑改回守土
+- 战果：军区派出的军队带 `a.legionId`，出兵时 `stats.attacks++`，该军队克城时 `stats.taken++`，
+  且该城（若非直辖）自动划入军区辖城 —— 打下来的地盘继续由都督治理，不掉回 AI 编排
+- 军区辖城 = 玩家亲管（`State.legionCityIds`），`AI.run` 一律跳过；未划入任何军区的属下城才归 AI 代管
 - 征讨目标一旦停战/覆灭，军区自动转「守土」并在纪事里说明，不会一直空转
 - 都督加成：`State.legionMul` = 统率 → 守城战力 `1 + tong/400`，政略 → 产出 `1 + zheng/500`
 - 同一城只归一个军区；`Viceroy.run` 会跳过军区城，避免两套指令打架
+- 军区面板的「辖城」是开关：`✓ 城名` = 已在军区（再点一下移出），`＋ 城名` = 未归入（点一下归入）；
+  右侧「全部移出」一次清空辖城（城本身不变，只是改回太守 / AI 代管）。`↑ 直` 表示直辖城
+- 「整州」一行按 `region` 分组，一键把该州本方城全部并入（已属别家军区的城不抢）
 - 玩家当家的势力（`rulerId === PLAYER_HERO_ID`）不跑 `Diplo.ai`：宣战/结盟/求和一律玩家决断
 - 臣属时君主仍会自己罢兵；若此时正有一条等玩家裁决的求和报价，会作废并写明"已因停战作废"，不静默消失
+
+### 4.3 一统一州（`State.provinceOwner` / `provinceMul`）
+
+城池自带 `region`（州名，原本只用于州界与州名）。全州只剩一家（在野不算）即算一统：
+
+```js
+PROVINCE_SWEEP = { econ: 1.12, cap: 1.10 }   // state.js，一处定义
+State.provinceOwner(G, region) // 一州只剩一家 → 该势力 id，否则 null（按月缓存）
+State.provinceMul(G, c)        // 有加成返回 { econ, cap }，否则 null
+State.sweptProvinces(G)        // 本势力已一统的州名（官阶台提示用）
+```
+
+- 加成只给「自己真的在管」的城：`grantedTo === PLAYER`（直辖）或属于某个军区。
+  属下治理又没划军区的城**不吃** —— 占州要真管才算数，这也是玩家用「整州入辖」把州分给都督的动力。
+- 作用点两处，都走同一条乘数：`Economy.project`（钱 `goldOut`、粮 `foodOut`）× 1.12；
+  `State.troopCapBreakdown`（兵额） × 1.10。面板的公式行会带出「× 州1.12 / × 一统并州 1.10」。
+- 多州叠加：每州各算一份，城只看自己所在的州。
+- 缓存口径：`G._provOwners` 按月失效。玩家月中手动攻城导致易主时会滞后到下一月，
+  只影响面板提示，不影响月产（`Economy` 在下个回合按新归属重算）。
 
 ### 视图
 

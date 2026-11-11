@@ -88,6 +88,7 @@
         <nav id="cityTabs" class="subtabs">
           <button data-ctab="overview" class="on">概览</button>
           <button data-ctab="build">营造</button>
+          <button data-ctab="mart">市肆</button>
           <button data-ctab="clans">士族</button>
           <button data-ctab="heroes">人物</button>
           <button data-ctab="policy">施政</button>
@@ -241,6 +242,10 @@
     <div class="start-step" id="powerStep">
       <label>权柄</label>
       <div id="powerBox" class="powerbox"></div>
+    </div>
+    <div class="start-step">
+      <label>直辖</label>
+      <div id="demesneBox" class="powerbox"></div>
     </div>
     <div class="start-step">
       <label>朝堂</label>
@@ -458,8 +463,7 @@
 <script src="js/data/troops.js"></script>
 <script src="js/data/events.js"></script>
 <script src="js/data/ranks.js"></script>
-<script src="js/data/buildings.js"></script>
-<script src="js/data/treasures.js"></script>
+<script src="js/data/buildings.js"></script><script src="js/data/mart.js"></script><script src="js/data/treasures.js"></script>
 <script src="js/data/techs.js"></script>
 <script src="js/data/policies.js"></script>
 <script src="js/data/missions.js"></script>
@@ -478,6 +482,8 @@
 <script src="js/systems/economy.js"></script>
 <script src="js/systems/recruit.js"></script>
 <script src="js/systems/build.js"></script>
+<script src="js/systems/mart.js"></script>
+<script src="js/systems/drill.js"></script>
 <script src="js/systems/tech-system.js"></script>
 <script src="js/systems/clans.js"></script>
 <script src="js/systems/relations.js"></script>
@@ -500,6 +506,7 @@
 <script src="js/state/save.js"></script>
 <script src="js/view/map.js"></script>
 <script src="js/view/renderer.js"></script>
+<script src="js/view/cityview.js"></script>
 <script src="js/view/panels/start.js"></script>
 <script src="js/view/panels/rank.js"></script>
 <script src="js/view/panels/peace.js"></script>

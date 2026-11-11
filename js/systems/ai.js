@@ -20,6 +20,7 @@ const AI = {
     maxRoutesPeace: 1,      // 平时每月最多开几路（其余精力用于集结）
     maxRoutesWar: 8,        // 战时每月最多开几路（仍受 commitRatio 与留守下限限制）
     avoidMonths: 6,         // 打不下来的目标冷落几个月
+    attackMarginFast: 0.40, // 军区「征讨」号令下可接受的险胜门槛（比常规宽松）
     minSpare: 120,          // 可抽兵少于这个数就不折腾
     minArmy: 150,           // 成军下限（与其送人头不如囤着）
     attackMargin: 0.55,     // 出兵要求：预测能赢且剩兵 ≥ 该比例（守军会在行军途中补兵）
@@ -39,10 +40,11 @@ const AI = {
       let cities = State.factionCities(G, f.id);
       if (!cities.length) continue;
 
-      // 玩家直辖城不归 AI 调度（与 Diplo.sendAid 的同一条不变量）
+      // 玩家亲自管的城不归 AI 调度：直辖城 + 军区辖城（与 Diplo.sendAid 的同一条不变量）
       let exclude = null;
       if (f.id === G.player.factionId) {
         exclude = new Set(State.demesne(G).map(c => c.id));
+        for (const id of State.legionCityIds(G)) exclude.add(id);
         cities = cities.filter(c => !exclude.has(c.id));
         if (!cities.length) continue;
       }
@@ -188,13 +190,15 @@ const AI = {
           pred,
           dist: U.dist(from.x, from.y, nb.x, nb.y),
           owner: nb.owner,
+          prefer: !!opts.preferFid && nb.owner === opts.preferFid,   // 玩家点了名的势力优先
         });
       }
     }
     // 排序要跟「实际能不能打赢」一致：先按预测结果（赢 & 剩兵多），再按战力比与距离。
     // 旧版按 edge 排序、再拿 pred 过滤，会把前面一堆打不下来的目标排在最前，结果一个月一路都出不去。
     const score = t => (t.pred.win ? t.pred.remain / Math.max(1, t.size) : -1);
-    targets.sort((a, b) => (score(b) - score(a)) || (b.edge - a.edge) || (a.dist - b.dist));
+    targets.sort((a, b) => ((b.prefer ? 1 : 0) - (a.prefer ? 1 : 0))
+      || (score(b) - score(a)) || (b.edge - a.edge) || (a.dist - b.dist));
 
     return {
       turn, faction: f, cities, exclude,
@@ -292,14 +296,14 @@ const AI = {
     if (G.aiTrace.length > 400) G.aiTrace.splice(0, G.aiTrace.length - 400);
   },
 
-  // ─────── 兼容旧入口（军区 legion.js 传 filter / force） ───────
-  _mass(G, f, cities, stamp, exclude, filter, force) {
-    const plan = AI.assess(G, f, cities, { exclude, filter });
+  // ─────── 兼容旧入口（军区 legion.js 传 filter / force / preferFid） ───────
+  _mass(G, f, cities, stamp, exclude, filter, force, preferFid) {
+    const plan = AI.assess(G, f, cities, { exclude, filter, preferFid });
     AIWar.mass(G, f, plan, stamp, { force });
   },
 
-  _attack(G, f, cities, stamp, exclude, filter, force) {
-    const plan = AI.assess(G, f, cities, { exclude, filter });
+  _attack(G, f, cities, stamp, exclude, filter, force, preferFid) {
+    const plan = AI.assess(G, f, cities, { exclude, filter, preferFid });
     AIWar.attack(G, f, plan, stamp, { force });
   },
 };

@@ -176,6 +176,40 @@ const Renderer = {
     return { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 };
   },
 
+  /**
+   * 州名铭牌：在屏幕空间画，字号随缩放走但不低于 12px ——
+   * 原来印在预渲染地形里（15px × 0.55 = 8px），糊在纹理上根本认不出。
+   * 用绢底 + 朱线，与城池的深色铭牌区分；拉远到 0.26 倍以下淡出。
+   */
+  drawRegionLabels(ctx, cw, ch, z) {
+    const anchors = (typeof GameMap !== 'undefined' && GameMap._regionAnchors) || null;
+    if (!anchors || !anchors.length) return;
+    const alpha = U.clamp((z - 0.26) / 0.14, 0, 1);
+    if (alpha <= 0.01) return;
+
+    const fs = U.clamp(10 + 9 * z, 12, 20);
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.95;
+    ctx.font = `${fs}px "Noto Serif SC",serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const an of anchors) {
+      const p = Renderer.toScreen(an.x, an.y);
+      if (p.x < -80 || p.y < -40 || p.x > cw + 80 || p.y > ch + 40) continue;
+      const tw = ctx.measureText(an.name).width;
+      const w = tw + 14, h = fs + 9;
+      const x0 = p.x - w / 2, y0 = p.y - h / 2;
+      ctx.fillStyle = 'rgba(243,235,214,0.78)';
+      ctx.fillRect(x0, y0, w, h);
+      ctx.strokeStyle = 'rgba(150,74,58,0.62)';
+      ctx.lineWidth = 1.3;
+      ctx.strokeRect(x0, y0, w, h);
+      ctx.fillStyle = 'rgba(122,50,38,0.94)';
+      ctx.fillText(an.name, p.x, p.y + 0.5);
+    }
+    ctx.restore();
+  },
+
   /** 兵额缓存：每 400ms 重算一次，避免逐城逐帧跑兵额公式 */
   capOf(G, c, now) {
     const cache = Renderer._capCache || (Renderer._capCache = { at: 0, map: new Map() });
@@ -289,6 +323,9 @@ const Renderer = {
       ctx.restore();
     }
 
+    // 州名铭牌（屏幕空间：缩到 0.55 倍也看得清；压在城市与军队之下）
+    Renderer.drawRegionLabels(ctx, cw, ch, z);
+
     // 军队路线（先画线，压在城市下）
     for (const a of Object.values(G.armies)) {
       const from = G.cities[a.from], to = G.cities[a.to];
@@ -341,6 +378,9 @@ const Renderer = {
       const r = (7 + c.pop / 45) * Math.max(0.75, z);
       // 标记 LOD：远看色点，中看城+旗，近看字与兵数
       const lod = z < 0.5 ? 0 : z < 0.8 ? 1 : 2;
+      // 对我方的外交态度：交战势力的城体压冷一档（§2.11）—— 远景色点也走同一色，不然缩远又变回暖色
+      const st = !isPlayer && c.owner !== 'free' ? Diplo.statusOf(G, playerFid, c.owner) : '';
+      const bodyColor = Renderer.cityColor(color, st);
 
       // 玩家直辖城光晕：远景色点在这里画，近景交给 drawCity（跟着底平面走，不然会被城体盖掉）
       const pulse = isDemesne ? 0.5 + 0.5 * Math.sin(Renderer._t / 600) : 0;
@@ -352,7 +392,7 @@ const Renderer = {
       }
 
       if (lod === 0) {
-        Renderer.drawCityDot(ctx, p.x, p.y, Math.max(2.4, r * 0.62), color, {
+        Renderer.drawCityDot(ctx, p.x, p.y, Math.max(2.4, r * 0.62), bodyColor, {
           demesne: isDemesne, sel: isSel, hover: isHover,
         });
         continue;
@@ -361,8 +401,9 @@ const Renderer = {
       // 城池：外墙 + 雉堞 + 城门（档次与城墙等级都进画面）
       const tier = Renderer.cityTier(G, c);
       const cz = Renderer.cityHeight(r, tier, c.wall, State.wallMaxOf(c));
-      Renderer.drawCity(ctx, p.x, p.y, r, color, {
+      Renderer.drawCity(ctx, p.x, p.y, r, bodyColor, {
         tier,
+        cold: st === 'war',
         wall: c.wall,
         wallMax: State.wallMaxOf(c),
         detail: lod >= 2,
@@ -399,8 +440,7 @@ const Renderer = {
       }
 
       // 关系弧（对我方势力的态度）：红交战 / 黄停战 / 绿同盟
-      if (!isPlayer && c.owner !== 'free') {
-        const st = Diplo.statusOf(G, playerFid, c.owner);
+      if (st) {
         const col = st === 'war' ? 'rgba(200,90,74,0.95)'
           : st === 'ally' ? 'rgba(95,154,106,0.95)'
             : st === 'truce' ? 'rgba(201,162,39,0.95)' : null;
@@ -812,6 +852,11 @@ const Renderer = {
     }
   },
 
+  /** 交战势力的城体色：压冷一档（旗子仍用本色）—— 敌我态势一眼分得开（docs/VISUAL.md §2.11） */
+  cityColor(color, st) {
+    return st === 'war' ? tint(color, '#5b7a9a', 0.3) : color;
+  },
+
   /** 城池形制档次：0 县城 / 1 郡城 / 2 都城（势力治所） */
   cityTier(G, c) {
     if (Renderer._capitals && Renderer._capitals.has(c.id)) return 2;
@@ -924,6 +969,20 @@ const Renderer = {
       0, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(0,0,0,0.32)';
     ctx.fill();
+
+    // 焦土斑：城墙被打过的城，城外留几处烧焦的疤（§1.8 —— 地图会记事）
+    if (damaged && opts.detail !== false) {
+      const n = i => ((Math.sin(x * 0.37 + y * 0.61 + i * 2.3) * 43758.5453) % 1 + 1) % 1;
+      for (let i = 0; i < 4; i++) {
+        const a = n(i) * Math.PI * 2;
+        const rr = w * (0.44 + n(i + 9) * 0.28);
+        ctx.beginPath();
+        ctx.ellipse(x + Math.cos(a) * rr, y + h * 0.22 + Math.sin(a) * rr * 0.5,
+          w * (0.10 + n(i + 3) * 0.07), h * (0.16 + n(i + 5) * 0.10), a, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(24,18,12,${(0.16 + n(i + 7) * 0.12).toFixed(3)})`;
+        ctx.fill();
+      }
+    }
 
     // 护城河：城墙 3 级以上才成规模（docs/VISUAL.md §11.1）
     if (opts.detail !== false && (opts.wall || 1) >= 3) {
@@ -1091,6 +1150,19 @@ const Renderer = {
       ctx.fillRect(gx + gw * 0.28, gy + gh * 0.1, gw * 0.44, 1.5);
       // 坡顶门楼：天际线就在这里变好看
       Renderer.drawRoof(ctx, gx - gw * 0.06, gy, gw * 1.12, Math.max(1.6, gh * 0.62), mat.roof, hexA(color, 0.7));
+    }
+
+    // 箭楼：城墙 4 级起城门两侧各一座 —— 玩家“堆墙”的行为要有视觉回报（§2.2）
+    if (detail && (opts.wall || 1) >= 4) {
+      const aw = Math.max(2.4, w * 0.09), ah = Math.max(2.4, h * 0.12);
+      [-1, 1].forEach(s => {
+        const ax = x + s * w * 0.2 - aw / 2;
+        const ay = top + h - ah * 0.5;
+        ctx.fillStyle = shade(color, 0.72);
+        ctx.fillRect(ax, ay, aw, ah);
+        ctx.fillStyle = 'rgba(10,9,7,0.5)';
+        ctx.fillRect(ax + aw * 0.34, ay + ah * 0.5, aw * 0.32, ah * 0.5);
+      });
     }
 
     // 角楼 / 箭楼：座数随城墙等级走（郡城 1~2 座后角，都城 2~4 座、前角即箭楼）
@@ -1351,6 +1423,13 @@ function rgbOf(hex) {
 function hexA(hex, a) {
   const [r, g, b] = rgbOf(hex);
   return `rgba(${r},${g},${b},${a})`;
+}
+
+/** 往参考色混（t=0 本色）：交战势力的城压冷一档，返回 hex 才能继续喂给 shade */
+function tint(hex, ref, t) {
+  const [r, g, b] = rgbOf(hex), [r2, g2, b2] = rgbOf(ref);
+  const q = v => Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2, '0');
+  return `#${q(r + (r2 - r) * t)}${q(g + (g2 - g) * t)}${q(b + (b2 - b) * t)}`;
 }
 
 /** 压暗（k<1）：立面背光面用 —— 势力色千变万化，只能按比例算 */

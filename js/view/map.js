@@ -210,9 +210,13 @@ const GameMap = {
 
     const data = img.data;
     const rows = grid.length, cols = grid[0].length;
+    const acc = [0, 0, 0];
     for (let y = 0; y < LH; y++) {
-      const wy = y / S;
-      const gy = Math.min(rows - 1, Math.floor(wy / CELL));
+      // 以格心为锚点双线性取格：四邻按权重混色，地形交界不再是 40px 方块台阶
+      const fy = y / S / CELL - 0.5;
+      const j0 = Math.floor(fy), ty = fy - j0;
+      const grid0 = grid[U.clamp(j0, 0, rows - 1)];
+      const grid1 = grid[U.clamp(j0 + 1, 0, rows - 1)];
       const rowBase = y * LW;
       // 按格心位置取 4 邻（一像素也不会走出数组）
       const cyF = wy / CELL - 0.5;
@@ -522,13 +526,10 @@ const GameMap = {
   },
 
   /**
-   * 州界与州名印章：按「最近城池所属州」铺一张 24px 的州属场，
-   * 相邻格州不同处画一段带抖动的手绘虚线；每州质心盖一枚方印。
-   * 只依赖城池坐标与固定州属，与势力易主无关，预渲染一次即可。
+   * 州属场：24px 格上取最近城池所属州。州界（画线）与州名（找锚点）共用这一份，
+   * 保证「牌子在自家地界里」这条不会因为两套算法而失配。
    */
-  drawRegions(g, cities) {
-    if (!cities || !cities.length) return;
-
+  regionField(cities) {
     const STEP = 24;
     const cols = Math.ceil(GameMap.W / STEP);
     const rows = Math.ceil(GameMap.H / STEP);
@@ -576,12 +577,20 @@ const GameMap = {
         field[r * cols + c] = nearest(c * STEP + STEP / 2, wy);
       }
     }
+    return { names, STEP, cols, rows, field };
+  },
+
+  /**
+   * 州界：相邻格州不同处画一段带抖动的双描边虚线（浅绢打底 + 墨线）。
+   * 只依赖城池坐标与固定州属，与势力易主无关，预渲染一次即可。
+   */
+  drawRegions(g, cities) {
+    if (!cities || !cities.length) return;
+    const rf = GameMap.regionField(cities);
+    const { STEP, cols, rows, field } = rf;
 
     // 边界：格边中点连线，位置带 ±1.5px 抖动 → 手绘感而不是台阶
     g.save();
-    g.strokeStyle = 'rgba(52,40,28,0.30)';
-    g.lineWidth = 1.1;
-    g.setLineDash([7, 6]);
     g.lineCap = 'round';
     g.beginPath();
     for (let r = 0; r < rows; r++) {
@@ -601,64 +610,106 @@ const GameMap = {
         }
       }
     }
+    // 双描边：先铺一道浅绢色实线当「纸」，再压墨色虚线 ——
+    // 单薄的一道深色虚线叠在山体/树林上就消失了（旧版 0.30 alpha + 1.1px）
+    g.setLineDash([]);
+    g.strokeStyle = 'rgba(244,236,214,0.52)';
+    g.lineWidth = 4.6;
+    g.stroke();
+    g.setLineDash([13, 7]);
+    g.strokeStyle = 'rgba(38,27,18,0.82)';
+    g.lineWidth = 2.4;
     g.stroke();
     g.restore();
 
-    // 州名印章：质心盖一枚朱印
-    const acc = names.map(() => ({ x: 0, y: 0, n: 0 }));
-    for (const c of cities) {
-      const a = acc[riOf.get(c.id)];
-      a.x += c.x; a.y += c.y; a.n++;
-    }
-    for (let i = 0; i < names.length; i++) {
-      const a = acc[i];
-      if (!a.n) continue;
-      let x = a.x / a.n, y = a.y / a.n;
-
-      // 质心离城太近就绕着一圈找空位，别压住城池标记
-      const minDist = (px, py) => {
-        let m = Infinity;
-        for (const c of cities) {
-          const d = U.dist(c.x, c.y, px, py);
-          if (d < m) m = d;
-        }
-        return m;
-      };
-      let bestD = minDist(x, y);
-      if (bestD < 46) {
-        let bx = x, by = y;
-        for (let k = 0; k < 12; k++) {
-          const a = (k / 12) * Math.PI * 2;
-          for (const rad of [58, 78, 96]) {
-            const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad;
-            if (px < 40 || py < 40 || px > GameMap.W - 40 || py > GameMap.H - 40) continue;
-            const d = minDist(px, py);
-            if (d > bestD) { bestD = d; bx = px; by = py; }
-          }
-        }
-        x = bx; y = by;
-      }
-      GameMap._seal(g, x, y, names[i]);
-    }
+    // 州名锚点交给 regionAnchors（用同一份州属场挑「离州界最远」的格子）
+    GameMap._regionAnchors = GameMap.regionAnchors(cities, rf);
   },
 
-  /** 朱印：方框 + 州名（去掉「州」字），略微倾斜 */
-  _seal(g, x, y, name) {
-    const w = 34, h = 34;
-    g.save();
-    g.translate(x, y);
-    g.rotate(-0.05);
-    g.fillStyle = 'rgba(150,74,58,0.07)';
-    g.fillRect(-w / 2, -h / 2, w, h);
-    g.strokeStyle = 'rgba(150,74,58,0.32)';
-    g.lineWidth = 1.8;
-    g.strokeRect(-w / 2, -h / 2, w, h);
-    g.fillStyle = 'rgba(158,92,72,0.5)';
-    g.font = '15px "Noto Serif SC", serif';
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText(String(name).replace('州', ''), 0, 1);
-    g.restore();
+  /**
+   * 州名锚点：取本州「离州界最远的格子」（inradius 近似），保证牌子落在自家地界内部，
+   * 而不是像旧版那样用质心 + 绕圈避城，结果被推到两州交界上。
+   * 同分时优先离城池远的格子，免得压住城池铭牌。
+   */
+  regionAnchors(cities, rf) {
+    if (!cities || !cities.length) return [];
+    const F = rf || GameMap.regionField(cities);
+    const { names, STEP, cols, rows, field } = F;
+
+    // ① 边界格距离场：与异州相邻的格 = 0，其余按 4 邻接 BFS 的层数当「离边界几格」
+    const INF = 1e9;
+    const dist = new Int32Array(cols * rows).fill(INF);
+    const queue = new Int32Array(cols * rows);
+    let qh = 0, qt = 0;
+    const isBorder = (c, r) => {
+      const v = field[r * cols + c];
+      return (c > 0 && field[r * cols + c - 1] !== v)
+        || (c + 1 < cols && field[r * cols + c + 1] !== v)
+        || (r > 0 && field[(r - 1) * cols + c] !== v)
+        || (r + 1 < rows && field[(r + 1) * cols + c] !== v);
+    };
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (isBorder(c, r)) { dist[r * cols + c] = 0; queue[qt++] = r * cols + c; }
+      }
+    }
+    while (qh < qt) {
+      const i = queue[qh++];
+      const c = i % cols, r = (i - c) / cols;
+      const d = dist[i] + 1;
+      if (c > 0 && dist[i - 1] > d) { dist[i - 1] = d; queue[qt++] = i - 1; }
+      if (c + 1 < cols && dist[i + 1] > d) { dist[i + 1] = d; queue[qt++] = i + 1; }
+      if (r > 0 && dist[i - cols] > d) { dist[i - cols] = d; queue[qt++] = i - cols; }
+      if (r + 1 < rows && dist[i + cols] > d) { dist[i + cols] = d; queue[qt++] = i + cols; }
+    }
+
+    // ② 每州挑「离边界最远」的格；同分看离最近城池多远
+    const nearestCityD = (wx, wy) => {
+      let m = Infinity;
+      for (const c of cities) {
+        const d = U.dist(c.x, c.y, wx, wy);
+        if (d < m) m = d;
+      }
+      return m;
+    };
+    // 先求每州的最大内切格数，再在该州「接近最深处」的格里挑离城最远的一格：
+    // 只用最深处会让牌子压住城池铭牌，只避城又会被推回州界上。
+    const maxClear = names.map(() => 0);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const i = r * cols + c;
+        if (dist[i] === INF) continue;
+        if (dist[i] > maxClear[field[i]]) maxClear[field[i]] = dist[i];
+      }
+    }
+    const best = names.map(() => null);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const i = r * cols + c;
+        const idx = field[i];
+        const clearance = dist[i];
+        if (clearance === INF) continue;                       // 没算到（孤岛）
+        if (clearance < maxClear[idx] - 2) continue;            // 别贴着州界
+        const x = c * STEP + STEP / 2, y = r * STEP + STEP / 2;
+        const cityD = nearestCityD(x, y);
+        const cur = best[idx];
+        const cand = { clearance, x, y, cityD, clear: cityD >= 56 };
+        if (!cur) { best[idx] = cand; continue; }
+        // 能避城的一律优先；同类里先比离边界远近，再比离城远近
+        const better = (cand.clear && !cur.clear)
+          || (cand.clear === cur.clear
+            && (clearance > cur.clearance
+              || (clearance === cur.clearance && cityD > cur.cityD)));
+        if (better) best[idx] = cand;
+      }
+    }
+    const out = [];
+    for (let i = 0; i < names.length; i++) {
+      const b = best[i];
+      if (!b) continue;
+      out.push({ name: names[i], x: b.x, y: b.y });
+    }
+    return out;
   },
 
   /** 山峰符号：受光面 + 背光面 + 脊线 */

@@ -7,6 +7,20 @@
 //   text    { title, body(G, ctx), portrait, source }
 //   options 见下：cost 返回 null 表示不可选，why 写不可选的原因（界面直接显示）
 //           apply(G, ctx) 立刻生效，可返回 delay: { turns, log, fx(G, ctx) }
+//
+// 历史锚点额外字段（docs/EVENTS.md §8）：
+//   slot       同一段史事的所有视角变体共用一个 slot，一局只出一条
+//   forFaction 只有这些势力看得到（该视角专属）｜ notFor 这些势力看不到（通用视角）
+
+/** 锚点里「与某势力永久交战」：目标若就是本势力，静默跳过 —— 视角写漏时不崩 */
+function eventWarOn(G, fid) {
+  if (!fid || fid === G.player.factionId) return false;
+  const pr = Diplo.pair(G, G.player.factionId, fid);
+  if (!pr) return false;
+  pr.status = Diplo.WAR; pr.rel = -80; pr.until = 0;
+  return true;
+}
+
 const EVENTS = {
 
   locust: {
@@ -517,6 +531,7 @@ const EVENTS = {
   anchor_baima: {
     id: 'anchor_baima', name: '白马之围', scope: 'world', weight: 1,
     once: true, anchor: [1, 3], scenario: 'guandu200',
+    slot: 'baima', notFor: ['caocao', 'yuanshao'],
     text: {
       title: '白马被围',
       body: () => '袁绍遣颜良围白马，东郡太守刘延告急。曹操欲救，荀攸言：声东击西。',
@@ -533,9 +548,81 @@ const EVENTS = {
         cost: () => ({}),
         apply: (G) => {
           G.player.merit += 25;
-          const pr = Diplo.pair(G, G.player.factionId, 'yuanshao');
-          pr.status = Diplo.WAR; pr.rel = -70; pr.until = 0;
+          eventWarOn(G, 'yuanshao');
           return { logs: ['你助曹操解白马之围，与袁绍结怨。'] };
+        },
+      },
+    ],
+  },
+
+  // 白马 · 曹操军视角：被围的是自家
+  anchor_baima_cz: {
+    id: 'anchor_baima_cz', name: '白马告急', scope: 'world', weight: 1,
+    once: true, anchor: [1, 3], scenario: 'guandu200',
+    slot: 'baima', forFaction: ['caocao'],
+    text: {
+      title: '白马告急',
+      body: () => '袁绍遣颜良围白马，东郡太守刘延告急。荀攸进言：今兵少不敌，可分兵声东击西，解围而斩其将。',
+      portrait: 'duel', source: '白马告急',
+    },
+    options: [
+      {
+        key: 'rescue', label: '亲率轻骑救白马', costText: '粮 −400 · 战功 +25',
+        cost: () => ({ food: 400 }), why: '存粮不足 400',
+        apply: (G) => {
+          eventWarOn(G, 'yuanshao');
+          for (const c of State.factionCities(G, 'yuanshao')) c.morale = U.clamp((c.morale || 55) - 10, 0, 100);
+          G.player.merit += 25;
+          return { logs: ['你亲率轻骑解白马之围，颜良授首。'] };
+        },
+      },
+      {
+        key: 'feint', label: '声东击西，虚张延津', costText: '战功 +10 · 袁军士气 −15',
+        fallback: true, cost: () => ({}),
+        apply: (G) => {
+          eventWarOn(G, 'yuanshao');
+          for (const c of State.factionCities(G, 'yuanshao')) c.morale = U.clamp((c.morale || 55) - 15, 0, 100);
+          G.player.merit += 10;
+          return { logs: ['你虚张延津之势，袁军分兵，白马之围自解。'] };
+        },
+      },
+    ],
+  },
+
+  // 白马 · 袁绍军视角：围城的是自家
+  anchor_baima_ys: {
+    id: 'anchor_baima_ys', name: '白马之围', scope: 'world', weight: 1,
+    once: true, anchor: [1, 3], scenario: 'guandu200',
+    slot: 'baima', forFaction: ['yuanshao'],
+    text: {
+      title: '白马之围',
+      body: () => '你遣颜良围白马，欲取东郡。沮授言：颜良性狭，虽骁勇，不可独任。军前催战书一日三至。',
+      portrait: 'duel', source: '白马军报',
+    },
+    options: [
+      {
+        key: 'press', label: '催颜良急攻', costText: '战功 +20 · 与曹操永久交战',
+        cost: () => ({}),
+        apply: (G) => {
+          eventWarOn(G, 'caocao');
+          G.player.merit += 20;
+          return { logs: ['你催颜良急攻白马，曹军东郡告急。'] };
+        },
+      },
+      {
+        key: 'reinforce', label: '增兵缓图', costText: '钱 −400 · 全军士气 +6',
+        cost: () => ({ gold: 400 }), why: '府库不足 400',
+        apply: (G) => {
+          for (const c of State.factionCities(G, G.player.factionId)) c.morale = U.clamp((c.morale || 55) + 6, 0, 100);
+          return { logs: ['你增兵白马，缓图东郡，军中称稳。'] };
+        },
+      },
+      {
+        key: 'withdraw', label: '收兵还河北', costText: '士气 −5',
+        fallback: true, cost: () => ({}),
+        apply: (G) => {
+          for (const c of State.factionCities(G, G.player.factionId)) c.morale = U.clamp((c.morale || 55) - 5, 0, 100);
+          return { logs: ['你收兵还河北，白马之围自解，军中颇有怨言。'] };
         },
       },
     ],
@@ -544,6 +631,7 @@ const EVENTS = {
   anchor_wuchao: {
     id: 'anchor_wuchao', name: '乌巢夜火', scope: 'world', weight: 1,
     once: true, anchor: [16, 30], scenario: 'guandu200',
+    slot: 'wuchao', notFor: ['caocao', 'yuanshao'],
     text: {
       title: '乌巢夜火',
       body: () => '许攸来奔，告袁军粮在乌巢。曹操亲率五千骑，夜行冒袁军旗号。',
@@ -579,10 +667,98 @@ const EVENTS = {
     ],
   },
 
+  // 乌巢 · 曹操军视角：夜袭的是自家
+  anchor_wuchao_cz: {
+    id: 'anchor_wuchao_cz', name: '乌巢夜火', scope: 'world', weight: 1,
+    once: true, anchor: [16, 30], scenario: 'guandu200',
+    slot: 'wuchao', forFaction: ['caocao'],
+    text: {
+      title: '乌巢夜火',
+      body: () => '许攸来奔，告袁军粮尽屯乌巢，守将淳于琼嗜酒不设备。众请遣将，你却想起当年在袁营的旧事。',
+      portrait: 'nightraid', source: '许攸夜奔',
+    },
+    options: [
+      {
+        key: 'go', label: '亲率五千骑夜行', costText: '粮 −500 · 战功 +40',
+        cost: () => ({ food: 500 }), why: '存粮不足 500',
+        apply: (G) => {
+          eventWarOn(G, 'yuanshao');
+          for (const c of State.factionCities(G, 'yuanshao')) {
+            c.morale = U.clamp((c.morale || 55) - 20, 0, 100);
+            c.food = Math.max(0, c.food - 300);
+          }
+          G.player.merit += 40;
+          return { logs: ['你亲率五千骑冒袁军旗号夜行，乌巢火起，袁军粮尽。'] };
+        },
+      },
+      {
+        key: 'send', label: '遣将往袭', costText: '战功 +20 · 袁军士气 −12',
+        fallback: true, cost: () => ({}),
+        apply: (G) => {
+          eventWarOn(G, 'yuanshao');
+          for (const c of State.factionCities(G, 'yuanshao')) c.morale = U.clamp((c.morale || 55) - 12, 0, 100);
+          G.player.merit += 20;
+          return { logs: ['你遣将袭乌巢，火起粮焚，袁军大乱。'] };
+        },
+      },
+      {
+        key: 'suspect', label: '疑许攸诈降，按兵不动', costText: '名望 +3 · 坐失战机',
+        cost: () => ({}),
+        apply: (G) => {
+          G.player.reputation += 3;
+          return { logs: ['你疑许攸诈降，按兵不动，乌巢之粮得全。'] };
+        },
+      },
+    ],
+  },
+
+  // 乌巢 · 袁绍军视角：被烧的是自家
+  anchor_wuchao_ys: {
+    id: 'anchor_wuchao_ys', name: '乌巢有警', scope: 'world', weight: 1,
+    once: true, anchor: [16, 30], scenario: 'guandu200',
+    slot: 'wuchao', forFaction: ['yuanshao'],
+    text: {
+      title: '乌巢有警',
+      body: () => '许攸叛投曹操，尽泄我军虚实。乌巢粮屯守将淳于琼嗜酒。帐下请增守，你却更疑许攸所言。',
+      portrait: 'nightraid', source: '乌巢军报',
+    },
+    options: [
+      {
+        key: 'guard', label: '增兵守乌巢', costText: '钱 −600 · 粮 −800 · 战功 +15',
+        cost: () => ({ gold: 600, food: 800 }), why: '府库或存粮不足',
+        apply: (G) => {
+          for (const c of State.factionCities(G, G.player.factionId)) c.morale = U.clamp((c.morale || 55) + 8, 0, 100);
+          G.player.merit += 15;
+          return { logs: ['你增兵乌巢设伏，曹军夜袭扑空，粮屯无恙。'] };
+        },
+      },
+      {
+        key: 'replace', label: '易淳于琼而严军法', costText: '钱 −300 · 全军士气 +5',
+        cost: () => ({ gold: 300 }), why: '府库不足 300',
+        apply: (G) => {
+          for (const c of State.factionCities(G, G.player.factionId)) c.morale = U.clamp((c.morale || 55) + 5, 0, 100);
+          return { logs: ['你易乌巢守将，严申军法，粮屯稍安。'] };
+        },
+      },
+      {
+        key: 'ignore', label: '不以为意', costText: '全军士气 −15 · 粮 −200',
+        fallback: true, cost: () => ({}),
+        apply: (G) => {
+          for (const c of State.factionCities(G, G.player.factionId)) {
+            c.morale = U.clamp((c.morale || 55) - 15, 0, 100);
+            c.food = Math.max(0, c.food - 200);
+          }
+          return { logs: ['你不以为意，乌巢火起，河北军粮尽。'] };
+        },
+      },
+    ],
+  },
+
   // ───────── 历史锚点（B4）：到窗口必触发，忽略权重 ─────────
   anchor_huimeng: {
     id: 'anchor_huimeng', name: '关东会盟', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [1, 2],
+    slot: 'huimeng', notFor: ['dongzhuo'],
     text: {
       title: '关东会盟',
       body: () => '袁绍为盟主，关东诸侯会于酸枣，共讨董卓。檄文至，问你一句：行止如何？',
@@ -594,8 +770,7 @@ const EVENTS = {
         cost: () => ({}),
         apply: (G) => {
           G.player.merit += 30;
-          const pr = Diplo.pair(G, G.player.factionId, 'dongzhuo');
-          pr.status = Diplo.WAR; pr.rel = -80; pr.until = 0;
+          eventWarOn(G, 'dongzhuo');
           return { logs: ['你响应会盟，与董卓势不两立。'] };
         },
       },
@@ -621,9 +796,51 @@ const EVENTS = {
     ],
   },
 
+  // 会盟 · 董卓军视角：被讨伐的是自家
+  anchor_huimeng_dz: {
+    id: 'anchor_huimeng_dz', name: '关东兵起', scope: 'world', weight: 1, scenario: 'taodong190',
+    once: true, anchor: [1, 2],
+    slot: 'huimeng', forFaction: ['dongzhuo'],
+    text: {
+      title: '关东兵起',
+      body: () => '袁绍于酸枣会关东诸侯，推为盟主，槛文传至洛阳，斥丞相之罪。军府传令下来：各部点兵，听候调遣。',
+      portrait: 'edict', source: '军府急令',
+    },
+    options: [
+      {
+        key: 'march', label: '奉令东出虎牢', costText: '粮 −600 · 战功 +30 · 与袁绍永久交战',
+        cost: () => ({ food: 600 }), why: '存粮不足 600',
+        apply: (G) => {
+          eventWarOn(G, 'yuanshao');
+          G.player.merit += 30;
+          return { logs: ['你奉令东出虎牢，与关东兵接战。'] };
+        },
+      },
+      {
+        key: 'bribe', label: '遣使离间韩馥孔佃', costText: '钱 −600 · 二家关系 −25',
+        cost: () => ({ gold: 600 }), why: '府库不足 600',
+        apply: (G) => {
+          const pr = Diplo.pair(G, 'hanfu', 'kongzhou');
+          if (pr) pr.rel -= 25;
+          return { logs: ['你重金买通二袁帐下，韩馥孔佃互相疑猜。'] };
+        },
+      },
+      {
+        key: 'hold', label: '勒兵守关', costText: '本势力全城治安 +8 · 名望 −5',
+        fallback: true, cost: () => ({}),
+        apply: (G) => {
+          for (const c of State.factionCities(G, G.player.factionId)) c.order = U.clamp((c.order || 50) + 8, 0, 100);
+          G.player.reputation = Math.max(0, G.player.reputation - 5);
+          return { logs: ['你勒兵守关，关东兵不得西进，然坐失战机。'] };
+        },
+      },
+    ],
+  },
+
   anchor_relocate: {
     id: 'anchor_relocate', name: '迁都长安', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [4, 6],
+    slot: 'relocate', notFor: ['dongzhuo'],
     text: {
       title: '董卓迁都',
       body: () => '董卓焚洛阳宫室，挟天子西迁长安。百官流离，中原无主。',
@@ -652,9 +869,46 @@ const EVENTS = {
     ],
   },
 
+  // 迁都 · 董卓军视角：焚城西迁是上命
+  anchor_relocate_dz: {
+    id: 'anchor_relocate_dz', name: '车驾西迁', scope: 'world', weight: 1, scenario: 'taodong190',
+    once: true, anchor: [4, 6],
+    slot: 'relocate', forFaction: ['dongzhuo'],
+    text: {
+      title: '车驾西迁',
+      body: () => '丞相决意焚洛阳宫室，挟天子西迁长安。军府点你部护送车驾，或留守焚城、收其府库。',
+      portrait: 'capital', source: '军府钧旨',
+    },
+    options: [
+      {
+        key: 'escort', label: '护送车驾西行', costText: '好感 +12',
+        fallback: true, cost: () => ({}),
+        apply: (G) => {
+          G.player.favor = U.clamp((G.player.favor || 60) + 12, 0, 100);
+          if (G.court) G.court.emperorCityId = 'changan';
+          return { logs: ['你护送车驾至长安，军府以为能。'] };
+        },
+      },
+      {
+        key: 'loot', label: '留镇洛阳，收其府库', costText: '钱 +1200 · 名望 −15',
+        cost: () => ({}),
+        apply: (G) => {
+          const home = G.cities[G.player.homeCityId];
+          if (home) home.gold += 1200;
+          const ly = G.cities.luoyang;
+          if (ly && ly.owner === G.player.factionId) ly.order = U.clamp((ly.order || 50) - 15, 0, 100);
+          G.player.reputation = Math.max(0, G.player.reputation - 15);
+          if (G.court) G.court.emperorCityId = 'changan';
+          return { logs: ['洛阳宫室火起，你收其府库珍宝，得钱 1200。'] };
+        },
+      },
+    ],
+  },
+
   anchor_sunjian: {
     id: 'anchor_sunjian', name: '孙坚殒于岘山', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [13, 20],
+    slot: 'sunjian', notFor: ['sunjian'],
     text: {
       title: '孙坚殒于岘山',
       body: () => '孙坚跨江击刘表，中伏殒于岘山。江东震动，其子孙策收余众。',
@@ -690,9 +944,58 @@ const EVENTS = {
     ],
   },
 
+  // 隘山 · 孙坚军视角：死的是自家主公
+  anchor_sunjian_self: {
+    id: 'anchor_sunjian_self', name: '主公殒于隘山', scope: 'world', weight: 1, scenario: 'taodong190',
+    once: true, anchor: [13, 20],
+    slot: 'sunjian', forFaction: ['sunjian'],
+    text: {
+      title: '主公殒于隘山',
+      body: () => '主公孙坚跨江击刘表，中伏殒于隘山。军中无主，孙策年少，诸将观望，问你一句。',
+      portrait: 'nightraid', source: '江东急报',
+    },
+    options: [
+      {
+        key: 'support', label: '率先奉孙策为主', costText: '好感 +15 · 全军士气 +5',
+        cost: () => ({}),
+        apply: (G) => {
+          G.player.favor = U.clamp((G.player.favor || 60) + 15, 0, 100);
+          for (const c of State.factionCities(G, G.player.factionId)) c.morale = U.clamp((c.morale || 55) + 5, 0, 100);
+          for (const h of Object.values(G.heroes)) {
+            if (h.factionId === G.player.factionId) h.loyalty = U.clamp((h.loyalty || 60) + 8, 0, 100);
+          }
+          return { logs: ['你率先拜孙策为主，江东军中乃定。'] };
+        },
+      },
+      {
+        key: 'self', label: '收兵自立（本局直辖上限 +1）', costText: '名望 −15 · 天下关系 −15',
+        cost: () => ({}),
+        apply: (G) => {
+          G.player.capBonus = (G.player.capBonus || 0) + 1;
+          G.player.reputation = Math.max(0, G.player.reputation - 15);
+          for (const other of Object.keys(G.factions)) {
+            if (other === 'free' || other === G.player.factionId) continue;
+            const pr = Diplo.pair(G, G.player.factionId, other);
+            if (pr) pr.rel -= 15;
+          }
+          return { logs: ['你收兵自立，天下侧目。'] };
+        },
+      },
+      {
+        key: 'hold', label: '按兵观望', costText: '全军士气 −10',
+        fallback: true, cost: () => ({}),
+        apply: (G) => {
+          for (const c of State.factionCities(G, G.player.factionId)) c.morale = U.clamp((c.morale || 55) - 10, 0, 100);
+          return { logs: ['军中无主，诸将观望，士气低落。'] };
+        },
+      },
+    ],
+  },
+
   anchor_wangyun: {
     id: 'anchor_wangyun', name: '王允诛董', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [25, 34],
+    slot: 'wangyun', notFor: ['dongzhuo'],
     text: {
       title: '王允诛董',
       body: () => '司徒王允与吕布合谋，诛董卓于北掖门。关中诸将各拥兵自守，人心汹汹。',
@@ -715,9 +1018,47 @@ const EVENTS = {
     ],
   },
 
+  // 北掖门 · 董卓军视角：这一刀是冲自家主公来的
+  anchor_wangyun_dz: {
+    id: 'anchor_wangyun_dz', name: '北掖门之变', scope: 'world', weight: 1, scenario: 'taodong190',
+    once: true, anchor: [25, 34],
+    slot: 'wangyun', forFaction: ['dongzhuo'],
+    text: {
+      title: '北掖门之变',
+      body: () => '司徒王允与中郎将吕布密谋，欲于北掖门图丞相。宫中有人密告，军府问你如何处之。',
+      portrait: 'edict', source: '宫中密报',
+    },
+    options: [
+      {
+        key: 'purge', label: '先发诛王允', costText: '钱 −500 · 名望 −10',
+        cost: () => ({ gold: 500 }), why: '府库不足 500',
+        apply: (G) => {
+          for (const c of State.factionCities(G, G.player.factionId)) c.order = U.clamp((c.order || 50) + 5, 0, 100);
+          for (const h of Object.values(G.heroes)) {
+            if (h.factionId === G.player.factionId) h.loyalty = U.clamp((h.loyalty || 60) + 5, 0, 100);
+          }
+          G.player.reputation = Math.max(0, G.player.reputation - 10);
+          return { logs: ['你先发制人，王允伏诛，吕布出走，关中得安。'] };
+        },
+      },
+      {
+        key: 'ignore', label: '置之不理', costText: '全势力治安 −10 · 忠诚 −15',
+        fallback: true, cost: () => ({}),
+        apply: (G) => {
+          for (const c of State.factionCities(G, G.player.factionId)) c.order = U.clamp((c.order || 50) - 10, 0, 100);
+          for (const h of Object.values(G.heroes)) {
+            if (h.factionId === G.player.factionId) h.loyalty = U.clamp((h.loyalty || 60) - 15, 0, 100);
+          }
+          return { logs: ['北掖门变起，丞相遇害，关中诸将离心。'] };
+        },
+      },
+    ],
+  },
+
   anchor_emperor_east: {
     id: 'anchor_emperor_east', name: '献帝东归', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [60, 74],
+    slot: 'emperor_east',
     text: {
       title: '车驾东归',
       body: () => '李傕郭汜相攻，天子乘间东归，车驾至安邑，百官采稆而食。',
@@ -753,6 +1094,7 @@ const EVENTS = {
   anchor_caocao: {
     id: 'anchor_caocao', name: '曹操迎驾', scope: 'world', weight: 1, scenario: 'taodong190',
     once: true, anchor: [75, 90],
+    slot: 'caocao', notFor: ['caocao'],
     text: {
       title: '曹操迎驾',
       body: () => '曹操自兖州西进，迎天子于洛阳，迁都许县。自此诏令皆出其手。',
@@ -769,6 +1111,45 @@ const EVENTS = {
             G.court.emperorCityId = 'luoyang';
           }
           return { logs: ['曹操迎驾，诏令自此出其手。'] };
+        },
+      },
+    ],
+  },
+
+  // 迎驾 · 曹操军视角：西进的是自家
+  anchor_caocao_self: {
+    id: 'anchor_caocao_self', name: '迎天子于洛阳', scope: 'world', weight: 1, scenario: 'taodong190',
+    once: true, anchor: [75, 90],
+    slot: 'caocao', forFaction: ['caocao'],
+    text: {
+      title: '迎天子于洛阳',
+      body: () => '天子东归洛阳，宫室残破，百官采耟而食。你引兵西行，帝在残垣之间。左右或言：奉天子以令不臣。',
+      portrait: 'edict', source: '洛阳残宫',
+    },
+    options: [
+      {
+        key: 'move', label: '奉驾而西，诏令自出', costText: '钱 −800 · 名望 +20 · 直辖上限 +1',
+        cost: () => ({ gold: 800 }), why: '府库不足 800',
+        apply: (G) => {
+          if (G.court && !G.court.controller) {
+            G.court.controller = G.player.factionId;
+            G.court.emperorCityId = 'luoyang';
+          }
+          G.player.reputation += 20;
+          G.player.capBonus = (G.player.capBonus || 0) + 1;
+          return { logs: ['你奉天子于洛阳，诏令自此出你之手。'] };
+        },
+      },
+      {
+        key: 'feed', label: '供其衣食而不奉', costText: '名望 +8',
+        fallback: true, cost: () => ({}),
+        apply: (G) => {
+          if (G.court && !G.court.controller) {
+            G.court.controller = G.player.factionId;
+            G.court.emperorCityId = 'luoyang';
+          }
+          G.player.reputation += 8;
+          return { logs: ['你供天子衣食而不奉迎，天下称厚。'] };
         },
       },
     ],

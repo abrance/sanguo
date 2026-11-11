@@ -367,7 +367,7 @@ const COMMANDS = {
       r.grantedTo = null;
       r.policy = null;          // 非直辖城不再由太守自动理政
       r.rallyTo = null;
-      State.dropLegionCity(G, releaseId);
+      // 军区辖城不摘：交给属下治理后仍由都督代管（不摘就不归 AI 编排）
       p.demesne = p.demesne.filter(id => id !== releaseId);
       State.log(G, 'note', `${r.name}改由属下治理，${c.name}收归直辖。`);
     } else {
@@ -392,9 +392,10 @@ const COMMANDS = {
     if (legions.length >= 4) throw new Error('军区过多（上限 4），先撤一处');
 
     const seat = h.cityId && G.cities[h.cityId];
-    const cityIds = seat && State.isPlayerCity(G, seat) && !State.legionOf(G, seat.id) ? [seat.id] : [];
+    const cityIds = seat && State.isOwnCity(G, seat) && !State.legionOf(G, seat.id) ? [seat.id] : [];
     const lg = {
-      id: 'lg_' + (G.meta.turn) + '_' + (legions.length + 1),
+      // 曾用 `lg_<回合>_<序号>`：裁撤一处再委任就会撞号，切城时会算到别的都督头上
+      id: U.uid('lg'),
       heroId, cityIds,
       policy: 'balanced', stance: 'defend', targetFid: null,
       stats: { attacks: 0, taken: 0 },
@@ -411,7 +412,9 @@ const COMMANDS = {
 
     const ids = [];
     for (const cid of cityIds) {
-      const c = mustOwnCity(G, cid, '入军区');
+      const c = G.cities[cid];
+      if (!c) throw new Error('城池不存在');
+      if (!State.isOwnCity(G, c)) throw new Error(`${c.name}非本方城池，无从入军区`);
       const other = State.legionOf(G, cid);
       if (other && other.id !== id) throw new Error(`${c.name}已在${G.heroes[other.heroId].name}军区`);
       if (ids.indexOf(cid) < 0) ids.push(cid);
@@ -439,14 +442,19 @@ const COMMANDS = {
       const st = Legion.STANCES[stance];
       if (!st) throw new Error('无此号令');
       if (stance === 'strike') {
-        const target = Diplo.target(G, targetFid);
-        lg.targetFid = target.id;
-        // 玩家下令征讨 = 授权开战
-        if (Diplo.statusOf(G, G.player.factionId, target.id) !== Diplo.WAR) {
-          Diplo.declareWar(G, G.player.factionId, target.id);
-          State.log(G, 'bad', `【号令】${h.name}受命征讨${target.name}，即日兴兵。`);
-        }
+        // 未指定目标 = 只立号令、不开战线。点「征讨」就默认挑排序第一的势力宣战是错的
         lg.stance = 'strike';
+        if (targetFid == null) {
+          lg.targetFid = null;
+        } else {
+          const target = Diplo.target(G, targetFid);
+          lg.targetFid = target.id;
+          // 玩家点名征讨 = 授权开战
+          if (Diplo.statusOf(G, G.player.factionId, target.id) !== Diplo.WAR) {
+            Diplo.declareWar(G, G.player.factionId, target.id);
+            State.log(G, 'bad', `【号令】${h.name}受命征讨${target.name}，即日兴兵。`);
+          }
+        }
       } else {
         lg.stance = stance;
         lg.targetFid = null;
@@ -454,7 +462,7 @@ const COMMANDS = {
     }
     State.log(G, 'note',
       `【号令】${h.name}军区：${Legion.STANCES[lg.stance].name}`
-      + `${lg.stance === 'strike' ? `（${G.factions[lg.targetFid].name}）` : ''}`
+      + `${lg.stance === 'strike' ? (lg.targetFid ? `（${G.factions[lg.targetFid].name}）` : '（未定目标）') : ''}`
       + ` · ${POLICIES[lg.policy].name}`);
     return { stance: lg.stance, policy: lg.policy, targetFid: lg.targetFid };
   },
@@ -594,6 +602,59 @@ const COMMANDS = {
     delete a.battle;
     Army._afterBattle(G, a, city, rep, '');
     return { done: true, captured: rep.captured, round: b.round };
+  },
+
+  // ─────── 校场训练（DESIGN §11.5 武将闲置） ───────
+
+  /** 花 钱 把本城一名武将的一项五维 +1（上限、训练位、价格都在 Drill 里算） */
+  DRILL_HERO(G, { cityId, heroId, dir }) {
+    const c = mustOwnCity(G, cityId, '训练');
+    const h = G.heroes[heroId];
+    const r = Drill.apply(G, c, h, dir);
+    State.log(G, 'good',
+      `${c.name}校场：${h.name} 练${Drill.DIR_NAME[dir]} +1（现 ${r.value}，${r.cost}钱）`);
+    return r;
+  },
+
+  // ─────── 市肆：钱的出口（DESIGN §11.3） ───────
+
+  /**
+   * 买一件货。所有判定走 Mart.slotOf → 面板看到的价格就是扣掉的价格。
+   * 佣兵只吃钱、不吃丁口；良匠把本城最长的那项工程赶掉 1 个月。
+   */
+  MART_BUY(G, { cityId, slotId }) {
+    const c = mustOwnCity(G, cityId, '购货');
+    if (G.over) throw new Error('战局已终');
+    const slot = Mart.find(G, c, slotId);
+    if (slot.reason) throw new Error(slot.reason);
+
+    const d = MART_GOODS[slotId];
+    // 先落「本月买过」再结算：任何一件货都不许一个月买两次
+    const st = Mart._state(G, c);
+    c.mart = { turn: G.meta.turn, bought: st.bought.concat([slotId]) };
+    c.gold -= slot.price;
+
+    if (d.kind === 'res') {
+      c[d.key] += slot.amt;
+      State.log(G, 'good', `${c.name}市肆购${d.name} ${U.num(slot.amt)}${d.unitName}（${slot.price}钱）`);
+    } else if (d.kind === 'troop') {
+      const add = Math.round(slot.amt);
+      c.garrison.inf = (c.garrison.inf || 0) + add;
+      State.log(G, 'good', `${c.name}市肆募${d.name} ${U.num(add)}步卒（${slot.price}钱，不耗丁口）`);
+    } else if (d.kind === 'craft') {
+      const job = c.buildQueue.slice().sort((a, b) => b.left - a.left)[0];
+      const before = job.left;
+      job.left = Math.max(0, job.left - 1);
+      State.log(G, 'good',
+        `${c.name}市肆雇${d.name}：${BUILDINGS[job.key].name}→${job.to} 工期 ${before} → ${job.left} 月（${slot.price}钱）`);
+    } else if (d.kind === 'treasure') {
+      G.treasures[slot.relicId] = { holder: null, cityId: c.id };
+      const def = TREASURES[slot.relicId];
+      State.log(G, 'good',
+        `${c.name}市肆得${def.name}（${TREASURE_CAT_NAME[def.cat]}），送入府库（${slot.price}钱）`);
+    }
+
+    return slot;
   },
 
   // ─────── 宝物（docs/HERO.md §4） ───────

@@ -98,6 +98,10 @@ const AIWar = {
     let budget = force ? Infinity : Math.max(0, plan.budget);
     let routed = 0;
     const maxRoutes = force ? Math.max(2, plan.cities.length) : plan.maxRoutes;
+    // 征讨号令（force）只是「不按预算与路数省着用」，胜算仍要算：
+    // 旧版连 pred 一起跳过，于是「下令征讨」= 把兵送进坚城
+    // （军区场景跑 24 月：拔城/出兵比 29% → 71%）
+    const margin = force ? T.attackMarginFast : T.attackMargin;
     const hit = new Set();    // 同一目标本月只派一路：两路同攻一座城是在浪费兵
     const used = new Set();   // 同一座城本月只出一路：第二路的胜算按剩余兵力算就不准了
 
@@ -124,16 +128,14 @@ const AIWar = {
       const size = troopTotal(troops);
       if (size < T.minArmy) continue;
 
-      if (!force) {
-        if (budget < T.minArmy) break;
-        const eta = Army.estimateEta(from, dst, troops, Army.speedMul(G, f.id));
-        const grow = 1 + Math.min(0.30, 0.10 * eta);
-        const pred = Combat.predict(G, troops, from.governor,
-          { ...dst, garrison: State.scaleTroops(dst.garrison, grow) }, f.id, State.bld(from, 'drill'));
-        if (!pred.win) continue;
-        // 攻军至少走一个月，守军这期间会补兵/增援：险胜等于送，留足余量
-        if (pred.remain < size * T.attackMargin) continue;
-      }
+      if (!force && budget < T.minArmy) break;
+      const eta = Army.estimateEta(from, dst, troops, Army.speedMul(G, f.id));
+      const grow = 1 + Math.min(0.30, 0.10 * eta);
+      const pred = Combat.predict(G, troops, from.governor,
+        { ...dst, garrison: State.scaleTroops(dst.garrison, grow) }, f.id, State.bld(from, 'drill'));
+      if (!pred.win) continue;
+      // 攻军至少走一个月，守军这期间会补兵/增援：险胜等于送，留足余量
+      if (pred.remain < size * margin) continue;
 
       const actual = Army.takeFromGarrison(from.garrison, ratio);
       const sentSize = troopTotal(actual);
@@ -156,10 +158,12 @@ const AIWar = {
     }
 
     // 会攻：一路打不下来，就凑两三路约定同月抵达（Army.advance 会把它们合成一战）
-    if (!force && routed === 0 && budget >= T.minArmy * 2) {
+    // 征讨号令下同样允许合攻（缺的就是这条：以前征讨只会单路硬撞坚城）
+    const convBudget = force ? plan.budget : budget;
+    if (routed === 0 && convBudget >= T.minArmy * 2) {
       const cd = f._convergeTurn || 0;
       if (G.meta.turn - cd >= T.convergeCooldown) {
-        const spent2 = AIWar._converge(G, f, plan, budget);
+        const spent2 = AIWar._converge(G, f, plan, convBudget);
         if (spent2 > 0) { f._convergeTurn = G.meta.turn; return true; }
       }
     }
