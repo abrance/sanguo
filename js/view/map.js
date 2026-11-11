@@ -210,13 +210,9 @@ const GameMap = {
 
     const data = img.data;
     const rows = grid.length, cols = grid[0].length;
-    const acc = [0, 0, 0];
     for (let y = 0; y < LH; y++) {
-      // 以格心为锚点双线性取格：四邻按权重混色，地形交界不再是 40px 方块台阶
-      const fy = y / S / CELL - 0.5;
-      const j0 = Math.floor(fy), ty = fy - j0;
-      const grid0 = grid[U.clamp(j0, 0, rows - 1)];
-      const grid1 = grid[U.clamp(j0 + 1, 0, rows - 1)];
+      const wy = y / S;
+      const gy = Math.min(rows - 1, Math.floor(wy / CELL));
       const rowBase = y * LW;
       // 按格心位置取 4 邻（一像素也不会走出数组）
       const cyF = wy / CELL - 0.5;
