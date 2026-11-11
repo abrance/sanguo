@@ -192,6 +192,7 @@ const UI_CITY = {
     const pane = UI.$('cityPane');
     const scroll = pane.scrollTop;
     if (UI.cityTab === 'build') UI.paneBuild(G, c);
+    else if (UI.cityTab === 'mart') UI.paneMart(G, c);
     else if (UI.cityTab === 'clans') UI.paneClans(G, c);
     else if (UI.cityTab === 'heroes') UI.paneHeroes(G, c);
     else if (UI.cityTab === 'policy') UI.panePolicy(G, c);
@@ -289,19 +290,22 @@ const UI_CITY = {
       ['月入铁料', U.signed(P.ironOut)],
     ];
 
-    let html = `<div class="statgrid">${UI._statGrid(rows)}</div>`;
+    let html = `<div class="cityscene-wrap"><canvas id="cityScene" class="cityscene"></canvas></div>`;
+    html += `<div class="statgrid">${UI._statGrid(rows)}</div>`;
 
     // 月产明细：每一项乘数都摊开，天赋 / 科技 / 士族 / 守将 / 军区的效果一望即知
     const f2 = v => v.toFixed(2);
     const talSuffix = id => (pt.talent.id ? `天赋${f2(pt.talent[id] || 1)}` : '天赋—');
+    // 一统一州只在真吃加成时才写出来，免得每座城都挂一个 ×1.00
+    const provSuffix = pt.provEco > 1 ? ` × 州${f2(pt.provEco)}` : '';
     html += `<div class="seclabel">月产从哪来</div>`;
     html += `<div class="capformula">`
       + `粮 ${U.num(P.foodOut)} = 农田(${pt.farm})×78 × 季${f2(pt.season.food)} × 丁${f2(pt.popFactor)} × 治${f2(pt.orderFactor)}`
       + ` × 族${f2(pt.clanMul)} × 将${f2(pt.skillMul)} × 区${f2(pt.legionEco)} × 交${f2(pt.bondMul)}`
-      + ` × 科${f2(pt.tech.food)} × ${talSuffix('food')}<br>`
+      + ` × 科${f2(pt.tech.food)}${provSuffix} × ${talSuffix('food')}<br>`
       + `钱 ${U.num(P.goldOut)} = 市集(${pt.market})×30 × 季${f2(pt.season.tax)} × 丁 × 治`
       + ` × 族${f2(pt.clanMul)} × 将${f2(pt.skillMul)} × 区${f2(pt.legionEco)} × 交${f2(pt.bondMul)}`
-      + ` × 科${f2(pt.tech.gold)} × 关市${f2(pt.customs)} × ${talSuffix('gold')}<br>`
+      + ` × 科${f2(pt.tech.gold)} × 关市${f2(pt.customs)}${provSuffix} × ${talSuffix('gold')}<br>`
       + `建材 ${U.num(P.matOut)} = (28 + 伐木(${pt.lumber})×13 + 采石(${pt.quarry})×21) × 季${f2(pt.season.mat)}`
       + ` × 科${f2(pt.tech.mat)} × 族${f2(pt.clanMul)} × ${talSuffix('mat')}<br>`
       + `铁料 ${U.num(P.ironOut)} = (4 + 冶铁(${pt.ironworks})×7) × 科${f2(pt.tech.iron)}`
@@ -310,7 +314,7 @@ const UI_CITY = {
       + `</div>`;
     html += `<div class="capnote">`
       + `丁 = 丁口系数　治 = 治安　族 = 士族均心　将 = 守将政治　区 = 军区都督政略　交 = 守将私交`
-      + `　科 = 势力科技　天赋 = 开局天赋（<b>只作用于你的直辖城</b>）。<br>`
+      + `　科 = 势力科技　州 = 一统一州（直辖城 + 军区域专享）　天赋 = 开局天赋（<b>只作用于你的直辖城</b>）。<br>`
       + `上限：粮 ${U.num(P.foodCap)} · 建材 ${U.num(P.matCap)} · 铁料 ${U.num(P.ironCap)}。`
       + `</div>`;
 
@@ -326,6 +330,7 @@ const UI_CITY = {
       + `户籍 ${U.num(bd.hukou)} × (1.9 + 农田 ${bd.farm} × 0.9) = <b>${U.num(Math.round(bd.popBase))}</b><br>`
       + `× 治安 ${bd.orderMul.toFixed(2)}　× 兵营(${bd.barracks}) ${bd.barracksMul.toFixed(2)}<br>`
       + `× 校场(${bd.drill}) ${bd.drillMul.toFixed(2)}　× 士族(心${Math.round(bd.clanSat)}) ${bd.clanMul.toFixed(2)}<br>`
+      + (bd.provinceMul > 1 ? `× 一统${bd.province} ${bd.provinceMul.toFixed(2)}　` : '')
       + `× 科技 ${bd.techMul.toFixed(2)}　= <b class="gold-bright-ink">${U.num(bd.total)}</b>`
       + `</div>`;
     html += `<div class="capnote">兵额 = <b>户籍 × 农田</b> 打底，再乘治安、兵营、校场、士族满意度、军制科技。`
@@ -344,6 +349,8 @@ const UI_CITY = {
     }
 
     pane.innerHTML = html;
+    // 内景：城长什么样。点建筑 → 跳「营造」页并高亮那一行
+    CityView.mount(UI.$('cityScene'), G, c);
 
     const box = document.createElement('div');
     box.className = 'actions';
@@ -408,6 +415,76 @@ const UI_CITY = {
     }
 
     pane.appendChild(box);
+  },
+
+  /** 市肆：每月换一次货，用钱换钱买不到的东西（DESIGN §11.3 钱的出口） */
+  paneMart(G, c) {
+    const pane = UI.$('cityPane');
+    const isDemesne = c.grantedTo === PLAYER_HERO_ID;
+    const market = State.bld(c, 'market');
+
+    if (market < 1) {
+      pane.innerHTML = `<div class="capnote">此城尚未建<b>市集</b> —— 没有市集就没有市肆。<br>`
+        + `去「营造」页先开一处市集，商人才会来。</div>`;
+      return;
+    }
+
+    const mul = Mart.multipliers(G, c);
+    const shelf = Mart.shelf(G, c);
+    const income = Math.round(Economy.project(G, c).goldOut);
+
+    let html = `<div class="dim fs-label mb-4">市集 ${market} 级 · 本月 ${shelf.length} 个货位`
+      + ` · 月入钱 ${U.num(income)} · 下月换货</div>`;
+
+    if (!shelf.length) {
+      html += `<div class="capnote">本月无货可上。</div>`;
+    }
+
+    for (const s of shelf) {
+      const amtTxt = s.kind === 'res' || s.kind === 'troop'
+        ? `+${U.num(s.amt)}${s.unitName}`
+        : s.kind === 'craft' ? '赶工 1 月'
+          : `1 件${s.relicId ? ' · ' + TREASURES[s.relicId].name : ''}`;
+      const note = s.reason ? U.esc(s.reason) : `${s.price}钱`;
+      html += `<div class="brow ${s.sold ? 'maxed' : (s.reason ? 'locked' : '')}"
+        title="${U.esc(s.about)}">
+        <span class="bname">${s.name}${s.reason ? '' : '<span class="bdg">可购</span>'}</span>
+        <span class="blv">${amtTxt}</span>
+        <span class="bcost">${note}</span>
+        <button data-mart="${s.id}" ${s.reason || !isDemesne ? 'disabled' : ''}
+          title="${U.esc(s.reason || `${s.price}钱`)}">${s.sold ? '售罄' : '购'}</button>
+      </div>`;
+    }
+
+    if (!isDemesne) {
+      html += `<div class="capnote">非你直辖之城，只能看，不能买。</div>`;
+    }
+
+    // 价格从哪来：每一项乘数都摊开（STYLE 与 DESIGN 都要求加成看得见）
+    const f2 = v => v.toFixed(2);
+    html += `<div class="seclabel">价从哪来</div>`;
+    html += `<div class="capformula">`
+      + `实付 = 基准 × 市集(${market}级)${f2(mul.market)} × 关市${f2(mul.customs)}`
+      + ` × 季${f2(mul.season)} × 天赋${f2(mul.talent)}<br>`
+      + `合计 ×${f2(Mart.mulOf(mul))}`
+      + `（市集每级 -3%，关市每级 -5%，秋 -10%、冬 +8%）`
+      + `</div>`;
+    html += `<div class="capnote">`
+      + `市集等级不只决定钱入，也决定<b>有几个货位、货多便宜</b>。<br>`
+      + `佣兵只吃钱、<b>不耗丁口</b>；粮秣价随季浮动，春荒贵、秋收贱。<br>`
+      + `每月换货一次，同一件货一个月只能买一件。`
+      + `</div>`;
+
+    pane.innerHTML = html;
+
+    for (const b of pane.querySelectorAll('button[data-mart]')) {
+      b.onclick = () => {
+        try {
+          const r = Store.dispatch('MART_BUY', { cityId: c.id, slotId: b.dataset.mart });
+          UI.flash(`得${r.name}一件`);
+        } catch (e) { UI.toast(e.message); }
+      };
+    }
   },
 
   paneBuild(G, c) {
@@ -575,10 +652,23 @@ const UI_CITY = {
 
     heroes.sort((a, b) => (b.id === c.governor ? 1 : 0) - (a.id === c.governor ? 1 : 0) || b.tong - a.tong);
 
+    const drillLv = State.bld(c, 'drill');
+    const dslot = Drill.slots(G, c);
+
     let html = `<div class="dim mb-5 lh-17">
       忠诚 &lt; 30 且野心 &gt; 60 者会叛：叛前一月有预警，3 月内赏赐 / 抚慰可挽；
       守将忠诚影响守城战力，私交影响城池产出。
     </div>`;
+
+    // 校场：给闲置武将一条正事干（DESIGN §11.5）
+    if (isDemesne) {
+      html += `<div class="seclabel">校场</div>`;
+      html += drillLv < 1
+        ? `<div class="capnote">未建<b>校场</b> —— 无场可练。去「营造」页开一处，等级即每月能训几人。</div>`
+        : `<div class="dim fs-label mb-4">校场 ${drillLv} 级 · 本月训练位 ${dslot.used}/${dslot.cap}`
+          + ` · 每人最多 ${Drill.PER_HERO_CAP} 次、单项封顶 ${Drill.STAT_CAP}`
+          + `（训练同时清闲置、私交 +2）</div>`;
+    }
 
     for (const h of heroes) {
       const loy = Math.round(h.loyalty || 0);
@@ -610,6 +700,10 @@ const UI_CITY = {
         ? `<div class="dim fs-tiny">宝物合计：${UI_CITY._effText(trSum)}</div>`
         : '<div class="dim fs-tiny">未佩宝</div>';
 
+      const tr = h.train || 0;
+      const trainLine = tr > 0
+        ? ` · 练度 ${tr}/${Drill.PER_HERO_CAP}` : '';
+
       html += `<div class="clan" data-hero="${h.id}">
         <div class="crow">
           <span class="cname">${U.esc(h.name)}</span>
@@ -623,7 +717,7 @@ const UI_CITY = {
         </div>
         <div class="dim fs-tiny">${skillLine}</div>
         ${trLine}
-        <div class="dim fs-tiny">${tags.join(' · ') || '平平无奇'}</div>
+        <div class="dim fs-tiny">${tags.join(' · ') || '平平无奇'}${trainLine}</div>
       </div>`;
     }
 
@@ -670,6 +764,33 @@ const UI_CITY = {
           : (cool('console', 3) || (c.food < 60 ? '粮不足' : null))));
 
       row.appendChild(box);
+
+      // 校场训练：方向自己选，价随已练次数递增（校场越高越便宜）
+      const dchk = Drill.canTrain(G, c, h);
+      const dirSel = document.createElement('select');
+      dirSel.className = 'mini';
+      for (const d of Drill.DIRS) {
+        const full = (h[d] || 0) >= Drill.STAT_CAP;
+        const o = document.createElement('option');
+        o.value = d;
+        o.textContent = `${Drill.DIR_NAME[d]} ${h[d] || 0}${full ? '（满）' : ''}`;
+        o.disabled = full;
+        dirSel.appendChild(o);
+      }
+      const rowDir = document.createElement('div');
+      rowDir.className = 'drillrow';
+      rowDir.appendChild(UI._btn(`训练 ${dchk.cost}钱`, null, () => {
+        try {
+          const r = Store.dispatch('DRILL_HERO', { cityId: c.id, heroId: h.id, dir: dirSel.value });
+          UI.flash(`${h.name} 练${Drill.DIR_NAME[r.dir]} +1（现 ${r.value}）`);
+        } catch (e) { UI.toast(e.message); }
+      }, dchk.ok ? null : dchk.why));
+      rowDir.appendChild(dirSel);
+      rowDir.appendChild(Object.assign(document.createElement('span'), {
+        className: 'dim fs-tiny',
+        textContent: `练度 ${h.train || 0}/${Drill.PER_HERO_CAP}`,
+      }));
+      row.appendChild(rowDir);
 
       // 宝物槽：已装备的点击即卸下（回到本城府库）
       const slotBox = document.createElement('div');

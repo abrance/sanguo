@@ -28,11 +28,14 @@ const Economy = {
     const farm = State.bld(c, 'farm') || 0;
     const market = State.bld(c, 'market') || 0;
     const matSeason = 0.70 + season.build * 0.40;
+    // 一统一州：全州只剩你一家 → 钱粮 +12%（只算你自己在管的城）
+    const prov = State.provinceMul(G, c);
+    const provEco = prov ? prov.econ : 1;
 
     const foodOut = farm * 78 * season.food * popFactor * orderFactor
-      * clanMul * ecoMul * bonus.food * (tal.food || 1);
+      * clanMul * ecoMul * provEco * bonus.food * (tal.food || 1);
     const goldOut = market * 30 * season.tax * popFactor * orderFactor
-      * clanMul * ecoMul * bonus.gold * customs * (tal.gold || 1);
+      * clanMul * ecoMul * provEco * bonus.gold * customs * (tal.gold || 1);
     const matOut = (28 + (State.bld(c, 'lumber') || 0) * 13 + (State.bld(c, 'quarry') || 0) * 21)
       * matSeason * bonus.mat * clanMul * (tal.mat || 1);
     const ironOut = (4 + (State.bld(c, 'ironworks') || 0) * 7) * bonus.iron * clanMul * (tal.iron || 1);
@@ -49,6 +52,7 @@ const Economy = {
         farm, market,
         season: { food: season.food, tax: season.tax, mat: matSeason },
         popFactor, orderFactor, clanMul, skillMul, legionEco, bondMul, customs,
+        provEco, province: c.region,
         gov, tech: bonus, talent: tal,
         lumber: State.bld(c, 'lumber') || 0,
         quarry: State.bld(c, 'quarry') || 0,

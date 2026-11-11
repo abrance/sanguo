@@ -40,6 +40,7 @@ const UI_RANK = {
     ].map(x => `<span>${x}</span>`).join('');
 
     UI.renderCourt(G);
+    UI.renderDemesneBox(G);
 
     // 官阶阶梯
     UI.$('rankLadder').innerHTML = RANKS.map(r => {
@@ -175,6 +176,122 @@ const UI_RANK = {
     }
   },
   /** 朝堂：帝在何城、矫诏权在谁手、三条诏令 */
+  /**
+   * 直辖台：多选一次性收归。直辖满了不擅自替你决定，而是列出可交出的城让你逐座挑；
+   * 每交出一次就顶进一座，直到队列走完（docs/COMMANDS.md SET_DEMESNE）。
+   */
+  renderDemesneBox(G) {
+    const box = UI.$('demesneBox');
+    if (!box) return;
+    const p = G.player;
+    const cap = cityCap(p);
+    const full = p.demesne.length >= cap;
+    const queue = UI._takeQueue || [];
+    const sel = UI._takeSel || (UI._takeSel = new Set());
+    const swept = State.sweptProvinces(G);
+    const note = swept.length
+      ? `<div class="dim">一统一州：${swept.join('、')}`
+        + `（该州直辖城与军区城 钱粮 +${Math.round((PROVINCE_SWEEP.econ - 1) * 100)}%、兵额 +${Math.round((PROVINCE_SWEEP.cap - 1) * 100)}%）</div>`
+      : '';
+
+    const own = Object.values(G.cities)
+      .filter(c => c.owner === p.factionId && c.grantedTo !== PLAYER_HERO_ID)
+      .sort((a, b) => State.cityLevel(G, b) - State.cityLevel(G, a) || b.pop - a.pop);
+    for (const id of Array.from(sel)) {
+      const c = G.cities[id];
+      if (!c || c.grantedTo === PLAYER_HERO_ID) sel.delete(id);
+    }
+
+    let html = `<div class="dim lh-17">直辖 <b>${p.demesne.length}/${cap}</b>`
+      + `${full ? ' 已满：收归新的一批须交出旧城' : ''}　`
+      + `本方非直辖城 <b>${own.length}</b> 座。</div>${note}`;
+
+    if (queue.length) {
+      // 队列进行中：这一批要收归谁、还差几个名额
+      const need = Math.max(0, p.demesne.length + queue.length - cap);
+      html += `<div class="dim lh-17">正在收归 <b>${queue.length}</b> 座`
+        + `${need ? `，还需交出 <b>${need}</b> 座` : ''}：${queue.map(id => U.esc((G.cities[id] || {}).name || id)).join('、')}</div>`;
+      if (need) {
+        html += `<div class="dim">交出哪一座？</div><div class="prow">`
+          + p.demesne.map(id => G.cities[id])
+            .filter(Boolean)
+            .map(c => `<button data-release="${c.id}">交出${U.esc(c.name)}</button>`).join('')
+          + `</div><div class="prow"><button data-cancel="1">算了</button></div>`;
+      }
+    } else if (!own.length) {
+      html += `<div class="dim">本方城池已尽归直辖。</div>`;
+    } else {
+      html += `<div class="prow">
+        <button data-all="1">全选</button><button data-none="1">清空</button>
+        <button class="primary" data-take="1" ${sel.size ? '' : 'disabled'}>收归所选（${sel.size}）</button>
+      </div>`;
+      html += `<div class="pickscroll">`
+        + own.map(c => `<div class="crow-pick ${sel.has(c.id) ? 'on' : ''}" data-city="${c.id}">
+            <input type="checkbox" ${sel.has(c.id) ? 'checked' : ''} />
+            <span class="cn">${U.esc(c.name)}<span class="dim"> · ${U.esc(c.region)}</span></span>
+            <span class="cm">${U.num(troopTotal(c.garrison))} 兵 · 丁 ${Math.round(c.pop)}</span>
+          </div>`).join('')
+        + `</div>`;
+    }
+
+    box.innerHTML = html;
+
+    const run = (fn) => { try { fn(); } catch (e) { UI.toast(e.message); UI._takeQueue = []; } };
+
+    for (const el of box.querySelectorAll('.crow-pick')) {
+      const cid = el.dataset.city;
+      const cb = el.querySelector('input');
+      const toggle = () => {
+        if (cb.checked) sel.add(cid); else sel.delete(cid);
+        el.classList.toggle('on', cb.checked);
+        const btn = UI.$('demesneBox').querySelector('[data-take]');
+        if (btn) { btn.textContent = `收归所选（${sel.size}）`; btn.disabled = !sel.size; }
+      };
+      cb.onchange = toggle;
+      el.onclick = ev => { if (ev.target === cb) return; cb.checked = !cb.checked; toggle(); };
+    }
+
+    const all = box.querySelector('[data-all]');
+    if (all) all.onclick = () => { for (const c of own) sel.add(c.id); UI.renderDemesneBox(Store.get()); };
+    const none = box.querySelector('[data-none]');
+    if (none) none.onclick = () => { sel.clear(); UI.renderDemesneBox(Store.get()); };
+    const take = box.querySelector('[data-take]');
+    if (take) take.onclick = () => run(() => {
+      UI._takeQueue = [...sel];
+      sel.clear();
+      UI.takeDemesne(Store.get());
+    });
+    for (const b of box.querySelectorAll('[data-release]')) {
+      b.onclick = () => run(() => {
+        const next = (UI._takeQueue || [])[0];
+        Store.dispatch('SET_DEMESNE', { cityId: next, releaseId: b.dataset.release });
+        UI._takeQueue.shift();
+        UI.takeDemesne(Store.get());
+      });
+    }
+    const cancel = box.querySelector('[data-cancel]');
+    if (cancel) cancel.onclick = () => { UI._takeQueue = []; UI.renderDemesneBox(Store.get()); };
+  },
+
+  /** 队列推进：还有空位就继续收，满了就停下等玩家挑要交出的城 */
+  takeDemesne(G) {
+    const p = G.player;
+    const cap = cityCap(p);
+    while ((UI._takeQueue || []).length) {
+      const id = UI._takeQueue[0];
+      const c = G.cities[id];
+      if (!c || c.grantedTo === PLAYER_HERO_ID) { UI._takeQueue.shift(); continue; }
+      if (p.demesne.length >= cap) break;          // 满员：界面列可交出的城
+      Store.dispatch('SET_DEMESNE', { cityId: id });
+      UI._takeQueue.shift();
+    }
+    if (!(UI._takeQueue || []).length) {
+      UI._takeQueue = [];
+      UI.flash('直辖已更新。');
+    }
+    UI.renderDemesneBox(Store.get());
+  },
+
   renderCourt(G) {
     const box = UI.$('courtBox');
     if (!box) return;

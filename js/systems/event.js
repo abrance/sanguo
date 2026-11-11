@@ -30,7 +30,7 @@ const EventSys = {
     }
   },
 
-  /** 历史锚点：到窗口必触发，忽略权重与 cond（docs/EVENTS.md §8） */
+  /** 历史锚点：到窗口必触发，忽略权重与 cond（docs/EVENTS.md §8）；视角变体按 slot 去重 */
   _anchors(G) {
     const turn = G.meta.turn;
     for (const id of EVENT_KEYS) {
@@ -39,19 +39,27 @@ const EventSys = {
       if (!EventSys._allowed(ev, G)) continue;
       if (turn < ev.anchor[0] || turn > ev.anchor[1]) continue;
       if (G.events.queue.length >= EventSys.MAX_QUEUE) break;
-      if (G.events.queue.some(q => q.eventId === id)) continue;
+      const slot = ev.slot || id;
+      if (G.events.seen['slot:' + slot]) continue;
+      if (G.events.queue.some(q => (EVENTS[q.eventId].slot || q.eventId) === slot)) continue;
       const first = State.demesne(G)[0];
       G.events.queue.push({ eventId: id, cityId: first ? first.id : null, turn });
       G.events.seen[id] = turn;
+      G.events.seen['slot:' + slot] = turn;
       G.stats.eventsSeen = (G.stats.eventsSeen || 0) + 1;
     }
   },
 
-  /** 抽一条：权重 × scope 系数；同 id 冷却中 / once 已触发过 / cond 为假 都丢弃 */
-  /** 该剧本能不能用这条事件（锚点尤其要分剧本，190 的会盟不该在 200 年触发） */
+  /**
+   * 该剧本 / 该势力能不能用这条事件。
+   * 锚点尤其要分剧本（190 的会盟不该在 200 年触发）与分视角（董卓军不该被问「要不要讨董」）。
+   */
   _allowed(ev, G) {
-    if (!ev.scenario) return true;
-    return ev.scenario === G.meta.scenarioId;
+    if (ev.scenario && ev.scenario !== G.meta.scenarioId) return false;
+    const fid = G.player.factionId;
+    if (ev.forFaction && ev.forFaction.indexOf(fid) < 0) return false;
+    if (ev.notFor && ev.notFor.indexOf(fid) >= 0) return false;
+    return true;
   },
 
   draw(G, chainDepth) {
@@ -140,7 +148,8 @@ const EventSys = {
     const avail = EventSys.options(G).find(o => o.key === optionKey);
     if (!avail || !avail.ok) throw new Error(avail ? avail.why : '此选项不可用');
 
-    const cost = opt.cost ? (opt.cost(G, ctx) || {}) : {};
+    const cost = opt.cost ? opt.cost(G, ctx) : {};
+    if (cost == null) throw new Error(opt.why || '条件不足');
     if (cost.gold && ctx.city) {
       if (ctx.city.gold < cost.gold) throw new Error(`钱不足（需 ${cost.gold}）`);
       ctx.city.gold -= cost.gold;

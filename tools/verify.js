@@ -157,6 +157,31 @@ section('分层守护');
     }
   }
   ok('内联 style 只剩 --自定义属性', !inline.length, inline.slice(0, 3).join(' | '));
+
+  // 7) 无障碍：页签是 tablist / tab / tabpanel 三件套，选中态由 syncTabs 写进 aria-selected
+  const html = read('index.html');
+  const navBlock = id => {
+    const i = html.indexOf('id="' + id + '"');
+    return i < 0 ? '' : html.slice(i, html.indexOf('</nav>', i));
+  };
+  const sideNav = navBlock('sideTabs'), cityNav = navBlock('cityTabs');
+  const count = (s, re) => (s.match(re) || []).length;
+  const tabsOk = /role="tablist"/.test(sideNav) && /role="tablist"/.test(cityNav)
+    && count(sideNav, /role="tab"/g) === 6 && count(cityNav, /role="tab"/g) === 6
+    && count(sideNav, /aria-selected="/g) === 6 && count(cityNav, /aria-selected="/g) === 6
+    && count(html, /role="tabpanel"/g) === 7   // 6 个侧栏面板 + 城池页共用面板
+    && /setAttribute\('aria-selected'/.test(read('js/view/ui.js'));
+  ok('无障碍：页签三件套（tablist / tab / aria-selected）齐备', tabsOk,
+    `side tab=${count(sideNav, /role="tab"/g)} sel=${count(sideNav, /aria-selected="/g)}，`
+    + `city tab=${count(cityNav, /role="tab"/g)} sel=${count(cityNav, /aria-selected="/g)}，`
+    + `panel=${count(html, /role="tabpanel"/g)}`);
+
+  // 8) 无障碍：浮层 toast 要能被读屏宣读，地图画布要有替代文本（不靠 title）
+  const toastOk = /id="toast"[^>]*role="status"[^>]*aria-live="polite"/.test(html)
+    || /id="toast"[^>]*aria-live="polite"[^>]*role="status"/.test(html);
+  const mapOk = /<canvas id="map"[^>]*role="img"[^>]*aria-label="/.test(html);
+  ok('无障碍：toast 有 role=status，地图画布有 aria-label', toastOk && mapOk,
+    `toast=${toastOk} map=${mapOk}`);
 }
 
 // ─────────────────────────────────────────────
@@ -1062,6 +1087,38 @@ section('军区（一将统辖多城，全托管但听号令）');
   ok('都督给军区城加成（统/政）', !!mul && mul.atk > 1 && mul.eco > 1,
     `战力 ×${mul.atk.toFixed(2)} 产出 ×${mul.eco.toFixed(2)}`);
 
+  // 1.2 裁撤后再委任不能撞号 —— 旧 id = `lg_<回合>_<序号>`，撞号时 find 永远命中第一个，
+  //     新都督切城会算到旧都督头上（真实反馈：切第二个都督的城，城跑到第一个都督辖下）
+  {
+    const { api } = h.boot({ seed: 45 });
+    h.grantCities(api, 4);
+    const g = () => api.Store.get();
+    const hs = Object.values(g().heroes)
+      .filter(x => x.alive && x.factionId === g().player.factionId && x.id !== api.PLAYER_HERO_ID);
+    api.Store.dispatch('LEGION_CREATE', { heroId: hs[0].id });
+    api.Store.dispatch('LEGION_CREATE', { heroId: hs[1].id });
+    api.Store.dispatch('LEGION_DELETE', { id: g().player.legions[0].id });
+    api.Store.dispatch('LEGION_CREATE', { heroId: hs[2].id });
+    const ids = g().player.legions.map(l => l.id);
+    ok('军区：裁撤后再委任不撞号', ids.length === 2 && new Set(ids).size === 2, ids.join(','));
+    const second = g().player.legions[1];
+    const free = Object.values(g().cities)
+      .filter(c => c.owner === g().player.factionId && !api.State.legionOf(g(), c.id));
+    api.Store.dispatch('LEGION_ASSIGN', { id: second.id, cityIds: second.cityIds.concat(free[0].id) });
+    ok('军区：新都督切城不会算到旧都督头上',
+      g().player.legions[1].cityIds.indexOf(free[0].id) >= 0
+      && g().player.legions[0].cityIds.indexOf(free[0].id) < 0,
+      `${ids.join(' / ')} → 城归${g().player.legions[1].id}`);
+
+    // 旧存档里已经撞号：迁移时重发号（不修的话这份档永远切不准）
+    const raw = JSON.parse(JSON.stringify(g()));
+    raw.player.legions[1].id = raw.player.legions[0].id;
+    api.State.migrate(raw, 1);
+    ok('军区：旧档撞号 id 迁移时重发',
+      new Set(raw.player.legions.map(l => l.id)).size === raw.player.legions.length,
+      raw.player.legions.map(l => l.id).join(','));
+  }
+
   // 1.6 交出 / 削权 / 失守的城要从军区辖城里摘掉（否则再点军区报"非你直辖之城"）
   {
     const z = mk(46);                  // 独立一局，别污染后面的用例
@@ -1089,8 +1146,8 @@ section('军区（一将统辖多城，全托管但听号令）');
     let err0 = null;
     try { z.api.Store.dispatch('SET_DEMESNE', { cityId: others[2], releaseId: others[0] }); } catch (e) { err0 = e.message; }
     ok('满员时可用 releaseId 换城', !err0, err0 || '');
-    ok('交出的城从军区辖城移除',
-      z.g().player.legions[0].cityIds.indexOf(others[0]) < 0
+    ok('交出的城仍留在军区（改由都督代管，不落回 AI 编排）',
+      z.g().player.legions[0].cityIds.indexOf(others[0]) >= 0
       && z.api.State.isPlayerCity(z.g(), z.g().cities[others[0]]) === false);
 
     let err = null;
@@ -1098,6 +1155,35 @@ section('军区（一将统辖多城，全托管但听号令）');
       z.api.Store.dispatch('LEGION_ASSIGN', { id: lgId, cityIds: z.g().player.demesne.slice() });
     } catch (e) { err = e.message; }
     ok('换城后军区指派不再报错', !err, err || '');
+
+    // 非直辖的本方城也能直接交给军区（自立后直辖上限总是不够，全靠这条路）
+    let errOwn = null;
+    try { z.api.Store.dispatch('LEGION_ASSIGN', { id: lgId, cityIds: [others[1], others[2]] }); }
+    catch (e) { errOwn = e.message; }
+    const assigned = z.g().player.legions[0].cityIds;
+    ok('非直辖的本方城可划入军区', !errOwn && assigned.length === 2,
+      errOwn || `${assigned.length} 城`);
+    ok('军区辖城不归 AI 编排', z.api.State.legionCityIds(z.g()).has(others[1]),
+      'legionCityIds 含辖区');
+    // 实测一遍：AI 编排交给 AIEcon 的城名单里不能出现军区辖城
+    {
+      const seen = [];
+      const orig = z.api.AIEcon.run;
+      z.api.AIEcon.run = function (GG, f, plan) {
+        if (f.id === z.g().player.factionId) seen.push(...plan.cities.map(c => c.id));
+        return orig.call(z.api.AIEcon, GG, f, plan);
+      };
+      z.api.Store.dispatch('END_TURN');
+      z.api.AIEcon.run = orig;
+      const lgIds = z.api.State.legionCityIds(z.g());
+      ok('AI 内政不碰军区辖城', seen.length > 0 && !seen.some(id => lgIds.has(id)),
+        `AI 经手 ${seen.length} 城`);
+    }
+    // 他城不能入军区
+    let errForeign = null;
+    try { z.api.Store.dispatch('LEGION_ASSIGN', { id: lgId, cityIds: [z.api.State.factionCities(z.g(), 'yuanshao')[0].id] }); }
+    catch (e) { errForeign = e.message; }
+    ok('他势力城不可入军区', /非本方城池/.test(errForeign || ''), errForeign || '未抛错');
   }
 
   // 1.5 府衙 3 级时一次填满两个工程位，且不重复同一建筑
@@ -1152,36 +1238,45 @@ section('军区（一将统辖多城，全托管但听号令）');
     a.api.State.legionOf(a.g(), lgCityId) && a.g().cities[lgCityId].policy === 'farm',
     '方针仍在，但由军区执行');
 
-  // 4 征讨：下令即宣战，军区属城只打该势力（同势力其他城归 AI 管，不在此列）
+  // 4 征讨：下令即宣战，军区只打「目标势力 / 已交战势力 / 在野」（不再只看目标：
+  //    隔着一两家时永远打不到，于是号令形同废止）
   const b = mk(42);
   b.api.Store.dispatch('LEGION_ORDER', { id: b.id, stance: 'strike', targetFid: 'yuanshao', policy: 'army' });
   const pfB = b.g().player.factionId;
   const lgB = new Set(b.g().player.legions[0].cityIds);
   const declared = b.api.Diplo.statusOf(b.g(), pfB, 'yuanshao') === 'war';
   const targets = new Set();
+  const offLimits = [];
   // 在 Army.create 上量：记录军区城每次出兵的目标势力（城会在行军途中易主，不能事后看）
   const origCreate = b.api.Army.create;
   b.api.Army.create = function (GG, o) {
     if (o.mission === 'attack' && o.factionId === pfB && lgB.has(o.from)) {
-      targets.add(GG.cities[o.to].owner);
+      const own = GG.cities[o.to].owner;
+      targets.add(own);
+      // 看「出兵当刻」的交战状态：中途议和会让事后查的全变
+      if (!(own === 'yuanshao' || own === 'free'
+        || b.api.Diplo.statusOf(GG, pfB, own) === b.api.Diplo.WAR)) offLimits.push(own);
     }
     return origCreate.call(b.api.Army, GG, o);
   };
   for (let i = 0; i < 14; i++) b.api.Store.dispatch('END_TURN');
   b.api.Army.create = origCreate;
-  ok('征讨号令：即宣战，且只打指定势力',
-    declared && targets.size >= 1 && [...targets].every(o => o === 'yuanshao'),
-    `宣战 ${declared}，出兵目标 ${[...targets].join('/')}`);
+  ok('征讨号令：即宣战，只打目标 / 交战 / 在野',
+    declared && targets.has('yuanshao') && offLimits.length === 0,
+    `宣战 ${declared}，出兵目标 ${[...targets].join('/')}${offLimits.length ? '，越界 ' + offLimits.join('/') : ''}`);
 
-  // 4.2 征讨不掷骰子：下令当回合就出兵（不必等 AI 那几个概率门）
+  // 4.2 征讨不掷骰、也不按半数军限路：下令后必定出发（出兵前仍算胜算，不打送死仗）
   {
     const z = mk(45);
     z.api.Store.dispatch('LEGION_ORDER', { id: z.id, stance: 'strike', targetFid: 'yuanshao', policy: 'army' });
     const pfz = z.g().player.factionId;
     const lgz = z.g().player.legions[0].id;
-    h.runTurns(z.api, 1);
-    const out = Object.values(z.g().armies).filter(a => a.factionId === pfz && a.legionId === lgz);
-    ok('征讨当回合即出兵', out.length >= 1, `出兵 ${out.length}`);
+    let firstTurn = 0;
+    for (let i = 1; i <= 3 && !firstTurn; i++) {
+      h.runTurns(z.api, 1);
+      if (Object.values(z.g().armies).some(a => a.factionId === pfz && a.legionId === lgz)) firstTurn = i;
+    }
+    ok('征讨号令 3 个月内必出兵', firstTurn > 0, `第 ${firstTurn || '—'} 月`);
     const atkStat = z.api.State.legions(z.g())[0].stats.attacks || 0;
     ok('军区战果记到号令账上', atkStat >= 1, `出兵计数 ${atkStat}`);
   }
@@ -1216,6 +1311,42 @@ section('军区（一将统辖多城，全托管但听号令）');
         ok('已在施工时守预留金', c2.buildQueue.length === 1, `队列 ${c2.buildQueue.length}`);
       }
     }
+  }
+
+  // 4.25 点「征讨」但还没挑目标：不替玩家宣战，也不打到和平势力头上
+  {
+    const z = mk(48);
+    const warsOf = () => Object.keys(z.g().factions)
+      .filter(fid => fid !== 'free'
+        && z.api.Diplo.statusOf(z.g(), z.g().player.factionId, fid) === z.api.Diplo.WAR)
+      .join(',');
+    const before = warsOf();
+    z.api.Store.dispatch('LEGION_ORDER', { id: z.id, stance: 'strike' });
+    const lg2 = z.g().player.legions[0];
+    ok('征讨未定目标：不宣战、不替你挑人',
+      lg2.stance === 'strike' && !lg2.targetFid && warsOf() === before,
+      `号令 ${lg2.stance} / 目标 ${lg2.targetFid || '无'} / 战 ${before || '无'}`);
+
+    const peaceful = Object.values(z.g().cities).find(c => c.owner && c.owner !== 'free'
+      && c.owner !== z.g().player.factionId
+      && z.api.Diplo.statusOf(z.g(), z.g().player.factionId, c.owner) !== z.api.Diplo.WAR);
+    const wild = Object.values(z.g().cities).find(c => c.owner === 'free');
+    ok('征讨未定目标：只打已交战 + 在野',
+      !!peaceful && z.api.Legion._targetAllowed(z.g(), lg2, peaceful) === false
+      && (!wild || z.api.Legion._targetAllowed(z.g(), lg2, wild) === true),
+      `和平势力 ${peaceful ? peaceful.owner : '—'}`);
+
+    // 不能过一个月就被 run() 判成「所征之敌不可攻」→ 秒改守土
+    for (let i = 0; i < 3; i++) z.api.Store.dispatch('END_TURN');
+    ok('征讨未定目标：号令不会被自动改回守土',
+      z.g().player.legions[0].stance === 'strike', z.g().player.legions[0].stance);
+
+    // 点了具体势力才算授权开战
+    const foe = peaceful ? peaceful.owner : 'yuanshao';
+    z.api.Store.dispatch('LEGION_ORDER', { id: z.id, stance: 'strike', targetFid: foe });
+    ok('征讨点名后才宣战',
+      z.api.Diplo.statusOf(z.g(), z.g().player.factionId, foe) === z.api.Diplo.WAR
+      && z.g().player.legions[0].targetFid === foe, foe);
   }
 
   // 4.5 征讨目标停战后，军区不空转（自动转守土待命）
@@ -1359,6 +1490,59 @@ section('月产明细（Economy.project）与结算同源');
   ok('农夫天赋 talentGain 粮为正且只有粮',
     gain.food > 0 && Math.abs(gain.gold) < 1e-9 && Math.abs(gain.mat) < 1e-9,
     `粮${gain.food.toFixed(1)} 钱${gain.gold.toFixed(1)}`);
+}
+
+// ─────────────────────────────────────────────
+section('一统一州（钱粮 +12% / 兵额 +10%，只算真在管的城）');
+{
+  const { api, get } = h.boot({ seed: 9 });
+  const G = get();
+  const region = G.cities[G.player.homeCityId].region;
+  const myCities = Object.values(G.cities).filter(c => c.region === region);
+  ok('用例前提：目标州不止一座城', myCities.length >= 2, `${region} ${myCities.length} 城`);
+
+  const home = G.cities[G.player.homeCityId];
+  const before = api.Economy.project(G, home).goldOut;
+  const capBefore = api.State.troopCapOf(G, home);
+
+  // 先只占一部分 → 不算一统
+  for (const c of myCities) if (c.id !== home.id) c.owner = 'yuanshao';
+  G._provOwners = undefined;
+  ok('州未一统时无加成', api.State.provinceMul(G, home) === null,
+    String(api.State.provinceOwner(G, region)));
+
+  // 全占 → 自直辖城吃加成
+  for (const c of myCities) c.owner = G.player.factionId;
+  G._provOwners = undefined;
+  ok('全州归你 → 判定一统', api.State.provinceOwner(G, region) === G.player.factionId);
+  const pm = api.State.provinceMul(G, home);
+  ok('一统加成数值 = 12% / 10%',
+    pm && Math.abs(pm.econ - 1.12) < 1e-9 && Math.abs(pm.cap - 1.10) < 1e-9);
+  ok('一统的州名进面板清单', api.State.sweptProvinces(G).indexOf(region) >= 0);
+
+  const after = api.Economy.project(G, home).goldOut;
+  ok('一统后月入钱 ×1.12', Math.abs(after / before - 1.12) < 1e-9,
+    `${before.toFixed(1)} → ${after.toFixed(1)}`);
+  const capAfter = api.State.troopCapOf(G, home);
+  ok('一统后兵额 ×1.10', Math.abs(capAfter / capBefore - 1.10) < 0.01,
+    `${capBefore} → ${capAfter}`);
+
+  // 属下治理（非直辖、未入军区）的城不吃
+  const other = myCities.find(c => c.id !== home.id);
+  other.grantedTo = null;
+  ok('非直辖且未入军区的城不吃一统加成', api.State.provinceMul(G, other) === null);
+  // 划进军区就吃
+  const hero = Object.values(G.heroes)
+    .find(x => x.alive && x.factionId === G.player.factionId && x.id !== 'PLAYER');
+  const lgId = api.Store.dispatch('LEGION_CREATE', { heroId: hero.id }).id;
+  api.Store.dispatch('LEGION_ASSIGN', { id: lgId, cityIds: [other.id] });
+  // dispatch 会整体换状态，断言要看新状态里的那座城
+  ok('划入军区后属下城吃一统加成', !!api.State.provinceMul(get(), get().cities[other.id]));
+
+  // 敌人吃不到（规则只认玩家势力）
+  const foe = Object.values(G.cities).find(c => c.owner !== G.player.factionId);
+  foe.grantedTo = null;
+  ok('他势力城不吃你的加成', api.State.provinceMul(G, foe) === null);
 }
 
 // ─────────────────────────────────────────────
@@ -1921,6 +2105,399 @@ section('宝物（装备 / 派生 / 破城掉落）');
 }
 
 // ─────────────────────────────────────────────
+section('市肆（每月换货 / 价格透明 / 钱的出口）');
+{
+  const setup = (seed) => {
+    const { api, get } = h.boot({ seed });
+    const cid = get().player.homeCityId;
+    const c = get().cities[cid];
+    // 市集 4 级 + 关市 2 级：让四个门槛都过得去，货位 = 2 + 2 = 4
+    c.buildings.market = 4;
+    c.buildings.customs = 2;
+    c.buildings.ironworks = 1;
+    c.buildings.barracks = 1;
+    c.buildings.office = 3;
+    c.gold = 9000;
+    c.mat = 0;
+    c.iron = 0;
+    c.food = 0;
+    c.buildQueue = [];
+    return { api, get, cid, c };
+  };
+
+  // 1) 货架确定性：面板与命令层必须看到同一份（价格对不上就是白扣钱）
+  {
+    const { api, get } = setup(11);
+    const a = api.Mart.shelf(get(), get().cities[get().player.homeCityId]);
+    const b = api.Mart.shelf(get(), get().cities[get().player.homeCityId]);
+    ok('市肆：同一回合货架稳定（不抖）', JSON.stringify(a) === JSON.stringify(b),
+      a.map(s => s.id).join(','));
+    ok('市肆：货位数 = 2 + floor(市集/2) + floor(关市/2)，封顶 6',
+      a.length === 2 + Math.floor(4 / 2) + Math.floor(2 / 2), `${a.length}`);
+    ok('市肆：刚需（木石料/粮秣）常驻',
+      a.some(s => s.id === 'mat') && a.some(s => s.id === 'grain'), a.map(s => s.id).join(','));
+    ok('市肆：货不重样', new Set(a.map(s => s.id)).size === a.length, a.map(s => s.id).join(','));
+
+    // 换回合 → 换货（至少货架内容重算，买过的记录作废）
+    const before = JSON.stringify(a);
+    api.Store.dispatch('END_TURN');
+    const later = api.Mart.shelf(get(), get().cities[get().player.homeCityId]);
+    ok('市肆：回合推进后买过的货重新上架', later.every(s => !s.sold), JSON.stringify(later.map(s => s.sold)));
+    ok('市肆：跨回合货架会重算', JSON.stringify(later) !== before, '货架未变');
+  }
+
+  // 2) 价格透明：实付 = 基准 × 市集 × 关市 × 季 × 天赋（与面板同源）
+  {
+    const { api, get } = setup(11);
+    const G = get();
+    const c = G.cities[G.player.homeCityId];
+    const mul = api.Mart.multipliers(G, c);
+    const total = api.Mart.mulOf(mul);
+    const shelf = api.Mart.shelf(G, c);
+    const bad = shelf.filter(s => s.price !== Math.max(1, Math.round(s.base * total)));
+    ok('市肆：每件价 = 基准 × 四个乘数', !bad.length, bad.map(s => `${s.id} ${s.price}/${s.base}`).join(', '));
+
+    // 市集越高越便宜（单调）
+    const cheap = (m) => {
+      const G2 = JSON.parse(JSON.stringify(G));
+      G2.cities[G2.player.homeCityId].buildings.market = m;
+      return api.Mart.mulOf(api.Mart.multipliers(G2, G2.cities[G2.player.homeCityId]));
+    };
+    ok('市肆：市集越高越便宜', cheap(6) < cheap(1), `${cheap(6).toFixed(3)} < ${cheap(1).toFixed(3)}`);
+    ok('市肆：市集 1 级无折扣、2 级起 -3%/级',
+      Math.abs(cheap(1) - cheap(2)) > 0 && Math.abs(api.Mart.multipliers(G, c).market - 0.91) < 1e-9,
+      String(api.Mart.multipliers(G, c).market));
+  }
+
+  // 3) 买货：扣钱、涨料、当月不能重买
+  {
+    const { api, get, cid } = setup(11);
+    const G0 = get();
+    const slot = api.Mart.shelf(G0, G0.cities[cid]).find(s => s.id === 'mat');
+    const gold0 = G0.cities[cid].gold;
+    const mat0 = G0.cities[cid].mat;
+    api.Store.dispatch('MART_BUY', { cityId: cid, slotId: 'mat' });
+    const c1 = get().cities[cid];
+    ok('市肆：买木石料扣钱', c1.gold === gold0 - slot.price, `${gold0} → ${c1.gold}（价 ${slot.price}）`);
+    ok('市肆：木石料进库', c1.mat === mat0 + slot.amt, `${mat0} → ${c1.mat}`);
+    ok('市肆：当场标售罄',
+      api.Mart.shelf(get(), c1).find(s => s.id === 'mat').sold === true, '未标记');
+
+    let threw = '';
+    try { api.Store.dispatch('MART_BUY', { cityId: cid, slotId: 'mat' }); } catch (e) { threw = e.message; }
+    ok('市肆：同一件货一月只能买一次', !!threw, threw || '居然能买第二次');
+    ok('市肆：被拒后钱没白扣', get().cities[cid].gold === c1.gold, String(get().cities[cid].gold));
+  }
+
+  // 4) 钱不够 / 非直辖城 / 没市集 / 没在建工程，都不能成交
+  {
+    const { api, get, cid } = setup(11);
+    const G = get();
+    G.cities[cid].gold = 0;
+    api.Store.replace(G);
+    const s0 = api.Mart.shelf(get(), get().cities[cid]).find(s => s.id === 'mat');
+    ok('市肆：钱不够直接标出来', /钱不足/.test(s0.reason || ''), s0.reason);
+    let threw = '';
+    try { api.Store.dispatch('MART_BUY', { cityId: cid, slotId: 'mat' }); } catch (e) { threw = e.message; }
+    ok('市肆：钱不够不许下单', /钱不足/.test(threw), threw);
+
+    // 良匠：本城无在建工程 → 不能买
+    const G2 = get();
+    G2.cities[cid].gold = 9000;
+    G2.cities[cid].buildQueue = [];
+    api.Store.replace(G2);
+    const craftReason = api.Mart.reason(G2, G2.cities[cid], api.MART_GOODS.craft,
+      { amt: 1, price: 1, sold: false, relicId: null });
+    ok('市肆：无在建工程不卖良匠', /无在建工程/.test(craftReason || ''), craftReason);
+
+    // 市集 0 级 → 没有市肆
+    const G3 = get();
+    G3.cities[cid].buildings.market = 0;
+    api.Store.replace(G3);
+    ok('市肆：没建市集就没有市集货架', api.Mart.shelf(get(), get().cities[cid]).length === 0);
+
+    // 非直辖城：只能看不能买
+    const G4 = get();
+    G4.cities[cid].buildings.market = 4;
+    const other = Object.values(G4.cities).find(x => x.owner === G4.player.factionId && x.id !== cid);
+    api.Store.replace(G4);
+    if (other) {
+      const shelf = api.Mart.shelf(get(), get().cities[other.id]);
+      ok('市肆：非直辖城也看得到货（只是买不了）', shelf.length > 0, String(shelf.length));
+      let t2 = '';
+      try { api.Store.dispatch('MART_BUY', { cityId: other.id, slotId: shelf[0].id }); } catch (e) { t2 = e.message; }
+      ok('市肆：非直辖城不许下单', !!t2, t2 || '居然买成了');
+    }
+  }
+
+  // 5) 佣兵：只吃步兵兵额、不耗丁口（绕不过「无马场不可募骑」那道门）
+  {
+    const { api, get, cid } = setup(11);
+    {
+      const G = get();
+      const c = G.cities[cid];
+      c.garrison.inf = api.State.troopCapByType(G, c).inf;   // 步兵额占满
+      api.Store.replace(G);
+      const r = api.Mart.reason(get(), get().cities[cid], api.MART_GOODS.levy,
+        { amt: 100, price: 1, sold: false, relicId: null });
+      ok('市肆：步兵兵额满了不卖佣兵', /兵额/.test(r || ''), r);
+    }
+    {
+      // 真的买一次：货架是按回合哈希抽的，就往后翻到它上架那个月
+      const arm = () => {
+        const G = get();
+        G.cities[cid].gold = 9000;
+        G.cities[cid].garrison.inf = 0;
+        api.Store.replace(G);
+        return G;
+      };
+      arm();
+      let slot = null;
+      for (let t = 0; t < 30 && !slot; t++) {
+        slot = api.Mart.shelf(get(), get().cities[cid]).find(s => s.id === 'levy');
+        if (slot) break;
+        try { api.Store.dispatch('END_TURN'); } catch (e) { break; }
+        if (get().over || !get().cities[cid] || get().cities[cid].owner !== get().player.factionId) break;
+        arm();
+      }
+      ok('市肆：佣兵会在某个回合上架', !!slot, '30 回合没上过架');
+      if (slot && !slot.reason) {
+        const b = get().cities[cid];
+        const pop0 = b.pop;
+        const gold0 = b.gold;
+        const cav0 = b.garrison.cav || 0;
+        api.Store.dispatch('MART_BUY', { cityId: cid, slotId: 'levy' });
+        const a = get().cities[cid];
+        ok('市肆：佣兵进步兵', a.garrison.inf === Math.round(slot.amt), `${a.garrison.inf} / 应 ${Math.round(slot.amt)}`);
+        ok('市肆：佣兵不耗丁口', a.pop === pop0, `${pop0} → ${a.pop}`);
+        ok('市肆：佣兵照价扣钱', a.gold === gold0 - slot.price, `${gold0} → ${a.gold}（价 ${slot.price}）`);
+        ok('市肆：佣兵不凭空变出骑兵', (a.garrison.cav || 0) === cav0, `${cav0} → ${a.garrison.cav}`);
+      }
+    }
+  }
+
+  // 6) 稀珍：只在市集 3 级起上架；无宝可售时不上架
+  {
+    const { api, get, cid } = setup(11);
+    const G = get();
+    const low = JSON.parse(JSON.stringify(G));
+    low.cities[cid].buildings.market = 2;
+    ok('市肆：市集 2 级不卖稀珍',
+      !api.Mart.offerable(low, low.cities[cid], 'relic', 2), '居然上架了');
+    ok('市肆：市集 3 级卖稀珍', api.Mart.offerable(G, G.cities[cid], 'relic', 3));
+
+    const G2 = get();
+    for (const tid of Object.keys(G2.treasures)) G2.treasures[tid] = { holder: 'PLAYER', cityId: cid };
+    api.Store.replace(G2);
+    ok('市肆：无宝可售就不摆稀珍',
+      !api.Mart.offerable(get(), get().cities[cid], 'relic', 3), '无宝还上架');
+  }
+
+  // 7) 存档兼容：旧档（没 c.mart）读入不能崩，买过记录损坏也不崩
+  {
+    const { api, get, cid } = setup(11);
+    const G = get();
+    delete G.cities[cid].mart;
+    api.Store.replace(G);
+    let threw = '';
+    try { api.Mart.shelf(get(), get().cities[cid]); } catch (e) { threw = String(e.message); }
+    ok('市肆：旧档无 c.mart 不崩', !threw, threw);
+
+    const G2 = get();
+    G2.cities[cid].mart = { turn: G2.meta.turn, bought: 'not-an-array' };
+    api.Store.replace(G2);
+    threw = '';
+    try { api.Mart.shelf(get(), get().cities[cid]); } catch (e) { threw = String(e.message); }
+    ok('市肆：买过记录损坏也不崩', !threw, threw);
+  }
+
+  // 8) 货表自洽：新添一件货就必须把量、价、门槛写全（否则面板上是一片 undefined）
+  {
+    const { api } = setup(11);
+    const goods = api.MART_GOODS;
+    const missing = Object.keys(goods).filter(id => {
+      const d = goods[id];
+      return !d.name || !d.unitName || typeof d.amt !== 'function' || typeof d.base !== 'function'
+        || !d.minMarket || !d.kind || !d.about;
+    });
+    ok('市肆：每件货都有量/价/门槛/说明', !missing.length, missing.join(', '));
+
+    // 命令层只认这四种 kind：添了新 kind 却忘了写结算分支，钱会白扣
+    const kinds = new Set(Object.keys(goods).map(id => goods[id].kind));
+    const handled = ['res', 'troop', 'craft', 'treasure'];
+    const orphan = [...kinds].filter(k => handled.indexOf(k) < 0);
+    ok('市肆：每种 kind 都有结算分支', !orphan.length, orphan.join(', '));
+  }
+
+  // 9) 货架要会「让位」：粮仓满了还占着货位，钱就永远花不出去（实测漏点）
+  {
+    const { api, get, cid } = setup(11);
+    const G = get();
+    G.cities[cid].buildings.market = 2;
+    G.cities[cid].buildings.customs = 0;
+    G.cities[cid].mat = 0;
+    G.cities[cid].food = 0;
+    api.Store.replace(G);
+    const full = api.Mart.shelf(get(), get().cities[cid]);
+    ok('市肆：料/粮不缺时会在货架上',
+      full.some(s => s.id === 'mat') || full.some(s => s.id === 'grain'),
+      full.map(s => s.id).join(','));
+
+    const G2 = get();
+    G2.cities[cid].mat = 999999;          // 建材爆仓
+    api.Store.replace(G2);
+    const short = api.Mart.shelf(get(), get().cities[cid]);
+    ok('市肆：满仓的货让出货位（货位只有 3 个时不占位）',
+      !short.some(s => s.id === 'mat'), short.map(s => s.id + '(' + (s.reason || 'ok') + ')').join(', '));
+    ok('市肆：让位后仍能买到东西',
+      short.some(s => !s.reason), short.map(s => s.id).join(','));
+  }
+}
+
+section('校场训练（闲置武将的出口）');
+{
+  const setup = (drill) => {
+    const { api, get } = h.boot({ seed: 11 });
+    const cid = get().player.homeCityId;
+    const c = get().cities[cid];
+    c.buildings.drill = drill;
+    c.gold = 9000;
+    const pick = Object.values(get().heroes).find(x => x.alive
+      && x.factionId === get().player.factionId
+      && (x.cityId === cid || x.governor === x.id));
+    // 名将的统/魅本来就顶到 95（曹操），用例统一压到 80，否则测的是「练不动」而不是「能练」
+    for (const d of api.Drill.DIRS) if ((pick[d] || 0) > 80) pick[d] = 80;
+    return { api, get, cid, heroId: pick.id };
+  };
+  const at = (get, cid) => get().cities[cid];
+  const hero = (get, id) => get().heroes[id];
+
+  // 1) 没有校场就没有训练
+  {
+    const { api, get, cid, heroId } = setup(0);
+    const r = api.Drill.canTrain(get(), at(get, cid), hero(get, heroId));
+    ok('校场：未建校场不能练', !r.ok && /未建校场/.test(r.why), r.why);
+  }
+
+  // 2) 训练位：容量 = 校场等级，用完就等下一月
+  {
+    const { api, get, cid, heroId } = setup(2);
+    let ok1 = 0;
+    let msg = '';
+    for (let i = 0; i < 3; i++) {
+      try { api.Store.dispatch('DRILL_HERO', { cityId: cid, heroId, dir: 'wu' }); ok1++; }
+      catch (e) { msg = e.message; }
+    }
+    ok('校场：校场 2 级每月只能训 2 人次', ok1 === 2 && /训练位已满/.test(msg), `${ok1} 次 / ${msg}`);
+    ok('校场：训练位计数对上', api.Drill.slots(get(), at(get, cid)).used === 2,
+      JSON.stringify(api.Drill.slots(get(), at(get, cid))));
+
+    api.Store.dispatch('END_TURN');
+    ok('校场：换月后训练位重算', api.Drill.slots(get(), at(get, cid)).left === 2,
+      JSON.stringify(api.Drill.slots(get(), at(get, cid))));
+    let again = false;
+    try { api.Store.dispatch('DRILL_HERO', { cityId: cid, heroId, dir: 'wu' }); again = true; } catch (e) { }
+    ok('校场：换月后可以接着练', again, '还是不让练');
+  }
+
+  // 3) 练一次到底改了什么：属性 +1、私交 +2、闲置归零、扣钱
+  {
+    const { api, get, cid, heroId } = setup(3);
+    const G0 = get();
+    const h0 = hero(get, heroId);
+    const before = { wu: h0.wu, bond: h0.bond || 0, gold: at(get, cid).gold };
+    get().heroes[heroId].idle = 7;
+    const r = api.Store.dispatch('DRILL_HERO', { cityId: cid, heroId, dir: 'wu' });
+    const a = hero(get, heroId);
+    ok('校场：练武 → 武 +1', a.wu === before.wu + 1, `${before.wu} → ${a.wu}`);
+    ok('校场：练完清闲置', (a.idle || 0) === 0, String(a.idle));
+    ok('校场：练完私交 +2', (a.bond || 0) === Math.min(100, before.bond + 2), `${before.bond} → ${a.bond}`);
+    ok('校场：按价扣钱', at(get, cid).gold === before.gold - r.cost, `${before.gold} → ${at(get, cid).gold}（价 ${r.cost}）`);
+    ok('校场：练度计一次', a.train === 1, String(a.train));
+    void G0;
+
+    // 方向自己选，不是随机：练智就只涨智
+    const wis = a.zhi;
+    api.Store.dispatch('DRILL_HERO', { cityId: cid, heroId, dir: 'zhi' });
+    ok('校场：选智就只涨智', hero(get, heroId).zhi === wis + 1 && hero(get, heroId).wu === a.wu,
+      `智 ${wis} → ${hero(get, heroId).zhi}，武未动`);
+  }
+
+  // 4) 价随练度递增，校场越高越便宜
+  {
+    const { api, get, cid, heroId } = setup(1);
+    const c = at(get, cid);
+    const h = hero(get, heroId);
+    const p0 = api.Drill.cost(get(), c, h);
+    h.train = 3;
+    const p3 = api.Drill.cost(get(), c, h);
+    ok('校场：越练越贵', p3 > p0, `${p0} → ${p3}`);
+
+    const G2 = get();
+    G2.cities[cid].buildings.drill = 5;
+    api.Store.replace(G2);
+    const p5 = api.Drill.cost(get(), at(get, cid), hero(get, heroId));
+    ok('校场：校场越高越便宜', p5 < p3, `Lv1 ${p3} → Lv5 ${p5}`);
+  }
+
+  // 5) 两条硬上限：每人 6 次、单项 95
+  {
+    const { api, get, cid, heroId } = setup(6);
+    for (let i = 0; i < 6; i++) {
+      try { api.Store.dispatch('DRILL_HERO', { cityId: cid, heroId, dir: 'tong' }); } catch (e) { }
+    }
+    const a = hero(get, heroId);
+    ok('校场：练满 6 次', a.train === 6, String(a.train));
+    const r = api.Drill.canTrain(get(), at(get, cid), a, 'tong');
+    ok('校场：练满 6 次后不再让练', !r.ok && /上限/.test(r.why), r.why);
+
+    const G2 = get();
+    G2.heroes[heroId].wu = 95;
+    G2.heroes[heroId].train = 0;
+    G2.cities[cid].trained = null;      // 让位子腾出来，这轮只测「95 封顶」
+    api.Store.replace(G2);
+    const r2 = api.Drill.canTrain(get(), at(get, cid), hero(get, heroId), 'wu');
+    ok('校场：单项 95 就练不动', !r2.ok && /95/.test(r2.why), r2.why);
+  }
+
+  // 6) 三个不许：非直辖城 / 不在此城 / 敌方武将
+  {
+    const { api, get, cid, heroId } = setup(4);
+    const G = get();
+    const other = Object.values(G.cities).find(x => x.owner === G.player.factionId && x.id !== cid);
+    if (other) {
+      let t = '';
+      try { api.Store.dispatch('DRILL_HERO', { cityId: other.id, heroId, dir: 'wu' }); } catch (e) { t = e.message; }
+      ok('校场：非直辖城不许练', /非你直辖/.test(t), t);
+    }
+    const far = Object.values(get().heroes).find(x => x.alive
+      && x.factionId === get().player.factionId && x.cityId && x.cityId !== cid
+      && get().cities[cid].governor !== x.id);
+    if (far) {
+      const r = api.Drill.canTrain(get(), at(get, cid), far, 'wu');
+      ok('校场：不在此城的将不许练', !r.ok, r.why);
+    }
+    const foe = Object.values(get().heroes).find(x => x.alive && x.factionId !== 'free'
+      && x.factionId !== get().player.factionId);
+    if (foe) {
+      const r = api.Drill.canTrain(get(), at(get, cid), foe, 'wu');
+      ok('校场：敌方武将不许练', !r.ok && /非本方/.test(r.why), r.why);
+    }
+  }
+
+  // 7) 存档兼容：旧档没有 train / trained 也能练、不崩
+  {
+    const { api, get, cid, heroId } = setup(2);
+    delete get().cities[cid].trained;
+    delete get().heroes[heroId].train;
+    let threw = '';
+    try { api.Store.dispatch('DRILL_HERO', { cityId: cid, heroId, dir: 'mei' }); }
+    catch (e) { threw = e.message; }
+    ok('校场：旧档无 train / trained 也能练', !threw, threw);
+    ok('校场：旧档练完从 1 开始计', hero(get, heroId).train === 1, String(hero(get, heroId).train));
+  }
+}
+
 section('攻城逐轮推进 + 战法');
 {
   // 造一局：玩家带大兵打邻城，返回 { api, get, army, city }
@@ -2636,16 +3213,16 @@ section('事件层（抽取 / 选项 / 延迟 / 连锁）');
 // ─────────────────────────────────────────────
 section('事件池 / 历史锚点 / 朝堂 / 结局');
 {
-  // 1 事件池：条数、锚点齐备、每个选项都写了代价
+  // 1 事件池：条数、锚点齐备（按 slot 计数）、每个选项都写了代价
   {
     const { api, get } = h.boot({ seed: 7 });
     const G = get();
-    const anchorsOf = sc => api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor
-      && (!api.EVENTS[k].scenario || api.EVENTS[k].scenario === sc));
-    ok('事件池：21 条以上，讨董 6 条锚点 / 官渡 2 条',
-      api.EVENT_KEYS.length >= 21
-      && anchorsOf('taodong190').length === 6 && anchorsOf('guandu200').length === 2,
-      `${api.EVENT_KEYS.length} 条 / 讨董 ${anchorsOf('taodong190').length} / 官渡 ${anchorsOf('guandu200').length}`);
+    const slotsOf = sc => [...new Set(api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor
+      && (!api.EVENTS[k].scenario || api.EVENTS[k].scenario === sc)).map(k => api.EVENTS[k].slot))];
+    ok('事件池：30 条以上，讨董 6 槽锚点 / 官渡 2 槽',
+      api.EVENT_KEYS.length >= 30
+      && slotsOf('taodong190').length === 6 && slotsOf('guandu200').length === 2,
+      `${api.EVENT_KEYS.length} 条 / 讨董 ${slotsOf('taodong190').length} / 官渡 ${slotsOf('guandu200').length}`);
     const bad = [];
     for (const k of api.EVENT_KEYS) {
       for (const o of api.EVENTS[k].options) {
@@ -2656,26 +3233,74 @@ section('事件池 / 历史锚点 / 朝堂 / 结局');
     ok('事件池：锚点都有必选兜底（fallback）',
       api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor)
         .every(k => api.EVENTS[k].options.some(o => o.fallback)));
+    ok('事件池：锚点都写了 slot（视角变体靠它去重）',
+      api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor).every(k => !!api.EVENTS[k].slot));
     void G;
   }
 
-  // 2 历史锚点：到窗口必触发（忽略权重）
+  // 1.5 锚点视角：每个剧本 × 每个势力 × 每个锚点槽，恰好一条事件可用
+  //     0 条 = 该势力没写视角变体（会被问「要不要讨伐你自己」）；2 条 = 变体没写 notFor
   {
-    const { api, get } = h.boot({ seed: 7 });
-    const G = get();
-    const anchors = api.EVENT_KEYS.filter(k => api.EVENTS[k].anchor
-      && (!api.EVENTS[k].scenario || api.EVENTS[k].scenario === G.meta.scenarioId));
-    const missed = [];
-    for (const k of anchors) {
-      const ev = api.EVENTS[k];
-      G.meta.turn = ev.anchor[0];
-      G.events.queue.length = 0;
-      G.events.seen[k] = undefined;
-      delete G.events.seen[k];
-      api.EventSys._anchors(G);
-      if (!G.events.queue.some(q => q.eventId === k)) missed.push(k);
+    const { api: A } = h.boot({ seed: 7 });
+    const bad = [];
+    for (const scId of Object.keys(A.SCENARIOS)) {
+      const sc = A.SCENARIOS[scId];
+      const slots = [...new Set(A.EVENT_KEYS.filter(k => A.EVENTS[k].anchor
+        && (!A.EVENTS[k].scenario || A.EVENTS[k].scenario === scId)).map(k => A.EVENTS[k].slot))];
+      for (const row of sc.factionRows) {
+        const fid = row[0];
+        if (!row[5].length) continue;
+        const { api, get } = h.boot({ seed: 7, scenarioId: scId, factionId: fid, cityId: row[5][0] });
+        const G = get();
+        for (const slot of slots) {
+          const n = api.EVENT_KEYS.filter(k => A.EVENTS[k].slot === slot
+            && api.EventSys._allowed(A.EVENTS[k], G)).length;
+          if (n !== 1) bad.push(`${scId}/${fid}/${slot}=${n}`);
+        }
+      }
     }
-    ok('历史锚点：进入窗口即入队', !missed.length, missed.join(','));
+    ok('锚点视角：每势力每槽恰好一条', !bad.length, bad.slice(0, 5).join(', '));
+  }
+
+  // 2 历史锚点：到窗口必触发；每个势力的每个选项都点一遍（不自伐、不崩、不出 NaN）
+  {
+    const { api: A } = h.boot({ seed: 7 });
+    const miss = [], boom = [], nan = [];
+    for (const scId of Object.keys(A.SCENARIOS)) {
+      const sc = A.SCENARIOS[scId];
+      const slots = [...new Set(A.EVENT_KEYS.filter(k => A.EVENTS[k].anchor
+        && (!A.EVENTS[k].scenario || A.EVENTS[k].scenario === scId)).map(k => A.EVENTS[k].slot))];
+      for (const row of sc.factionRows) {
+        const fid = row[0];
+        if (!row[5].length) continue;
+        const { api, get } = h.boot({ seed: 7, scenarioId: scId, factionId: fid, cityId: row[5][0] });
+        const base = JSON.parse(JSON.stringify(get()));
+        for (const slot of slots) {
+          const evId = api.EVENT_KEYS.find(k => A.EVENTS[k].slot === slot
+            && api.EventSys._allowed(A.EVENTS[k], get()));
+          if (!evId) { miss.push(`${scId}/${fid}/${slot}:无可用事件`); continue; }
+          const ev = api.EVENTS[evId];
+          for (const opt of (ev.options || [])) {
+            api.Store.replace(JSON.parse(JSON.stringify(base)));
+            const G = get();
+            G.meta.turn = ev.anchor[0];
+            G.events.queue.length = 0;
+            delete G.events.seen[evId];
+            delete G.events.seen['slot:' + slot];
+            api.EventSys._anchors(G);
+            if (!G.events.queue.some(q => q.eventId === evId)) { miss.push(`${scId}/${fid}/${slot}:未入队`); continue; }
+            for (const c of Object.values(G.cities)) if (c.owner === fid) { c.gold = 99999; c.food = 99999; }
+            try { api.EventSys.choose(G, opt.key); }
+            catch (e) { boom.push(`${scId}/${fid}/${slot}.${opt.key}: ${e.message}`); continue; }
+            const badNum = h.scanNaN(api);
+            if (badNum.length) nan.push(`${scId}/${fid}/${slot}.${opt.key}: ${badNum[0]}`);
+          }
+        }
+      }
+    }
+    ok('历史锚点：进入窗口即入队', !miss.length, miss.slice(0, 4).join(', '));
+    ok('历史锚点：每个势力的每个选项都可点（不讨伐自己、不崩）', !boom.length, boom.slice(0, 4).join(', '));
+    ok('历史锚点：选项结算无数值异常', !nan.length, nan.slice(0, 4).join(', '));
   }
 
   // 3 朝堂：控制帝都才有矫诏权；矫诏令两家开战
@@ -2815,9 +3440,11 @@ section('剧本：官渡 200');
     G.events.queue.length = 0;
     api.EventSys._anchors(G);
     const queued = G.events.queue.map(q => q.eventId);
-    ok('官渡：190 的锚点不会入队', !queued.some(id => /^anchor_(huimeng|relocate)$/.test(id)),
+    ok('官渡：190 的锚点不会入队',
+      !queued.some(id => ['huimeng', 'relocate'].indexOf(api.EVENTS[id].slot) >= 0),
       queued.join(',') || '空');
-    ok('官渡：官渡自己的锚点会入队', queued.indexOf('anchor_baima') >= 0, queued.join(','));
+    ok('官渡：官渡自己的锚点会入队',
+      queued.some(id => api.EVENTS[id].slot === 'baima'), queued.join(','));
     void seen;
   }
 
@@ -2927,6 +3554,479 @@ section('渲染层纯函数（js/view 里不碰 DOM 的那部分）');
   ok('城军混排：全部军队只在最后出现一次',
     order.filter(o => o.kind === 'army').length === 3
     && new Set(order.filter(o => o.kind === 'army').map(o => o.o.a.y)).size === 3);
+}
+
+// ─────────────────────────────────────────────
+section('地图符号（敌境冷色 / 焦土斑 / 箭楼）');
+{
+  // drawCity 全走 ctx 的 fill/stroke：桩 ctx 只记颜色，就能断言"该有的画了、不该有的没画"
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+  const src = fs.readFileSync(path.join(h.ROOT, 'js/view/renderer.js'), 'utf8');
+  const ctx = { console, Math, Object, Array, String, Number, JSON, Set, Map, isFinite, isNaN };
+  ctx.U = { clamp: (v, a, b) => Math.min(b, Math.max(a, v)) };   // shadeTint 只用到 clamp
+  // 城内小屋按城 id 播种取哈希，桩与 map.js 的实现一致
+  ctx.GameMap = {
+    _hash(ix, iy) {
+      let h = Math.imul(ix, 374761393) + Math.imul(iy, 668265263);
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    },
+  };
+  ctx.globalThis = ctx;
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(src + '\n;globalThis.__R = Renderer;', ctx, { filename: 'renderer.js' });
+  const R = ctx.__R;
+
+  const paint = opts => {
+    const seen = [];
+    const noop = () => { };
+    const c = {
+      fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', globalAlpha: 1,
+      beginPath: noop, closePath: noop, save: noop, restore: noop, setLineDash: noop,
+      setTransform: noop, translate: noop, moveTo: noop, lineTo: noop, quadraticCurveTo: noop,
+      arc: noop, ellipse: (x, y, rx, ry, rot) => seen.push(c.fillStyle),
+      fillRect: () => seen.push(c.fillStyle), strokeRect: noop,
+      fill: () => seen.push(c.fillStyle), stroke: () => seen.push(c.strokeStyle),
+      measureText: () => ({ width: 20 }), fillText: noop, strokeText: noop,
+      createLinearGradient: () => ({ addColorStop: noop }),
+      createRadialGradient: () => ({ addColorStop: noop }),
+    };
+    R.drawCity(c, 400, 300, 12, '#8d6a4a', opts);
+    return seen;
+  };
+
+  // 敌境冷色：交战的城体色压冷，中立/同盟保持本色。结果必须是 hex，
+  // 否则 shade() 在立面里解析不了会画出 NaN 颜色
+  const warm = R.cityColor('#8d6a4a', 'neutral');
+  const cold = R.cityColor('#8d6a4a', 'war');
+  ok('敌境冷色：交战城的城体色变了', warm === '#8d6a4a' && cold !== warm, `${warm} → ${cold}`);
+  ok('敌境冷色：结果仍是 hex（shade 能继续解析）', /^#[0-9a-f]{6}$/.test(cold), cold);
+
+  const base = { tier: 1, wall: 5, wallMax: 5, detail: true, z: 16 };
+
+  const intact = paint(base);
+  const hurt = paint(Object.assign({}, base, { wall: 2 }));
+  const ash = hurt.filter(s => /^rgba\(24,18,12,/.test(String(s))).length;
+  ok('焦土斑：城墙被打过才画', ash > 0 && intact.filter(s => /^rgba\(24,18,12,/.test(String(s))).length === 0,
+    `受损 ${ash} 处 / 完好 0 处`);
+
+  // 箭楼：城墙 4 级起城门两侧各一座（两座楼 + 两个门洞 = 4 笔）
+  const lv4 = paint(Object.assign({}, base, { wall: 4 }));
+  const lv3 = paint(Object.assign({}, base, { wall: 3 }));
+  ok('箭楼：城墙 4 级起才有（多 4 笔）', lv4.length === lv3.length + 4,
+    `${lv4.length} vs ${lv3.length}`);
+}
+
+// ─────────────────────────────────────────────
+section('城池内景（概览页的等距图）');
+{
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+
+  // 绘图上下文桩：只记事、不画。所有坐标都要落在 W×H 里，
+  // 否则画布会把建筑裁掉一半 —— 而这种错在静态代码里看不出来。
+  const makeCtx = () => {
+    const trail = { x: [], y: [] };
+    const note = (x, y) => {
+      if (typeof x === 'number' && isFinite(x)) trail.x.push(x);
+      if (typeof y === 'number' && isFinite(y)) trail.y.push(y);
+    };
+    const noop = () => { };
+    const ctx = {
+      trail,
+      globalAlpha: 1, fillStyle: '', strokeStyle: '', lineWidth: 1, font: '',
+      clearRect: noop, fillRect: (x, y) => note(x, y), strokeRect: noop,
+      beginPath: noop, closePath: noop, fill: noop, stroke: noop,
+      save: noop, restore: noop, setLineDash: noop, setTransform: noop,
+      moveTo: note, lineTo: note, quadraticCurveTo: (a, b, c, d) => { note(a, b); note(c, d); },
+      arc: (x, y) => note(x, y), ellipse: (x, y) => note(x, y),
+      measureText: () => ({ width: 20 }), fillText: noop,
+      createLinearGradient: () => ({ addColorStop: noop }),
+    };
+    return ctx;
+  };
+
+  const src = fs.readFileSync(path.join(h.ROOT, 'js/view/cityview.js'), 'utf8');
+  const css = fs.readFileSync(path.join(h.ROOT, 'style.css'), 'utf8');
+  const { api } = h.boot({ seed: 1 });
+  const ctx = {
+    console, Math, Object, Array, String, Number, JSON, Set, Map, isFinite, isNaN,
+    BUILDINGS: api.BUILDINGS,
+    State: { bld: (c, k) => (c.buildings && c.buildings[k]) || 0, wallMaxOf: c => (c.buildings.wall || 1), isRiverCity: () => true },
+    // token 一律给出非空值：pal() 拿不到值就等于画成透明
+    getComputedStyle: () => ({ getPropertyValue: n => (css.includes(n + ':') ? '#123456' : '') }),
+    document: { documentElement: {} },
+  };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(src + '\n;globalThis.__C = CityView;', ctx, { filename: 'cityview.js' });
+  const C = ctx.__C;
+
+  // 1) 16 种建筑（城墙除外）每种都要有一块地：新增建筑忘了放地块，这里直接报错
+  const keys = C.PLOTS.map(p => p.key);
+  const missing = Object.keys(api.BUILDINGS).filter(k => k !== 'wall' && keys.indexOf(k) < 0);
+  ok('每种建筑都有地块', !missing.length, missing.join(', '));
+  ok('地块无重复', new Set(keys).size === keys.length, keys.join(','));
+  ok('地块数 = 建筑数 - 城墙', keys.length === Object.keys(api.BUILDINGS).length - 1,
+    `${keys.length} / ${Object.keys(api.BUILDINGS).length - 1}`);
+
+  // 2) 地块 / 街巷 / 点缀 不能占同一格
+  const cellKey = (c, r) => c + ',' + r;
+  const taken = new Map();
+  const clash = [];
+  const claim = (c, r, who) => {
+    const k = cellKey(c, r);
+    if (taken.has(k)) clash.push(`${k} 被 ${taken.get(k)} 与 ${who} 同时占用`);
+    else taken.set(k, who);
+  };
+  C.PLOTS.forEach(p => claim(p.col, p.row, p.key));
+  C.ROADS.forEach(([c, r]) => claim(c, r, '街巷'));
+  C.DECOR.forEach(([c, r]) => claim(c, r, '点缀'));
+  ok('地块 / 街巷 / 点缀 不重叠', !clash.length, clash.slice(0, 3).join('; '));
+
+  // 3) 全部落要在 7×5 菱形网格内（超出就画到城墙外面去了）
+  const outside = [...C.PLOTS.map(p => [p.col, p.row, p.key]),
+    ...C.ROADS.map(([c, r]) => [c, r, '街巷']),
+    ...C.DECOR.map(([c, r]) => [c, r, '点缀'])]
+    .filter(([c, r]) => c < 0 || c > 6 || r < 0 || r > 4)
+    .map(([c, r, w]) => `${w}(${c},${r})`);
+  ok('全部落在 7×5 网格内', !outside.length, outside.join(', '));
+
+  // 4) 颜色全部来自 token：pal() 里任何一个取不到值，就是画成透明
+  const pal = C.pal();
+  const blank = Object.keys(pal).filter(k => !pal[k]);
+  ok('内景配色 token 齐全（--city-*）', !blank.length, blank.join(', '));
+
+  // 5) 0 级 / 满级 / 在建 / 城墙受损 都要能画完而不抛错，且不出画布
+  const city = {
+    id: 'c1', name: '陈留', wall: 1, buildings: {}, buildQueue: [],
+  };
+  const roughs = [
+    ['全空地', () => { city.buildings = {}; city.buildQueue = []; city.wall = 1; }],
+    ['全满级', () => {
+      city.buildings = {};
+      for (const k of Object.keys(api.BUILDINGS)) city.buildings[k] = api.BUILDINGS[k].max;
+      city.wall = 99;
+    }],
+    ['在建', () => { city.buildQueue = [{ key: 'farm', to: 2, left: 1, total: 3 }]; }],
+    ['城墙受损', () => { city.wall = 0.4; }],
+  ];
+  for (const [label, setup] of roughs) {
+    setup();
+    const nodes = C.nodes({ cities: { c1: city } }, city);
+    ok(`内景节点齐（${label}）`, nodes.length === C.PLOTS.length, String(nodes.length));
+    const c2 = makeCtx();
+    let threw = null;
+    try { C.paint(c2, nodes, city); } catch (e) { threw = String(e && e.message || e); }
+    ok(`内景画得完（${label}）`, !threw, threw || '');
+    const xs = c2.trail.x, ys = c2.trail.y;
+    const bad = xs.some(x => x < -1 || x > C.W + 1) || ys.some(y => y < -1 || y > C.H + 1);
+    ok(`内景不出画布（${label}）`,
+      !bad,
+      `x ${Math.min(...xs).toFixed(0)}..${Math.max(...xs).toFixed(0)} / y ${Math.min(...ys).toFixed(0)}..${Math.max(...ys).toFixed(0)}`);
+  }
+
+  // 6) 节点按 y 升序：画家算法，前排必须后画
+  city.buildings = {};
+  const sorted = C.nodes({ cities: { c1: city } }, city);
+  const inOrder = sorted.every((n, i) => i === 0 || sorted[i - 1].y <= n.y);
+  ok('内景按 y 升序（前排后画）', inOrder, sorted.map(n => n.y).join(','));
+}
+
+// ─────────────────────────────────────────────
+section('州名与州界（地图上的州标识必须认得出）');
+{
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+  const { api, get } = h.boot({ seed: 11 });
+  const cities = Object.values(get().cities);
+  const regions = [...new Set(cities.map(c => c.region))];
+
+  // map.js 只有 prerender 里碰 document，其余是纯函数
+  const mctx = {
+    console, Math, Object, Array, String, Number, JSON, Set, Map, Float32Array, Int16Array,
+    U: api.U, GameMap: null,
+    document: { createElement: () => ({ width: 0, height: 0, getContext: () => null }) },
+  };
+  mctx.globalThis = mctx;
+  vm.createContext(mctx);
+  vm.runInContext(fs.readFileSync(path.join(h.ROOT, 'js/view/map.js'), 'utf8')
+    + '\n;globalThis.__GM = GameMap;', mctx, { filename: 'map.js' });
+  const anchors = mctx.__GM.regionAnchors(cities);
+  ok('每州一个州名锚点', anchors.length === regions.length, `${anchors.length}/${regions.length}`);
+  ok('锚点都在图内', anchors.every(a => a.x > 0 && a.y > 0 && a.x < mctx.__GM.W && a.y < mctx.__GM.H));
+  // 不能压住城池标记（密集州可能挤，兜底要求 40px）
+  const nearestCity = a => Math.min(...cities.map(c => api.U.dist(c.x, c.y, a.x, a.y)));
+  ok('锚点避开城池', anchors.every(a => nearestCity(a) >= 40),
+    `最近 ${Math.round(Math.min(...anchors.map(nearestCity)))}px`);
+  // 牌子必须落在自家地界内：锚点「最近的城池」必须属于它标的那个州
+  // （旧版用质心 + 绕圈避城，会被推到两州交界上）
+  const provinceAt = a => {
+    let m = Infinity, reg = '';
+    for (const c of cities) {
+      const d = api.U.dist(c.x, c.y, a.x, a.y);
+      if (d < m) { m = d; reg = c.region; }
+    }
+    return reg;
+  };
+  const outside = anchors.filter(a => provinceAt(a) !== a.name);
+  ok('州名落在本州境内（不在交界上）', outside.length === 0,
+    outside.length ? outside.map(a => a.name + '→' + provinceAt(a)).join('、') : '全部在境内');
+  ok('州名不带「州」字以外的怪字符', anchors.every(a => /^[\u4e00-\u9fa5]{1,3}$/.test(a.name)),
+    anchors.map(a => a.name).join('、'));
+
+  // 州名铭牌：屏幕空间画，字号不许缩到看不清
+  const rctx = {
+    console, Math, Object, Array, String, Number, JSON, Set, Map, Boolean, isFinite, isNaN,
+    U: api.U, GameMap: { _regionAnchors: anchors },
+  };
+  rctx.globalThis = rctx;
+  vm.createContext(rctx);
+  vm.runInContext(fs.readFileSync(path.join(h.ROOT, 'js/view/renderer.js'), 'utf8')
+    + '\n;globalThis.__R = Renderer;', rctx, { filename: 'renderer.js' });
+  const R = rctx.__R;
+  R.cw = 1440; R.ch = 900; R.cam = { x: 1200, y: 900, zoom: 0.5 };
+
+  const record = () => {
+    const calls = [];
+    let font = '';
+    const ctx = new Proxy({}, {
+      get: (t, k) => {
+        if (k === 'font') return font;
+        if (k === 'measureText') return txt => ({ width: String(txt).length * 12 });
+        if (typeof k === 'string' && /^(fillText|fillRect|strokeRect)$/.test(k)) {
+          return (...a) => calls.push({ k, a });
+        }
+        return () => {};
+      },
+      set: (t, k, v) => { if (k === 'font') font = v; return true; },
+    });
+    return { ctx, calls, font: () => font };
+  };
+
+  const far = record();
+  R.drawRegionLabels(far.ctx, 1440, 900, 0.5);
+  const texts = far.calls.filter(c => c.k === 'fillText').map(c => c.a[0]);
+  ok('0.5 倍缩放下 12 个州名全部画出', texts.length === anchors.length, `${texts.length} 个`);
+  const fontPx = Number(/([0-9.]+)px/.exec(far.font()) ? /([0-9.]+)px/.exec(far.font())[1] : 0);
+  ok('州名字号 ≥ 12px（旧版印在地形里 15px × 0.55 = 8px）', fontPx >= 12, `${fontPx}px`);
+  ok('州名铭牌带底衬（fillRect 与州名数量对上）',
+    far.calls.filter(c => c.k === 'fillRect').length >= anchors.length,
+    `${far.calls.filter(c => c.k === 'fillRect').length} 块`);
+
+  const tiny = record();
+  R.drawRegionLabels(tiny.ctx, 1440, 900, 0.2);
+  ok('拉远到 0.2 倍时州名淡出不糊屏', tiny.calls.length === 0, `${tiny.calls.length} 次绘制`);
+}
+
+// ─────────────────────────────────────────────
+section('视图面板（用 stub 装进 vm 跑，不碰真 DOM）');
+{
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+  const load = (file, name, extra) => {
+    const ctx = {
+      console, Math, Object, Array, String, Number, JSON, Set, Map, Boolean,
+      isFinite, isNaN, document: { createElement: () => ({ classList: { toggle() {} }, appendChild() {} }) },
+      ...extra,
+    };
+    ctx.globalThis = ctx;
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync(path.join(h.ROOT, file), 'utf8') + `\n;globalThis.__P = ${name};`, ctx,
+      { filename: file });
+    return ctx.__P;
+  };
+
+  // ── 军区面板：征讨目标不再被截断到 8 家；「整州入辖」一键把整州交给都督 ──
+  {
+    const { api, get } = h.boot({ seed: 41 });
+    h.grantCities(api, 5);
+    const g = () => api.Store.get();
+    const hero = Object.values(g().heroes)
+      .find(x => x.factionId === g().player.factionId && x.id !== 'PLAYER' && x.cityId === g().player.homeCityId);
+    const lgId = api.Store.dispatch('LEGION_CREATE', { heroId: hero.id }).id;
+    api.Store.dispatch('LEGION_ASSIGN', { id: lgId, cityIds: [] });
+    api.Store.dispatch('LEGION_ORDER', { id: lgId, stance: 'strike', targetFid: 'yuanshao' });
+
+    const box = { innerHTML: '', onclick: null };
+    const P = load('js/view/panels/legion.js', 'UI_LEGION', {
+      State: api.State, Legion: api.Legion, Diplo: api.Diplo, POLICIES: api.POLICIES, U: api.U,
+      PLAYER_HERO_ID: api.PLAYER_HERO_ID, LOC: api.LOC,
+      Store: { get: g, dispatch: api.Store.dispatch },
+      UI: { $: id => (id === 'legionBody' ? box : { textContent: '', onclick: null }), flash() {}, render() {} },
+    });
+    P.renderLegion(g());
+    const live = Object.values(g().factions)
+      .filter(f => f.id !== 'free' && f.id !== g().player.factionId && !f.dead).length;
+    const shown = (box.innerHTML.match(/data-target=/g) || []).length;
+    ok('征讨目标列全（20 家势力不再砍到 8 家）', shown === live && live > 8, `${shown}/${live}`);
+
+    const region = g().cities[g().player.homeCityId].region;
+    const inRegion = Object.values(g().cities).filter(c => c.owner === g().player.factionId && c.region === region);
+    ok('用例前提：该州有多座本方城', inRegion.length >= 1, `${region} ${inRegion.length} 城`);
+    ok('整州入辖按钮在面板上', box.innerHTML.indexOf('data-reg=') >= 0, '未渲染');
+
+    box.onclick({ target: {
+      closest: sel => (sel === 'button'
+        ? { dataset: { reg: region } }
+        : { dataset: { lg: lgId } }),
+    } });
+    const got = api.State.legions(g())[0].cityIds.length;
+    ok('整州入辖：该州本方城一次全归都督', got === inRegion.length, `${got}/${inRegion.length}`);
+
+    // 点「征讨」不能替玩家拿排序第一的势力宣战
+    api.Store.dispatch('LEGION_ORDER', { id: lgId, stance: 'defend' });
+    const warsOf = () => Object.keys(g().factions).filter(fid => fid !== 'free'
+      && api.Diplo.statusOf(g(), g().player.factionId, fid) === api.Diplo.WAR).join(',');
+    const wars0 = warsOf();
+    box.onclick({ target: {
+      closest: sel => (sel === 'button' ? { dataset: { order: 'strike' } } : { dataset: { lg: lgId } }),
+    } });
+    const lgAfter = api.State.legions(g())[0];
+    ok('面板：点征讨不自动宣战、不替你挑目标',
+      lgAfter.stance === 'strike' && !lgAfter.targetFid && warsOf() === wars0,
+      `战 ${wars0 || '无'} → ${warsOf() || '无'}`);
+  }
+
+  // ── 官阶台直辖台：多选收归；满员时列出可交出的城（不擅自替你决定） ──
+  {
+    const { api, get } = h.boot({ seed: 12 });
+    h.grantCities(api, 4);
+    const g = () => api.Store.get();
+    // 造出「直辖 2/2、另有 2 座本方非直辖城」
+    const G0 = g();
+    G0.player.rank = 1;
+    const mine = Object.values(G0.cities).filter(c => c.owner === G0.player.factionId).map(c => c.id);
+    for (const id of mine) G0.cities[id].grantedTo = null;
+    const dem = mine.slice(0, 2);
+    const extra = mine.slice(2);
+    for (const id of dem) G0.cities[id].grantedTo = 'PLAYER';
+    G0.player.demesne = dem.slice();
+    const raw = JSON.parse(JSON.stringify(G0));
+    api.Store.replace(raw);
+
+    const box = { innerHTML: '', querySelectorAll: () => [], querySelector: () => null };
+    const uiStub = {
+      $: id => (id === 'demesneBox' ? box : { textContent: '', innerHTML: '', onclick: null, querySelectorAll: () => [] }),
+      flash() {}, render() {}, toast() {}, locateCity() {},
+    };
+    const P = load('js/view/panels/rank.js', 'UI_RANK', {
+      State: api.State, Store: { get: g, dispatch: api.Store.dispatch }, U: api.U,
+      RANKS: api.RANKS, ROUTES: api.ROUTES, POLICIES: api.POLICIES, INDEPENDENCE: api.INDEPENDENCE,
+      rankOf: api.rankOf, cityCap: api.cityCap, meritThreshold: api.meritThreshold,
+      PROVINCE_SWEEP: api.PROVINCE_SWEEP, troopTotal: api.troopTotal, PLAYER_HERO_ID: api.PLAYER_HERO_ID,
+      UI: uiStub,
+    });
+    // 面板内部回调走 UI.xxx，接回被测对象本身（照实跑完整个流程）
+    uiStub.renderDemesneBox = (...a) => P.renderDemesneBox(...a);
+    uiStub.takeDemesne = (...a) => P.takeDemesne(...a);
+
+    P.renderDemesneBox(g());
+    ok('直辖台列出本方非直辖城（可多选）', (box.innerHTML.match(/data-city=/g) || []).length === extra.length,
+      `${(box.innerHTML.match(/data-city=/g) || []).length}/${extra.length}`);
+
+    // 队列：满员 → 不动手，先列可交出的城
+    // 面板内部读写的是 UI._takeQueue（生产里 UI 就是各面板合并后的命名空间），
+    // 所以队列要挂在 stub 上，别挂在 UI_RANK 上
+    uiStub._takeQueue = extra.slice();
+    P.takeDemesne(g());
+    ok('满员时先要你挑交出的城', (box.innerHTML.match(/data-release=/g) || []).length === dem.length
+      && api.Store.get().player.demesne.length === dem.length,
+    `可交出 ${(box.innerHTML.match(/data-release=/g) || []).length} 座`);
+
+    // 交出 1 座 → 顶进 1 座，队列还剩 1
+    api.Store.dispatch('SET_DEMESNE', { cityId: extra[0], releaseId: dem[0] });
+    uiStub._takeQueue = extra.slice(1);
+    P.takeDemesne(g());
+    const p2 = api.Store.get().player;
+    ok('交出一座换进一座，队列继续等名额', p2.demesne.indexOf(extra[0]) >= 0
+      && p2.demesne.length === dem.length && uiStub._takeQueue.length === extra.length - 1,
+    `直辖 ${p2.demesne.length}，队列 ${uiStub._takeQueue.length}`);
+  }
+}
+
+// ─────────────────────────────────────────────
+section('城池悬停速览（守将 / 都督）');
+{
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+  const { api, get } = h.boot({ seed: 41 });
+  h.grantCities(api, 4);
+  const g = () => api.Store.get();
+  const G0 = g();
+  const home = G0.cities[G0.player.homeCityId];
+
+  // 给首城安排守将，并把另一座本方城划进军区（都督）
+  const heroes = Object.values(G0.heroes).filter(x => x.alive && x.factionId === G0.player.factionId);
+  const govHero = heroes.find(x => x.id !== 'PLAYER');
+  home.governor = govHero.id;
+  const other = api.State.demesne(g()).find(c => c.id !== home.id)
+    || api.State.factionCities(g(), g().player.factionId).find(c => c.id !== home.id);
+  const duHero = heroes.find(x => x.id !== govHero.id);
+  api.Store.dispatch('LEGION_CREATE', { heroId: duHero.id });
+  const lgId = api.State.legions(g())[0].id;
+  api.Store.dispatch('LEGION_ASSIGN', { id: lgId, cityIds: [other.id] });
+
+  const tip = {
+    innerHTML: '', className: '', offsetWidth: 220, offsetHeight: 90,
+    classList: { add() {}, remove() {}, contains: () => false },
+    style: {},
+  };
+  const uiStub = {
+    $: id => (id === 'cityTip' ? tip : { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }) }),
+    _tipSig: '', _tipSize: null, _wrapRect: { left: 0, top: 0, width: 1200, height: 800 },
+  };
+  const ctx = {
+    console, Math, Object, Array, String, Number, JSON, Set, Map, Boolean, isFinite, isNaN, Date,
+    document: { createElement: () => ({ classList: { add() {}, remove() {} }, appendChild() {}, style: {} }) },
+    State: api.State, Store: { get: g, dispatch: api.Store.dispatch }, U: api.U, Diplo: api.Diplo,
+    DIPLO_STATUS: api.DIPLO_STATUS, TERRAIN: api.TERRAIN, BUILDINGS: api.BUILDINGS, POLICIES: api.POLICIES,
+    LEGIONS: api.LEGIONS, Legion: api.Legion, PLAYER_HERO_ID: api.PLAYER_HERO_ID, troopTotal: api.troopTotal,
+    TROOPS: api.TROOPS, TROOP_KEYS: api.TROOP_KEYS, Mission: api.Mission, rankOf: api.rankOf,
+    cityCap: api.cityCap, ROUTES: api.ROUTES, RANKS: api.RANKS, INDEPENDENCE: api.INDEPENDENCE,
+    Combat: api.Combat, Army: api.Army, Scene: api.Scene, UI: uiStub,
+  };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  const src = fs.readFileSync(path.join(h.ROOT, 'js/view/ui.js'), 'utf8')
+    .replace(/Object\.assign\(UI,[\s\S]*?\);/, '');      // 面板装配在浏览器里做，这里不需要
+  vm.runInContext(src + '\n;globalThis.__UI = UI;', ctx, { filename: 'ui.js' });
+  const UIObj = ctx.__UI;
+  UIObj.$ = uiStub.$;
+
+  const g2 = g();
+  UIObj.showCityTip(g2.cities[home.id], 100, 100);
+  const html = tip.innerHTML;
+  ok('悬停显示守将与属性', html.indexOf(govHero.name) >= 0 && /守将/.test(html)
+    && html.indexOf(`统${govHero.tong}`) >= 0, html.slice(0, 120).replace(/\s+/g, ' '));
+
+  UIObj._tipSig = '';
+  UIObj.showCityTip(g2.cities[other.id], 100, 100);
+  const html2 = tip.innerHTML;
+  ok('悬停显示都督与号令', html2.indexOf(duHero.name) >= 0 && /都督/.test(html2)
+    && html2.indexOf('守土') >= 0 && /辖1城/.test(html2), html2.slice(0, 160).replace(/\s+/g, ' '));
+
+  // 直辖但没设军区：明确写「未设军区」，别让人以为漏了
+  const plain = api.State.demesne(g()).find(c => !api.State.legionOf(g(), c.id));
+  if (plain) {
+    UIObj._tipSig = '';
+    UIObj.showCityTip(g().cities[plain.id], 100, 100);
+    ok('直辖城未设军区时写明', /都督/.test(tip.innerHTML) && /未设军区/.test(tip.innerHTML),
+      tip.innerHTML.replace(/\s+/g, ' ').slice(0, 120));
+  }
+
+  // 敌方城不带都督行
+  const foe = Object.values(g().cities).find(c => c.owner !== g().player.factionId && c.owner !== 'free');
+  UIObj._tipSig = '';
+  UIObj.showCityTip(g().cities[foe.id], 100, 100);
+  ok('敌方城不显示都督行', !/都督/.test(tip.innerHTML), tip.innerHTML.replace(/\s+/g, ' ').slice(0, 120));
 }
 
 // ─────────────────────────────────────────────

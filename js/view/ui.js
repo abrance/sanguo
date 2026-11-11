@@ -86,7 +86,9 @@ const UI = {
 
   syncTabs() {
     for (const btn of UI.$('sideTabs').querySelectorAll('button')) {
-      btn.classList.toggle('on', btn.dataset.tab === UI.sideTab);
+      const on = btn.dataset.tab === UI.sideTab;
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');   // 屏幕阅读器靠这个知道选中哪个页
     }
     for (const id of ['tabCity', 'tabArmy', 'tabTech', 'tabLegion', 'tabDiplo', 'tabLog']) {
       UI.$(id).classList.add('hidden');
@@ -98,7 +100,9 @@ const UI = {
     UI.$(map[UI.sideTab]).classList.remove('hidden');
 
     for (const btn of UI.$('cityTabs').querySelectorAll('button')) {
-      btn.classList.toggle('on', btn.dataset.ctab === UI.cityTab);
+      const on = btn.dataset.ctab === UI.cityTab;
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
     }
   },
 
@@ -465,6 +469,22 @@ const UI = {
     const isMine = city.owner === G.player.factionId;
     const isDemesne = city.grantedTo === PLAYER_HERO_ID;
     const gov = city.governor ? G.heroes[city.governor] : null;
+    // 都督：只有玩家自己的军区会辖城（State.legions 挂在 G.player 上）
+    const lg = State.legionOf(G, city.id);
+    const du = lg && G.heroes[lg.heroId] && G.heroes[lg.heroId].alive ? G.heroes[lg.heroId] : null;
+    // 城里有将但没任守将时，至少让人知道驻了谁
+    const stationed = Object.values(G.heroes)
+      .filter(h => h.alive && h.cityId === city.id && h.id !== city.governor && h.id !== PLAYER_HERO_ID);
+    const govLine = gov
+      ? `统${gov.tong} 武${gov.wu} 忠${Math.round(gov.loyalty == null ? 60 : gov.loyalty)}`
+      : (stationed.length
+        ? `驻将 ${stationed.slice(0, 2).map(h => U.esc(h.name)).join('、')}`
+        : '');
+    const duLine = du
+      ? `统${du.tong} 政${du.zheng} · ${Legion.STANCES[lg.stance].name}`
+        + `${lg.stance === 'strike' && lg.targetFid && G.factions[lg.targetFid] ? '·' + U.esc(G.factions[lg.targetFid].name) : ''}`
+        + ` · 辖${State.legionCities(G, lg).length}城`
+      : '';
     const st = !isMine && city.owner !== 'free'
       ? DIPLO_STATUS[Diplo.statusOf(G, G.player.factionId, city.owner)] : null;
     const cap = State.troopCapOf(G, city);
@@ -474,7 +494,10 @@ const UI = {
 
     // 同一座城、内容没变就不重建 DOM：悬停移动时只改两个 style，不再触发强制布局
     const sig = [city.id, city.owner, city.grantedTo, troops, Math.round(city.order), Math.round(city.morale),
-      city.wall.toFixed(1), gov ? gov.id : '', city.policy, building].join('|');
+      city.wall.toFixed(1), gov ? gov.id : '', city.policy, building,
+      gov ? Math.round(gov.loyalty == null ? 60 : gov.loyalty) : '', stationed.map(h => h.id).join(','),
+      du ? du.id : '', du ? du.tong + '/' + du.zheng : '', lg ? lg.stance : '',
+      lg && lg.targetFid ? lg.targetFid : '', lg ? State.legionCities(G, lg).length : 0].join('|');
     if (sig !== UI._tipSig) {
       UI._tipSig = sig;
       tip.innerHTML = `
@@ -486,8 +509,12 @@ const UI = {
       <div class="ct-row"><span>守军</span><b>${U.num(troops)}</b><span>/</span>${U.num(cap)}
         <span>城墙</span><b>${city.wall.toFixed(1)}</b></div>
       <div class="ct-row"><span>治安</span><b>${Math.round(city.order)}</b>
-        <span>士气</span><b>${Math.round(city.morale)}</b>
-        <span>守将</span><b>${gov ? U.esc(gov.name) : '无'}</b></div>
+        <span>士气</span><b>${Math.round(city.morale)}</b></div>
+      <div class="ct-row"><span>守将</span><b>${gov ? U.esc(gov.name) : '无'}</b>
+        <span>${govLine}</span></div>
+      ${du ? `<div class="ct-row"><span>都督</span><b>${U.esc(du.name)}</b><span>${duLine}</span></div>`
+        : (isMine ? `<div class="ct-row"><span>都督</span><b>无</b>
+            <span>${isDemesne ? '未设军区' : '非直辖 · 归 AI 代管'}</span></div>` : '')}
       <div class="ct-foot dim">${TERRAIN[city.terrain].name} · ${city.region}
         ${city.policy ? ' · ' + POLICIES[city.policy].name : ''}
         ${building ? ' · 兴建' + building : ''}</div>`;
@@ -634,6 +661,11 @@ const UI = {
         const fresh = g.log.slice(UI._lastLogLen);
         UI._lastLogLen = g.log.length;
         if (fresh.some(x => /陷落|覆灭|失守/.test(x.text))) Audio.play('alarm');
+        // 上命逾期：这是“被记一笔”的事，给一个下行长音，比警报轻但听得出不妙
+        if (fresh.some(x => /上命逾期/.test(x.text))) Audio.play('order');
+        // 外交成败：同盟 / 停战 / 离间成功是上行二音，被君主驳回是闷的一下
+        if (fresh.some(x => /结为同盟|罢兵，停战|密使离间/.test(x.text))) Audio.play('diploOk');
+        if (fresh.some(x => /为君主所拒/.test(x.text))) Audio.play('diploNo');
       }
     };
     setInterval(watch, 600);

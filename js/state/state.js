@@ -3,6 +3,12 @@
 
 const PLAYER_HERO_ID = 'PLAYER';
 
+/**
+ * 「一统一州」加成：全州只剩你一家 → 该州你的城（直辖 + 军区域）吃这个乘数。
+ * 属下治理且未划军区的城不吃 —— 占州要真管才算数。
+ */
+const PROVINCE_SWEEP = { econ: 1.12, cap: 1.10 };
+
 /** 名望档位（顶栏与事件选项的「以名望服人」共用） */
 function repTitle(v) {
   if (v >= 280) return '天下归心';
@@ -28,6 +34,8 @@ const CITY_DEFAULTS = {
   order: 70, morale: 70, unrest: 0,
   policy: null, rallyTo: null, rallyRatio: 0.5, rallyFill: 1.2,
   clanActionTurn: 0, buildQueue: [], promoteTurn: 0,
+  mart: null,               // 市肆：{ turn, bought[] }，回合一变就当本月没买过
+  trained: null,            // 校场：{ turn, used }，回合一变就当本月没训过
 };
 /** 人情账新字段（docs/HERO.md §1.2）。ambition 由公式算，这里只是兜底值 */
 /** 事件层（docs/EVENTS.md §1）：只存纯数据，函数一律回查 EVENTS */
@@ -40,6 +48,7 @@ const COURT_DEFAULTS = {
 
 const HERO_DEFAULTS = {
   ambition: 40, bond: 0, grievance: 0, idle: 0, lastAct: 0, warnTurn: 0, cd: {},
+  train: 0,                   // 校场：已训练次数（0-6），成长已写进五维本体
   visits: {},                 // 定向登用：{ visit/gift/beseech: 上次回合, fails: 连败次数 }
   slots: {},                  // 宝物槽：{ weapon/armor/mount/book/seal: treasureId }
 };
@@ -311,6 +320,9 @@ const State = {
     if (c.rallyTo === undefined) c.rallyTo = null;
     if (c.rallyRatio == null) c.rallyRatio = 0.5;
     if (c.rallyFill == null) c.rallyFill = 1.2;
+    if (!c.mart || typeof c.mart !== 'object') c.mart = null;
+    else if (!Array.isArray(c.mart.bought)) c.mart.bought = [];
+    if (!c.trained || typeof c.trained !== 'object') c.trained = null;
   },
 
   /** 建筑槽位：府衙 3 级起可并行 2 个工程 */
@@ -368,13 +380,16 @@ const State = {
     const clanMul = State.clanMilMul(c);
     const techMul = b ? b.troopCap : 1;
     const momentumMul = State.momentum(G, c.owner);
-    const total = Math.round(popBase * orderMul * barracksMul * drillMul * clanMul * techMul * momentumMul);
+    const prov = State.provinceMul(G, c);
+    const provMul = prov ? prov.cap : 1;
+    const total = Math.round(popBase * orderMul * barracksMul * drillMul * clanMul * techMul * momentumMul * provMul);
     return {
       farm,
       pop: c.pop,
       hukou,
       order: c.order,
       popBase, orderMul, barracksMul, drillMul, clanMul, techMul, momentumMul,
+      provinceMul: provMul, province: c.region,
       barracks: State.bld(c, 'barracks'),
       drill: State.bld(c, 'drill'),
       clanSat: State.clanSat(c),
@@ -408,11 +423,53 @@ const State = {
   hero(G, id) { return G.heroes[id]; },
   faction(G, id) { return G.factions[id]; },
   isPlayerCity(G, c) { return !!c && c.grantedTo === PLAYER_HERO_ID; },
+  /** 本方城池（不论直辖与否）：军区辖城与非直辖城的命令入口用这个 */
+  isOwnCity(G, c) { return !!c && c.owner === G.player.factionId; },
+
+  // ─────── 州（地图上的 region，本来只用于州界与州名） ───────
+  /** 州归属：一州之内只剩一家（在野不算）→ 返回势力 id，否则 null */
+  provinceOwner(G, region) {
+    // ponytail: 按月缓存。玩家亲自指挥的攻城可能月中易主，此时会滞后到下一月 ——
+    // 只影响面板那行提示，不影响月产结算（Economy 在易主后的新回合重算）
+    const cache = G._provOwners || (G._provOwners = { turn: -1, map: {} });
+    if (cache.turn !== G.meta.turn) { cache.turn = G.meta.turn; cache.map = {}; }
+    if (cache.map[region] !== undefined) return cache.map[region];
+
+    let owner = null, sole = true;
+    for (const c of Object.values(G.cities)) {
+      if (c.region !== region) continue;
+      if (!owner) owner = c.owner;
+      else if (c.owner !== owner) { sole = false; break; }
+    }
+    cache.map[region] = sole && owner && owner !== 'free' ? owner : null;
+    return cache.map[region];
+  },
+
+  /** 一统加成（不满足返回 null）。只给「自己真的在管」的城 */
+  provinceMul(G, c) {
+    if (!c || !State.isOwnCity(G, c)) return null;
+    if (c.grantedTo !== PLAYER_HERO_ID && !State.legionOf(G, c.id)) return null;
+    if (State.provinceOwner(G, c.region) !== G.player.factionId) return null;
+    return PROVINCE_SWEEP;
+  },
+
+  /** 本势力已一统的州名（官阶台与纪事用） */
+  sweptProvinces(G) {
+    const out = [];
+    const add = c => {
+      if (c && out.indexOf(c.region) < 0 && State.provinceOwner(G, c.region) === G.player.factionId) {
+        out.push(c.region);
+      }
+    };
+    for (const c of State.demesne(G)) add(c);
+    for (const id of State.legionCityIds(G)) add(G.cities[id]);
+    return out;
+  },
 
   // ───────── 军区（一将统辖多城，全托管但听玩家号令） ─────────
   legions(G) { return G.player.legions || (G.player.legions = []); },
 
-  /** 城不再直辖（交出 / 削权 / 失守）：一并从军区辖城摘掉，否则军区还当它是自己的 */
+  /** 城已易主（失守）：一并从军区辖城摘掉，否则军区还当它是自己的 */
   dropLegionCity(G, cityId) {
     for (const lg of State.legions(G)) {
       const i = (lg.cityIds || []).indexOf(cityId);
@@ -427,9 +484,16 @@ const State = {
     return null;
   },
 
-  /** 军区里的城（顺带滤掉已不再直辖的） */
+  /** 军区里的城（顺带滤掉已失守 / 已易主的） */
   legionCities(G, lg) {
-    return (lg.cityIds || []).map(id => G.cities[id]).filter(c => c && c.grantedTo === PLAYER_HERO_ID);
+    return (lg.cityIds || []).map(id => G.cities[id]).filter(c => c && c.owner === G.player.factionId);
+  },
+
+  /** 全军区辖城 id：AI 编排要跳过这些城（否则与都督抢同一座城的兵与工程） */
+  legionCityIds(G) {
+    const s = new Set();
+    for (const lg of State.legions(G)) for (const id of (lg.cityIds || [])) s.add(id);
+    return s;
   },
 
   /** 都督加成：统率 → 守城战力，政略 → 产出。同一城只吃一个军区 */
@@ -657,6 +721,19 @@ const State = {
 
     State._fillDefaults(G.player, PLAYER_DEFAULTS);
     State._fillDefaults(G.meta, META_DEFAULTS);
+
+    // 军区：旧版 id = `lg_<回合>_<序号>`，裁撤一处再委任会撞号 → 重复 id 重新发号，
+    // 否则 `legions.find(x => x.id === id)` 永远命中第一个，切城会算到别的都督头上。
+    {
+      const lgIds = new Set();
+      for (const lg of (G.player.legions || [])) {
+        if (!lg) continue;
+        if (!Array.isArray(lg.cityIds)) lg.cityIds = [];
+        if (!lg.id) lg.id = U.uid('lg');
+        while (lgIds.has(lg.id)) lg.id = U.uid('lg');
+        lgIds.add(lg.id);
+      }
+    }
 
     // 朝堂：旧档补默认值
     if (!G.court) G.court = U.clone(COURT_DEFAULTS);

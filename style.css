@@ -45,6 +45,33 @@
   --season-autumn-1:#8a6a2f; --season-autumn-2:#5a3f18;
   --season-winter-1:#6a7686; --season-winter-2:#3f4a56;
 
+  /* ── 城池内景（canvas 等距矢量，A 档；见 js/view/cityview.js） ── */
+  --city-grass:#2f3927;    /* 城内空地（比墙外亮，城才读得出是主体） */
+  --city-grass-2:#1b2116;  /* 城内空地（暗侧 / 草纹） */
+  --city-shadow:#0b0907;   /* 建筑投影 */
+  --city-earth:#33291d;    /* 裸土 / 夯地 */
+  --city-earth-2:#241d14;  /* 裸土（暗侧） */
+  --city-earth:#4a3f30;    /* 裸土 / 夯地（备用亮土） */
+  --city-road:#574a37;     /* 街巷 */
+  --city-wall:#7a6b52;     /* 城墙受光面 */
+  --city-wall-lit:#9c8b6c; /* 城墙顶面 */
+  --city-wall-dark:#3d3428;/* 城墙背光面 */
+  --city-roof:#3f3a36;     /* 青瓦 */
+  --city-roof-lit:#585049; /* 青瓦受光 */
+  --city-roof-gold:#8a6a2a;/* 府衙 / 学宫 官式瓦 */
+  --city-beam:#7a2f26;     /* 朱柱 */
+  --city-plaster:#b8ad96;  /* 白墙 */
+  --city-wood:#6a4a2c;     /* 木构 */
+  --city-wood-dark:#3f2c1a;/* 木构背光 */
+  --city-stone:#7a7166;    /* 石作 */
+  --city-stone-dark:#4a453d;/* 石作背光 */
+  --city-field:#6a6530;    /* 田亩 */
+  --city-field-2:#8c823c;  /* 田垄 */
+  --city-water:#2c4452;    /* 水 */
+  --city-fire:#c9762a;     /* 烽火 / 炉火 */
+  --city-empty:#241f18;    /* 空地地基 */
+  --city-gold:#c9a227;     /* 脚手架 / 治所星标 */
+
   /* ── 宝物稀有度（边框，docs/HERO.md §4.5） ── */
   --rare-1:#6f6558;
   --rare-2:#8a7a3a;
@@ -373,10 +400,15 @@ button.wide{display:block;width:100%;margin-top:14px;padding:10px;font-size:var(
   padding:4px;
 }
 .brow .bname{flex:1 1 auto;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.brow .blv{font-size:var(--fs-label);color:var(--gold);min-width:22px;text-align:center}
+.brow .blv{font-size:var(--fs-label);color:var(--gold);min-width:22px;text-align:center;white-space:nowrap}
+
+/* 校场训练行（人物页）：按钮 + 方向 + 练度 */
+.drillrow{display:flex;align-items:center;gap:4px;margin-top:4px}
+.drillrow .mini{flex:0 0 auto}
 .brow .bcost{font-size:var(--fs-label);color:var(--ink-dim);white-space:nowrap}
 .brow button{padding:2px 6px;font-size:var(--fs-label)}
 .brow.locked{opacity:.42}
+.brow.hl{background:var(--surface-5);box-shadow:inset 0 0 0 1px var(--gold-line)}
 .brow.maxed .blv{color:var(--ally)}
 
 .qrow{
@@ -500,6 +532,18 @@ button.wide{display:block;width:100%;margin-top:14px;padding:10px;font-size:var(
   flex:1 1 auto;position:relative;overflow:hidden;
   background:var(--bg-deep);
 }
+/* ---------- 城池内景（概览页顶部等距图） ---------- */
+.cityscene-wrap{
+  position:relative;
+  border:1px solid var(--line);
+  border-radius:var(--r-md);
+  background:linear-gradient(180deg,var(--city-grass-2),var(--bg-deep));
+  overflow:hidden;
+  margin-bottom:6px;
+}
+.cityscene{display:block;width:100%;height:clamp(132px,21vh,214px);cursor:default}
+.cityscene.hot{cursor:pointer}
+
 #map{display:block;width:100%;height:100%;cursor:grab}
 #map.dragging{cursor:grabbing}
 #map.targeting{cursor:crosshair}
@@ -573,6 +617,9 @@ button.wide{display:block;width:100%;margin-top:14px;padding:10px;font-size:var(
 .lgcard .lghead b{color:var(--gold-pale)}
 .lgcard .lgrow{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:4px}
 .lgcard .lglab{font-size:var(--fs-label);color:var(--ink-dim);min-width:26px}
+.lgcard .mini.on{background:var(--surface-6);border-color:var(--gold);color:var(--gold-pale)}
+.lgchip{min-width:calc(3em + 14px);text-align:left}
+
 .lgcard .mini:disabled{opacity:.35;cursor:not-allowed}
 .lgcard .lgacts{display:flex;gap:6px;margin-top:6px}
 
@@ -864,6 +911,7 @@ button.wide-mini{display:block;width:100%;margin-top:6px;padding:0;min-height:va
 .batchacts button:hover{background:var(--btn-bg-hover);border-color:var(--gold)}
 .batchacts button.primary{background:linear-gradient(180deg,var(--primary-1),var(--primary-2));border-color:var(--primary-line)}
 
+.pickscroll{max-height:190px;overflow:auto}
 .crow-pick{
   display:flex;align-items:center;gap:6px;
   padding:4px;
@@ -934,7 +982,7 @@ button.wide-mini{display:block;width:100%;margin-top:6px;padding:0;min-height:va
   padding-bottom:4px;margin-bottom:4px;border-bottom:1px solid var(--surface-3)}
 .ct-head b{font-size:var(--fs-title);font-weight:400;color:var(--gold);letter-spacing:1px}
 .ct-head span{font-size:var(--fs-label)}
-.ct-row{display:flex;gap:4px;align-items:baseline;color:var(--ink-dim)}
+.ct-row{display:flex;gap:4px;align-items:baseline;flex-wrap:wrap;color:var(--ink-dim)}
 .ct-row b{color:var(--ink);font-weight:600;margin-right:4px}
 .ct-foot{margin-top:3px;font-size:var(--fs-label)}
 

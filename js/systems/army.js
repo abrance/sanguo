@@ -204,8 +204,9 @@ const Army = {
     }
 
     // 敌军城：开战
-    // 玩家亲自指挥的仗逐轮推进（轮间可放一次战法），其余一次打完
-    const interactive = a.factionId === G.player.factionId || target.grantedTo === PLAYER_HERO_ID;
+    // 玩家亲自指挥的仗逐轮推进（轮间可放一次战法），其余（含军区派出的）一次打完
+    const interactive = !a.legionId
+      && (a.factionId === G.player.factionId || target.grantedTo === PLAYER_HERO_ID);
     if (interactive) {
       Combat.begin(G, a, target, stamp);
       if (Combat.step(G, a, target, null, stamp)) {
@@ -322,16 +323,22 @@ const Army = {
       Mission.onCapture(G, city.id);
       if (a.legionId) {
         const lg = (G.player.legions || []).find(x => x.id === a.legionId);
-        if (lg) lg.stats.taken = (lg.stats.taken || 0) + 1;
+        if (lg) {
+          lg.stats.taken = (lg.stats.taken || 0) + 1;
+          // 军区打下的城继续归它管（直辖已满时 Rank.onCapture 不会收归，不分给军区就落到 AI 编排里）
+          if (city.grantedTo !== PLAYER_HERO_ID && (lg.cityIds || []).indexOf(city.id) < 0) {
+            (lg.cityIds = lg.cityIds || []).push(city.id);
+          }
+        }
       }
     }
 
     if (oldOwner === G.player.factionId) {
       // 玩家势力丢城
+      State.dropLegionCity(G, city.id);
       const idx = G.player.demesne.indexOf(city.id);
       if (idx >= 0) {
         G.player.demesne.splice(idx, 1);
-        State.dropLegionCity(G, city.id);
         G.stats.citiesLost++;
         State.log(G, 'bad', `我军失守：${city.name}陷落！`);
       }
