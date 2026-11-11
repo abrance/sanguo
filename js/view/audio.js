@@ -22,6 +22,11 @@ const Audio = {
     // 任一手势都解锁一次（挂 document 上，不用各处再写）
     document.addEventListener('pointerdown', unlock, { passive: true });
     document.addEventListener('keydown', unlock, { passive: true });
+    // 点击音统一在这里挂：按钮/下拉/页签一次覆盖，不必去二十处按钮里各写一行
+    document.addEventListener('click', (e) => {
+      const t = e.target && e.target.closest ? e.target.closest('button, select, [role="tab"]') : null;
+      if (t && !t.disabled) this.play('click');
+    }, { passive: true });
   },
 
   /**
@@ -147,7 +152,7 @@ const Audio = {
     osc.stop(t0 + spec.dur + 0.02);
   },
 
-  /** 五个音：翻月 / 开工 / 出征 / 破城 / 警报 */
+  /** 九种音：翻月 / 开工 / 出征 / 破城 / 警报 / 点击 / 外交成 / 外交败 / 上命逾期 */
   play(name) {
     if (this.muted || !this.ctx) return;
     // 同一种音 250ms 内只响一次，免得一回合里几十场战斗把耳朵炸了
@@ -201,6 +206,21 @@ const Audio = {
       case 'alarm':  // 警报：两短音
         this._blip({ type: 'triangle', from: 660, to: 660, dur: 0.09, gain: 0.07 });
         setTimeout(() => this._blip({ type: 'triangle', from: 660, to: 660, dur: 0.09, gain: 0.07 }), 130);
+        break;
+      case 'click':  // 点击：一个极短的木质 tick，响了但不抢戏
+        this._blip({ type: 'square', from: 1400, to: 1100, dur: 0.02, gain: 0.03, attack: 0.004 });
+        break;
+      case 'diploOk':  // 外交成：上行二音 + 轻混响（“谈成了”的短句）
+        [523.25, 698.46].forEach((f, i) => this._blip({
+          type: 'triangle', from: f, to: f, dur: i ? 0.3 : 0.12, gain: 0.07, lp: 3000, at: i * 0.12, rev: i ? 0.25 : 0,
+        }));
+        break;
+      case 'diploNo':  // 外交败：一个下行小音，闷而不刺耳（被驳回不是战败）
+        this._blip({ type: 'square', from: 300, to: 220, dur: 0.18, gain: 0.05, lp: 900 });
+        break;
+      case 'order':  // 上命逾期：下行长音 + 低频收尾，听到就知道“这月没办成”
+        this._blip({ type: 'triangle', from: 392, to: 294, dur: 0.4, gain: 0.08, lp: 1400, rev: 0.2 });
+        this._blip({ type: 'sine', from: 98, to: 88, dur: 0.5, gain: 0.07, at: 0.1 });
         break;
       default:
         break;

@@ -66,17 +66,17 @@
       <button id="btnRankHall" class="mini wide-mini">官阶台 · 仕途 / 上命</button>
     </section>
 
-    <nav id="sideTabs">
-      <button data-tab="city" class="on">城池</button>
-      <button data-tab="army">军务</button>
-      <button data-tab="tech">科技</button>
-      <button data-tab="legion">军区</button>
-      <button data-tab="diplo">外交</button>
-      <button data-tab="log">纪事</button>
+    <nav id="sideTabs" role="tablist" aria-label="侧栏">
+      <button id="tabBtn-city" data-tab="city" role="tab" aria-selected="true" aria-controls="tabCity" class="on">城池</button>
+      <button id="tabBtn-army" data-tab="army" role="tab" aria-selected="false" aria-controls="tabArmy">军务</button>
+      <button id="tabBtn-tech" data-tab="tech" role="tab" aria-selected="false" aria-controls="tabTech">科技</button>
+      <button id="tabBtn-legion" data-tab="legion" role="tab" aria-selected="false" aria-controls="tabLegion">军区</button>
+      <button id="tabBtn-diplo" data-tab="diplo" role="tab" aria-selected="false" aria-controls="tabDiplo">外交</button>
+      <button id="tabBtn-log" data-tab="log" role="tab" aria-selected="false" aria-controls="tabLog">纪事</button>
     </nav>
 
     <!-- 城池 -->
-    <div id="tabCity" class="tabpane">
+    <div id="tabCity" class="tabpane" role="tabpanel" aria-labelledby="tabBtn-city" tabindex="0">
       <div id="bulkBar" class="bulkbar hidden"></div>
       <div id="cityRail" class="cityrail hidden"></div>
       <section id="selPanel" class="card grow hidden">
@@ -85,22 +85,22 @@
           <span class="tag c" id="selOwner">—</span>
         </div>
         <div class="card-sub dim" id="selSub">—</div>
-        <nav id="cityTabs" class="subtabs">
-          <button data-ctab="overview" class="on">概览</button>
-          <button data-ctab="build">营造</button>
-          <button data-ctab="mart">市肆</button>
-          <button data-ctab="clans">士族</button>
-          <button data-ctab="heroes">人物</button>
-          <button data-ctab="policy">施政</button>
+        <nav id="cityTabs" class="subtabs" role="tablist" aria-label="城池页">
+          <button data-ctab="overview" role="tab" aria-selected="true" aria-controls="cityPane" class="on">概览</button>
+          <button data-ctab="build" role="tab" aria-selected="false" aria-controls="cityPane">营造</button>
+          <button data-ctab="mart" role="tab" aria-selected="false" aria-controls="cityPane">市肆</button>
+          <button data-ctab="clans" role="tab" aria-selected="false" aria-controls="cityPane">士族</button>
+          <button data-ctab="heroes" role="tab" aria-selected="false" aria-controls="cityPane">人物</button>
+          <button data-ctab="policy" role="tab" aria-selected="false" aria-controls="cityPane">施政</button>
         </nav>
-        <div id="cityPane" class="pane"></div>
+        <div id="cityPane" class="pane" role="tabpanel" aria-labelledby="cityTabs" tabindex="0"></div>
         <div id="selHint" class="hint hidden"></div>
       </section>
       <section id="noSel" class="card grow empty">点击地图上的城池查看</section>
     </div>
 
     <!-- 军务 -->
-    <div id="tabArmy" class="tabpane hidden">
+    <div id="tabArmy" class="tabpane hidden" role="tabpanel" aria-labelledby="tabBtn-army" tabindex="0">
       <section class="card tight">
         <div class="card-head"><span>在外军队</span><span class="tag dim" id="armyCount">0</span></div>
         <div id="armyList" class="list"></div>
@@ -132,7 +132,7 @@
     </div>
 
     <!-- 科技 -->
-    <div id="tabTech" class="tabpane hidden">
+    <div id="tabTech" class="tabpane hidden" role="tabpanel" aria-labelledby="tabBtn-tech" tabindex="0">
       <section class="card grow">
         <div class="card-head">
           <span>研习</span>
@@ -143,7 +143,7 @@
     </div>
 
     <!-- 军区 -->
-    <div id="tabLegion" class="tabpane hidden">
+    <div id="tabLegion" class="tabpane hidden" role="tabpanel" aria-labelledby="tabBtn-legion" tabindex="0">
       <section class="card grow">
         <div class="card-head"><span>军区 · 都督统辖</span><span class="tag dim" id="legionCount">0</span></div>
         <div id="legionBody" class="pane"></div>
@@ -151,7 +151,7 @@
     </div>
 
     <!-- 外交 -->
-    <div id="tabDiplo" class="tabpane hidden">
+    <div id="tabDiplo" class="tabpane hidden" role="tabpanel" aria-labelledby="tabBtn-diplo" tabindex="0">
       <section class="card autoheight">
         <div class="card-head">
           <span>外交</span>
@@ -166,7 +166,7 @@
     </div>
 
     <!-- 纪事 -->
-    <div id="tabLog" class="tabpane hidden">
+    <div id="tabLog" class="tabpane hidden" role="tabpanel" aria-labelledby="tabBtn-log" tabindex="0">
       <section class="card grow">
         <div class="card-head">
           <span>战报 / 纪事</span>
@@ -197,7 +197,7 @@
   </aside>
 
   <main id="mapwrap">
-    <canvas id="map"></canvas>
+    <canvas id="map" role="img" aria-label="天下地图：城池、军队、州界与地形；可拖拽平移、滚轮缩放"></canvas>
     <div id="seasonTint" class="season-spring"></div>
     <div id="mapHud">
       <button id="zoomIn" class="mini">＋</button>
@@ -206,9 +206,9 @@
       <button id="btnHelp" class="mini" title="游戏机制与操作指引">?</button>
       <span id="hudTip" class="dim">拖拽平移 · 滚轮缩放 · 点击城池</span>
     </div>
-    <canvas id="minimap" width="180" height="135" title="点击跳转视野"></canvas>
+    <canvas id="minimap" width="180" height="135" role="img" aria-label="缩略图：点击跳转视野" title="点击跳转视野"></canvas>
     <div id="cityTip" class="city-tip hidden"></div>
-    <div id="toast" class="toast"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <div id="legend">
       <span><i class="sw faction"></i>势力</span>
       <span><i class="sw own"></i>我方</span>

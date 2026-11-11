@@ -86,7 +86,9 @@ const UI = {
 
   syncTabs() {
     for (const btn of UI.$('sideTabs').querySelectorAll('button')) {
-      btn.classList.toggle('on', btn.dataset.tab === UI.sideTab);
+      const on = btn.dataset.tab === UI.sideTab;
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');   // 屏幕阅读器靠这个知道选中哪个页
     }
     for (const id of ['tabCity', 'tabArmy', 'tabTech', 'tabLegion', 'tabDiplo', 'tabLog']) {
       UI.$(id).classList.add('hidden');
@@ -98,7 +100,9 @@ const UI = {
     UI.$(map[UI.sideTab]).classList.remove('hidden');
 
     for (const btn of UI.$('cityTabs').querySelectorAll('button')) {
-      btn.classList.toggle('on', btn.dataset.ctab === UI.cityTab);
+      const on = btn.dataset.ctab === UI.cityTab;
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
     }
   },
 
@@ -657,6 +661,11 @@ const UI = {
         const fresh = g.log.slice(UI._lastLogLen);
         UI._lastLogLen = g.log.length;
         if (fresh.some(x => /陷落|覆灭|失守/.test(x.text))) Audio.play('alarm');
+        // 上命逾期：这是“被记一笔”的事，给一个下行长音，比警报轻但听得出不妙
+        if (fresh.some(x => /上命逾期/.test(x.text))) Audio.play('order');
+        // 外交成败：同盟 / 停战 / 离间成功是上行二音，被君主驳回是闷的一下
+        if (fresh.some(x => /结为同盟|罢兵，停战|密使离间/.test(x.text))) Audio.play('diploOk');
+        if (fresh.some(x => /为君主所拒/.test(x.text))) Audio.play('diploNo');
       }
     };
     setInterval(watch, 600);

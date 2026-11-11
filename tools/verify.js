@@ -157,6 +157,31 @@ section('分层守护');
     }
   }
   ok('内联 style 只剩 --自定义属性', !inline.length, inline.slice(0, 3).join(' | '));
+
+  // 7) 无障碍：页签是 tablist / tab / tabpanel 三件套，选中态由 syncTabs 写进 aria-selected
+  const html = read('index.html');
+  const navBlock = id => {
+    const i = html.indexOf('id="' + id + '"');
+    return i < 0 ? '' : html.slice(i, html.indexOf('</nav>', i));
+  };
+  const sideNav = navBlock('sideTabs'), cityNav = navBlock('cityTabs');
+  const count = (s, re) => (s.match(re) || []).length;
+  const tabsOk = /role="tablist"/.test(sideNav) && /role="tablist"/.test(cityNav)
+    && count(sideNav, /role="tab"/g) === 6 && count(cityNav, /role="tab"/g) === 6
+    && count(sideNav, /aria-selected="/g) === 6 && count(cityNav, /aria-selected="/g) === 6
+    && count(html, /role="tabpanel"/g) === 7   // 6 个侧栏面板 + 城池页共用面板
+    && /setAttribute\('aria-selected'/.test(read('js/view/ui.js'));
+  ok('无障碍：页签三件套（tablist / tab / aria-selected）齐备', tabsOk,
+    `side tab=${count(sideNav, /role="tab"/g)} sel=${count(sideNav, /aria-selected="/g)}，`
+    + `city tab=${count(cityNav, /role="tab"/g)} sel=${count(cityNav, /aria-selected="/g)}，`
+    + `panel=${count(html, /role="tabpanel"/g)}`);
+
+  // 8) 无障碍：浮层 toast 要能被读屏宣读，地图画布要有替代文本（不靠 title）
+  const toastOk = /id="toast"[^>]*role="status"[^>]*aria-live="polite"/.test(html)
+    || /id="toast"[^>]*aria-live="polite"[^>]*role="status"/.test(html);
+  const mapOk = /<canvas id="map"[^>]*role="img"[^>]*aria-label="/.test(html);
+  ok('无障碍：toast 有 role=status，地图画布有 aria-label', toastOk && mapOk,
+    `toast=${toastOk} map=${mapOk}`);
 }
 
 // ─────────────────────────────────────────────
